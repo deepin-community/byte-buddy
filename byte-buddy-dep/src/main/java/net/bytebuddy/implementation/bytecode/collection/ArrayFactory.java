@@ -1,6 +1,21 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation.bytecode.collection;
 
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.type.TypeDefinition;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.implementation.Implementation;
@@ -16,7 +31,7 @@ import java.util.List;
  * A {@link net.bytebuddy.implementation.bytecode.collection.CollectionFactory} that is capable of
  * creating an array of a given type with any number of given values.
  */
-@EqualsAndHashCode(of = {"componentType", "arrayCreator"})
+@HashCodeAndEqualsPlugin.Enhance
 public class ArrayFactory implements CollectionFactory {
 
     /**
@@ -33,6 +48,7 @@ public class ArrayFactory implements CollectionFactory {
     /**
      * The decrease of stack size after each value storage operation.
      */
+    @HashCodeAndEqualsPlugin.ValueHandling(HashCodeAndEqualsPlugin.ValueHandling.Sort.IGNORE)
     private final StackManipulation.Size sizeDecrease;
 
     /**
@@ -69,37 +85,39 @@ public class ArrayFactory implements CollectionFactory {
      * @return A suitable array creator.
      */
     private static ArrayCreator makeArrayCreatorFor(TypeDefinition componentType) {
-        if (componentType.isPrimitive()) {
-            if (componentType.represents(boolean.class)) {
-                return ArrayCreator.ForPrimitiveType.BOOLEAN;
-            } else if (componentType.represents(byte.class)) {
-                return ArrayCreator.ForPrimitiveType.BYTE;
-            } else if (componentType.represents(short.class)) {
-                return ArrayCreator.ForPrimitiveType.SHORT;
-            } else if (componentType.represents(char.class)) {
-                return ArrayCreator.ForPrimitiveType.CHARACTER;
-            } else if (componentType.represents(int.class)) {
-                return ArrayCreator.ForPrimitiveType.INTEGER;
-            } else if (componentType.represents(long.class)) {
-                return ArrayCreator.ForPrimitiveType.LONG;
-            } else if (componentType.represents(float.class)) {
-                return ArrayCreator.ForPrimitiveType.FLOAT;
-            } else if (componentType.represents(double.class)) {
-                return ArrayCreator.ForPrimitiveType.DOUBLE;
-            } else {
-                throw new IllegalArgumentException("Cannot create array of type " + componentType);
-            }
-        } else {
+        if (!componentType.isPrimitive()) {
             return new ArrayCreator.ForReferenceType(componentType.asErasure());
+        } else if (componentType.represents(boolean.class)) {
+            return ArrayCreator.ForPrimitiveType.BOOLEAN;
+        } else if (componentType.represents(byte.class)) {
+            return ArrayCreator.ForPrimitiveType.BYTE;
+        } else if (componentType.represents(short.class)) {
+            return ArrayCreator.ForPrimitiveType.SHORT;
+        } else if (componentType.represents(char.class)) {
+            return ArrayCreator.ForPrimitiveType.CHARACTER;
+        } else if (componentType.represents(int.class)) {
+            return ArrayCreator.ForPrimitiveType.INTEGER;
+        } else if (componentType.represents(long.class)) {
+            return ArrayCreator.ForPrimitiveType.LONG;
+        } else if (componentType.represents(float.class)) {
+            return ArrayCreator.ForPrimitiveType.FLOAT;
+        } else if (componentType.represents(double.class)) {
+            return ArrayCreator.ForPrimitiveType.DOUBLE;
+        } else {
+            throw new IllegalArgumentException("Cannot create array of type " + componentType);
         }
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public StackManipulation withValues(List<? extends StackManipulation> stackManipulations) {
         return new ArrayStackManipulation(stackManipulations);
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public TypeDescription.Generic getComponentType() {
         return componentType;
     }
@@ -189,18 +207,24 @@ public class ArrayFactory implements CollectionFactory {
                 this.storageOpcode = storageOpcode;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public boolean isValid() {
                 return true;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext) {
                 methodVisitor.visitIntInsn(Opcodes.NEWARRAY, creationOpcode);
                 return ARRAY_CREATION_SIZE_CHANGE;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public int getStorageOpcode() {
                 return storageOpcode;
             }
@@ -209,8 +233,8 @@ public class ArrayFactory implements CollectionFactory {
         /**
          * An array creator implementation for reference types.
          */
-        @EqualsAndHashCode
-        class ForReferenceType implements ArrayCreator {
+        @HashCodeAndEqualsPlugin.Enhance
+        class ForReferenceType extends StackManipulation.AbstractBase implements ArrayCreator {
 
             /**
              * The internal name of this array's non-primitive component type.
@@ -226,18 +250,17 @@ public class ArrayFactory implements CollectionFactory {
                 this.internalTypeName = referenceType.getInternalName();
             }
 
-            @Override
-            public boolean isValid() {
-                return true;
-            }
-
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext) {
                 methodVisitor.visitTypeInsn(Opcodes.ANEWARRAY, internalTypeName);
                 return ARRAY_CREATION_SIZE_CHANGE;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public int getStorageOpcode() {
                 return Opcodes.AASTORE;
             }
@@ -247,6 +270,7 @@ public class ArrayFactory implements CollectionFactory {
     /**
      * A stack manipulation for creating an array as defined by the enclosing array factory.
      */
+    @HashCodeAndEqualsPlugin.Enhance(includeSyntheticFields = true)
     protected class ArrayStackManipulation implements StackManipulation {
 
         /**
@@ -263,7 +287,9 @@ public class ArrayFactory implements CollectionFactory {
             this.stackManipulations = stackManipulations;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public boolean isValid() {
             for (StackManipulation stackManipulation : stackManipulations) {
                 if (!stackManipulation.isValid()) {
@@ -273,7 +299,9 @@ public class ArrayFactory implements CollectionFactory {
             return arrayCreator.isValid();
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext) {
             Size size = IntegerConstant.forValue(stackManipulations.size()).apply(methodVisitor, implementationContext);
             // The array's construction does not alter the stack's size.
@@ -288,27 +316,6 @@ public class ArrayFactory implements CollectionFactory {
                 size = size.aggregate(sizeDecrease);
             }
             return size;
-        }
-
-        /**
-         * Returns the outer instance.
-         *
-         * @return The outer instance.
-         */
-        private ArrayFactory getArrayFactory() {
-            return ArrayFactory.this;
-        }
-
-        @Override // HE: Remove when Lombok support for getOuter is added.
-        public boolean equals(Object other) {
-            return this == other || !(other == null || getClass() != other.getClass())
-                    && ArrayFactory.this.equals(((ArrayStackManipulation) other).getArrayFactory())
-                    && stackManipulations.equals(((ArrayStackManipulation) other).stackManipulations);
-        }
-
-        @Override // HE: Remove when Lombok support for getOuter is added.
-        public int hashCode() {
-            return stackManipulations.hashCode();
         }
     }
 }

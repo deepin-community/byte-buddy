@@ -1,16 +1,14 @@
 package net.bytebuddy.description.type;
 
 import net.bytebuddy.matcher.ElementMatchers;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Test;
-import org.mockito.Mockito;
 
 import java.util.List;
 
 import static net.bytebuddy.matcher.ElementMatchers.named;
-import static org.hamcrest.CoreMatchers.*;
+import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.CoreMatchers.notNullValue;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.mockito.Mockito.when;
 
 public class TypeDescriptionGenericVisitorSubstitutorForAttachmentTest {
 
@@ -20,10 +18,10 @@ public class TypeDescriptionGenericVisitorSubstitutorForAttachmentTest {
     public void testAttachment() throws Exception {
         TypeDescription.Generic original = TypeDefinition.Sort.describe(Foo.Inner.class.getDeclaredField(FOO).getGenericType());
         TypeDescription.Generic detached = original.accept(new TypeDescription.Generic.Visitor.Substitutor.ForDetachment(ElementMatchers.is(Foo.Inner.class)));
-        TypeDescription target = new TypeDescription.ForLoadedType(Bar.class);
+        TypeDescription target = TypeDescription.ForLoadedType.of(Bar.class);
         TypeDescription.Generic attached = detached.accept(new TypeDescription.Generic.Visitor.Substitutor.ForAttachment(target.asGenericType(), target));
         assertThat(attached.getSort(), is(TypeDefinition.Sort.PARAMETERIZED));
-        assertThat(attached.asErasure(), sameInstance(target));
+        assertThat(attached.asErasure(), is(target));
         assertThat(attached.getTypeArguments().size(), is(4));
         assertThat(attached.getTypeArguments().get(0).getSort(), is(TypeDefinition.Sort.VARIABLE));
         assertThat(attached.getTypeArguments().get(0).getSymbol(), is("T"));
@@ -49,18 +47,7 @@ public class TypeDescriptionGenericVisitorSubstitutorForAttachmentTest {
     public void testIllegalAttachment() throws Exception {
         TypeDescription.Generic original = TypeDefinition.Sort.describe(Foo.Inner.class.getDeclaredField(FOO).getGenericType());
         TypeDescription.Generic detached = original.accept(new TypeDescription.Generic.Visitor.Substitutor.ForDetachment(ElementMatchers.is(Foo.Inner.class)));
-        detached.accept(new TypeDescription.Generic.Visitor.Substitutor.ForAttachment(TypeDescription.Generic.OBJECT, TypeDescription.OBJECT));
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(TypeDescription.Generic.Visitor.Substitutor.ForAttachment.class)
-                .refine(new ObjectPropertyAssertion.Refinement<TypeDefinition>() {
-                    @Override
-                    public void apply(TypeDefinition mock) {
-                        when(mock.asErasure()).thenReturn(Mockito.mock(TypeDescription.class));
-                    }
-                }).apply();
+        detached.accept(new TypeDescription.Generic.Visitor.Substitutor.ForAttachment(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class), TypeDescription.ForLoadedType.of(Object.class)));
     }
 
     @SuppressWarnings("unused")

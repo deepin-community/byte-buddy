@@ -1,20 +1,43 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.dynamic;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.agent.builder.AgentBuilder;
+import net.bytebuddy.build.AccessControllerPlugin;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.NamedElement;
 import net.bytebuddy.description.type.TypeDescription;
+import net.bytebuddy.dynamic.loading.ClassLoadingStrategy;
 import net.bytebuddy.utility.JavaModule;
 import net.bytebuddy.utility.JavaType;
 import net.bytebuddy.utility.StreamDrainer;
+import net.bytebuddy.utility.dispatcher.JavaDispatcher;
+import net.bytebuddy.utility.nullability.AlwaysNull;
+import net.bytebuddy.utility.nullability.MaybeNull;
 
 import java.io.*;
 import java.lang.instrument.ClassFileTransformer;
 import java.lang.instrument.Instrumentation;
+import java.lang.instrument.UnmodifiableClassException;
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.security.AccessController;
+import java.net.URL;
+import java.net.URLClassLoader;
 import java.security.PrivilegedAction;
 import java.security.ProtectionDomain;
 import java.util.*;
@@ -38,11 +61,11 @@ public interface ClassFileLocator extends Closeable {
     /**
      * Locates the class file for a given type and returns the binary data of the class file.
      *
-     * @param typeName The name of the type to locate a class file representation for.
+     * @param name The name of the type to locate a class file representation for.
      * @return Any binary representation of the type which might be illegal.
      * @throws java.io.IOException If reading a class file causes an error.
      */
-    Resolution locate(String typeName) throws IOException;
+    Resolution locate(String name) throws IOException;
 
     /**
      * Represents a class file as binary data.
@@ -67,7 +90,7 @@ public interface ClassFileLocator extends Closeable {
         /**
          * A canonical representation of an illegal binary representation.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class Illegal implements Resolution {
 
             /**
@@ -84,12 +107,16 @@ public interface ClassFileLocator extends Closeable {
                 this.typeName = typeName;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public boolean isResolved() {
                 return false;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public byte[] resolve() {
                 throw new IllegalStateException("Could not locate class file for " + typeName);
             }
@@ -98,7 +125,7 @@ public interface ClassFileLocator extends Closeable {
         /**
          * Represents a byte array as binary data.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class Explicit implements Resolution {
 
             /**
@@ -111,18 +138,22 @@ public interface ClassFileLocator extends Closeable {
              *
              * @param binaryRepresentation The binary data to represent. The array must not be modified.
              */
-            @SuppressFBWarnings(value = "EI_EXPOSE_REP2", justification = "The array is not to be modified by contract")
+            @SuppressFBWarnings(value = "EI_EXPOSE_REP2", justification = "The array is not modified by class contract.")
             public Explicit(byte[] binaryRepresentation) {
                 this.binaryRepresentation = binaryRepresentation;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public boolean isResolved() {
                 return true;
             }
 
-            @Override
-            @SuppressFBWarnings(value = "EI_EXPOSE_REP", justification = "The array is not to be modified by contract")
+            /**
+             * {@inheritDoc}
+             */
+            @SuppressFBWarnings(value = "EI_EXPOSE_REP", justification = "The array is not modified by class contract.")
             public byte[] resolve() {
                 return binaryRepresentation;
             }
@@ -139,13 +170,17 @@ public interface ClassFileLocator extends Closeable {
          */
         INSTANCE;
 
-        @Override
-        public Resolution locate(String typeName) {
-            return new Resolution.Illegal(typeName);
+        /**
+         * {@inheritDoc}
+         */
+        public Resolution locate(String name) {
+            return new Resolution.Illegal(name);
         }
 
-        @Override
-        public void close() throws IOException {
+        /**
+         * {@inheritDoc}
+         */
+        public void close() {
             /* do nothing */
         }
     }
@@ -153,7 +188,7 @@ public interface ClassFileLocator extends Closeable {
     /**
      * A simple class file locator that returns class files from a selection of given types.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class Simple implements ClassFileLocator {
 
         /**
@@ -182,18 +217,6 @@ public interface ClassFileLocator extends Closeable {
         }
 
         /**
-         * Creates a class file locator for a single known type with an additional fallback locator.
-         *
-         * @param typeName             The name of the type.
-         * @param binaryRepresentation The binary representation of the type.
-         * @param fallback             The class file locator to query in case that a lookup triggers any other type.
-         * @return An appropriate class file locator.
-         */
-        public static ClassFileLocator of(String typeName, byte[] binaryRepresentation, ClassFileLocator fallback) {
-            return new Compound(new Simple(Collections.singletonMap(typeName, binaryRepresentation)), fallback);
-        }
-
-        /**
          * Creates a class file locator that represents all types of a dynamic type.
          *
          * @param dynamicType The dynamic type to represent.
@@ -217,15 +240,35 @@ public interface ClassFileLocator extends Closeable {
             return new Simple(classFiles);
         }
 
-        @Override
-        public Resolution locate(String typeName) {
-            byte[] binaryRepresentation = classFiles.get(typeName);
+        /**
+         * Creates a class file locator of a map of resources where class files are mapped by their path and file extension.
+         *
+         * @param binaryRepresentations A map of resource names to their binary representation.
+         * @return A class file locator that finds class files within the map.
+         */
+        public static ClassFileLocator ofResources(Map<String, byte[]> binaryRepresentations) {
+            Map<String, byte[]> classFiles = new HashMap<String, byte[]>();
+            for (Map.Entry<String, byte[]> entry : binaryRepresentations.entrySet()) {
+                if (entry.getKey().endsWith(CLASS_FILE_EXTENSION)) {
+                    classFiles.put(entry.getKey().substring(0, entry.getKey().length() - CLASS_FILE_EXTENSION.length()).replace('/', '.'), entry.getValue());
+                }
+            }
+            return new Simple(classFiles);
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public Resolution locate(String name) {
+            byte[] binaryRepresentation = classFiles.get(name);
             return binaryRepresentation == null
-                    ? new Resolution.Illegal(typeName)
+                    ? new Resolution.Illegal(name)
                     : new Resolution.Explicit(binaryRepresentation);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public void close() {
             /* do nothing */
         }
@@ -240,8 +283,13 @@ public interface ClassFileLocator extends Closeable {
      * class loader is closed if it implements the {@link Closeable} interface as this is typically not intended.
      * </p>
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class ForClassLoader implements ClassFileLocator {
+
+        /**
+         * A class loader that does not define resources of its own but allows querying for resources supplied by the boot loader.
+         */
+        private static final ClassLoader BOOT_LOADER_PROXY = doPrivileged(BootLoaderProxyCreationAction.INSTANCE);
 
         /**
          * The class loader to query.
@@ -258,25 +306,54 @@ public interface ClassFileLocator extends Closeable {
         }
 
         /**
+         * A proxy for {@code java.security.AccessController#doPrivileged} that is activated if available.
+         *
+         * @param action The action to execute from a privileged context.
+         * @param <T>    The type of the action's resolved value.
+         * @return The action's resolved value.
+         */
+        @AccessControllerPlugin.Enhance
+        private static <T> T doPrivileged(PrivilegedAction<T> action) {
+            return action.run();
+        }
+
+        /**
          * Creates a class file locator that queries the system class loader.
          *
          * @return A class file locator that queries the system class loader.
          */
-        public static ClassFileLocator ofClassPath() {
+        public static ClassFileLocator ofSystemLoader() {
             return new ForClassLoader(ClassLoader.getSystemClassLoader());
+        }
+
+        /**
+         * Creates a class file locator that queries the plaform class loader or the extension class loader if the
+         * current VM is not at least of version 9.
+         *
+         * @return A class file locator that queries the plaform class loader or the extension class loader.
+         */
+        public static ClassFileLocator ofPlatformLoader() {
+            return of(ClassLoader.getSystemClassLoader().getParent());
+        }
+
+        /**
+         * Creates a class file locator that queries the boot loader.
+         *
+         * @return A class file locator that queries the boot loader.
+         */
+        public static ClassFileLocator ofBootLoader() {
+            return new ForClassLoader(BOOT_LOADER_PROXY);
         }
 
         /**
          * Creates a class file locator for a given class loader.
          *
-         * @param classLoader The class loader to be used. If this class loader represents the bootstrap class
-         *                    loader which is represented by the {@code null} value, this system class loader
-         *                    is used instead.
+         * @param classLoader The class loader to be used which might be {@code null} to represent the bootstrap loader.
          * @return A corresponding source locator.
          */
-        public static ClassFileLocator of(ClassLoader classLoader) {
+        public static ClassFileLocator of(@MaybeNull ClassLoader classLoader) {
             return new ForClassLoader(classLoader == null
-                    ? ClassLoader.getSystemClassLoader()
+                    ? BOOT_LOADER_PROXY
                     : classLoader);
         }
 
@@ -285,39 +362,95 @@ public interface ClassFileLocator extends Closeable {
          * {@link java.lang.ClassLoader}.
          *
          * @param type The type of interest.
-         * @return The binary data to this type which might be illegal.
+         * @return The binary representation of the supplied type.
          */
-        public static Resolution read(Class<?> type) {
+        public static byte[] read(Class<?> type) {
             try {
                 ClassLoader classLoader = type.getClassLoader();
                 return locate(classLoader == null
-                        ? ClassLoader.getSystemClassLoader()
-                        : classLoader, TypeDescription.ForLoadedType.getName(type));
+                        ? BOOT_LOADER_PROXY
+                        : classLoader, TypeDescription.ForLoadedType.getName(type)).resolve();
             } catch (IOException exception) {
                 throw new IllegalStateException("Cannot read class file for " + type, exception);
             }
         }
 
-        @Override
-        public Resolution locate(String typeName) throws IOException {
-            return locate(classLoader, typeName);
+        /**
+         * Attempts to create a binary representation of several loaded types by requesting
+         * data from their respective {@link java.lang.ClassLoader}s.
+         *
+         * @param type The types of interest.
+         * @return A mapping of the supplied types to their binary representation.
+         */
+        public static Map<Class<?>, byte[]> read(Class<?>... type) {
+            return read(Arrays.asList(type));
         }
 
-        @Override
-        public void close() throws IOException {
+        /**
+         * Attempts to create a binary representation of several loaded types by requesting
+         * data from their respective {@link java.lang.ClassLoader}s.
+         *
+         * @param types The types of interest.
+         * @return A mapping of the supplied types to their binary representation.
+         */
+        public static Map<Class<?>, byte[]> read(Collection<? extends Class<?>> types) {
+            Map<Class<?>, byte[]> result = new HashMap<Class<?>, byte[]>();
+            for (Class<?> type : types) {
+                result.put(type, read(type));
+            }
+            return result;
+        }
+
+        /**
+         * Attempts to create a binary representation of several loaded types by requesting
+         * data from their respective {@link java.lang.ClassLoader}s.
+         *
+         * @param type The types of interest.
+         * @return A mapping of the supplied types' names to their binary representation.
+         */
+        public static Map<String, byte[]> readToNames(Class<?>... type) {
+            return readToNames(Arrays.asList(type));
+        }
+
+        /**
+         * Attempts to create a binary representation of several loaded types by requesting
+         * data from their respective {@link java.lang.ClassLoader}s.
+         *
+         * @param types The types of interest.
+         * @return A mapping of the supplied types' names to their binary representation.
+         */
+        public static Map<String, byte[]> readToNames(Collection<? extends Class<?>> types) {
+            Map<String, byte[]> result = new HashMap<String, byte[]>();
+            for (Class<?> type : types) {
+                result.put(type.getName(), read(type));
+            }
+            return result;
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public Resolution locate(String name) throws IOException {
+            return locate(classLoader, name);
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public void close() {
             /* do nothing */
         }
 
         /**
          * Locates the class file for the supplied type by requesting a resource from the class loader.
          *
-         * @param classLoader The class loader to query for the resource.
-         * @param typeName    The name of the type for which to locate a class file.
+         * @param classLoader The class loader to query.
+         * @param name        The name of the type for which to locate a class file.
          * @return A resolution for the class file.
          * @throws IOException If reading the class file causes an exception.
          */
-        protected static Resolution locate(ClassLoader classLoader, String typeName) throws IOException {
-            InputStream inputStream = classLoader.getResourceAsStream(typeName.replace('.', '/') + CLASS_FILE_EXTENSION);
+        protected static Resolution locate(ClassLoader classLoader, String name) throws IOException {
+            InputStream inputStream = classLoader.getResourceAsStream(name.replace('.', '/') + CLASS_FILE_EXTENSION);
             if (inputStream != null) {
                 try {
                     return new Resolution.Explicit(StreamDrainer.DEFAULT.drain(inputStream));
@@ -325,7 +458,25 @@ public interface ClassFileLocator extends Closeable {
                     inputStream.close();
                 }
             } else {
-                return new Resolution.Illegal(typeName);
+                return new Resolution.Illegal(name);
+            }
+        }
+
+        /**
+         * A privileged action for creating a proxy class loader for the boot class loader.
+         */
+        protected enum BootLoaderProxyCreationAction implements PrivilegedAction<ClassLoader> {
+
+            /**
+             * The singleton instance.
+             */
+            INSTANCE;
+
+            /**
+             * {@inheritDoc}
+             */
+            public ClassLoader run() {
+                return new URLClassLoader(new URL[0], ClassLoadingStrategy.BOOTSTRAP_LOADER);
             }
         }
 
@@ -366,22 +517,26 @@ public interface ClassFileLocator extends Closeable {
              *                    is used instead.
              * @return A corresponding source locator.
              */
-            public static ClassFileLocator of(ClassLoader classLoader) {
+            public static ClassFileLocator of(@MaybeNull ClassLoader classLoader) {
                 return classLoader == null || classLoader == ClassLoader.getSystemClassLoader() || classLoader == ClassLoader.getSystemClassLoader().getParent()
                         ? ForClassLoader.of(classLoader)
                         : new WeaklyReferenced(classLoader);
             }
 
-            @Override
-            public Resolution locate(String typeName) throws IOException {
+            /**
+             * {@inheritDoc}
+             */
+            public Resolution locate(String name) throws IOException {
                 ClassLoader classLoader = get();
                 return classLoader == null
-                        ? new Resolution.Illegal(typeName)
-                        : ForClassLoader.locate(classLoader, typeName);
+                        ? new Resolution.Illegal(name)
+                        : ForClassLoader.locate(classLoader, name);
             }
 
-            @Override
-            public void close() throws IOException {
+            /**
+             * {@inheritDoc}
+             */
+            public void close() {
                 /* do nothing */
             }
 
@@ -391,11 +546,14 @@ public interface ClassFileLocator extends Closeable {
             }
 
             @Override
-            public boolean equals(Object object) {
-                if (this == object) return true;
-                if (object == null || getClass() != object.getClass()) return false;
-                WeaklyReferenced that = (WeaklyReferenced) object;
-                ClassLoader classLoader = that.get();
+            public boolean equals(@MaybeNull Object other) {
+                if (this == other) {
+                    return true;
+                } else if (other == null || getClass() != other.getClass()) {
+                    return false;
+                }
+                WeaklyReferenced weaklyReferenced = (WeaklyReferenced) other;
+                ClassLoader classLoader = weaklyReferenced.get();
                 return classLoader != null && get() == classLoader;
             }
         }
@@ -410,8 +568,13 @@ public interface ClassFileLocator extends Closeable {
      * class loader is closed if it implements the {@link Closeable} interface as this is typically not intended.
      * </p>
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class ForModule implements ClassFileLocator {
+
+        /**
+         * An empty array that can be used to indicate no arguments to avoid an allocation on a reflective call.
+         */
+        private static final Object[] NO_ARGUMENT = new Object[0];
 
         /**
          * The represented Java module.
@@ -433,7 +596,7 @@ public interface ClassFileLocator extends Closeable {
          *
          * @return A class file locator that locates classes of the boot layer.
          */
-        @SuppressFBWarnings(value = "REC_CATCH_EXCEPTION", justification = "Exception is supposed to be rethrown")
+        @SuppressFBWarnings(value = "REC_CATCH_EXCEPTION", justification = "Exception should always be wrapped for clarity")
         public static ClassFileLocator ofBootLayer() {
             try {
                 Map<String, ClassFileLocator> bootModules = new HashMap<String, ClassFileLocator>();
@@ -441,7 +604,7 @@ public interface ClassFileLocator extends Closeable {
                 Method getPackages = JavaType.MODULE.load().getMethod("getPackages");
                 for (Object rawModule : (Set<?>) layerType.getMethod("modules").invoke(layerType.getMethod("boot").invoke(null))) {
                     ClassFileLocator classFileLocator = ForModule.of(JavaModule.of(rawModule));
-                    for (Object packageName : (Set<?>) getPackages.invoke(rawModule)) {
+                    for (Object packageName : (Set<?>) getPackages.invoke(rawModule, NO_ARGUMENT)) {
                         bootModules.put((String) packageName, classFileLocator);
                     }
                 }
@@ -464,9 +627,11 @@ public interface ClassFileLocator extends Closeable {
                     : ForClassLoader.of(module.getClassLoader());
         }
 
-        @Override
-        public Resolution locate(String typeName) throws IOException {
-            return locate(module, typeName);
+        /**
+         * {@inheritDoc}
+         */
+        public Resolution locate(String name) throws IOException {
+            return locate(module, name);
         }
 
         /**
@@ -490,8 +655,10 @@ public interface ClassFileLocator extends Closeable {
             }
         }
 
-        @Override
-        public void close() throws IOException {
+        /**
+         * {@inheritDoc}
+         */
+        public void close() {
             /* do nothing */
         }
 
@@ -539,30 +706,41 @@ public interface ClassFileLocator extends Closeable {
                 }
             }
 
-            @Override
-            public Resolution locate(String typeName) throws IOException {
+            /**
+             * {@inheritDoc}
+             */
+            public Resolution locate(String name) throws IOException {
                 Object module = get();
                 return module == null
-                        ? new Resolution.Illegal(typeName)
-                        : ForModule.locate(JavaModule.of(module), typeName);
+                        ? new Resolution.Illegal(name)
+                        : ForModule.locate(JavaModule.of(module), name);
             }
 
-            @Override
-            public void close() throws IOException {
+            /**
+             * {@inheritDoc}
+             */
+            public void close() {
                 /* do nothing */
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public int hashCode() {
                 return hashCode;
             }
 
-            @Override
-            public boolean equals(Object object) {
-                if (this == object) return true;
-                if (object == null || getClass() != object.getClass()) return false;
-                WeaklyReferenced that = (WeaklyReferenced) object;
-                Object module = that.get();
+            /**
+             * {@inheritDoc}
+             */
+            public boolean equals(@MaybeNull Object other) {
+                if (this == other) {
+                    return true;
+                } else if (other == null || getClass() != other.getClass()) {
+                    return false;
+                }
+                WeaklyReferenced weaklyReferenced = (WeaklyReferenced) other;
+                Object module = weaklyReferenced.get();
                 return module != null && get() == module;
             }
         }
@@ -571,7 +749,7 @@ public interface ClassFileLocator extends Closeable {
     /**
      * A class file locator that locates classes within a Java <i>jar</i> file.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class ForJarFile implements ClassFileLocator {
 
         /**
@@ -662,11 +840,13 @@ public interface ClassFileLocator extends Closeable {
             return of(runtimeJar);
         }
 
-        @Override
-        public Resolution locate(String typeName) throws IOException {
-            ZipEntry zipEntry = jarFile.getEntry(typeName.replace('.', '/') + CLASS_FILE_EXTENSION);
+        /**
+         * {@inheritDoc}
+         */
+        public Resolution locate(String name) throws IOException {
+            ZipEntry zipEntry = jarFile.getEntry(name.replace('.', '/') + CLASS_FILE_EXTENSION);
             if (zipEntry == null) {
-                return new Resolution.Illegal(typeName);
+                return new Resolution.Illegal(name);
             } else {
                 InputStream inputStream = jarFile.getInputStream(zipEntry);
                 try {
@@ -677,7 +857,9 @@ public interface ClassFileLocator extends Closeable {
             }
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public void close() throws IOException {
             jarFile.close();
         }
@@ -687,7 +869,7 @@ public interface ClassFileLocator extends Closeable {
      * A class file locator that locates classes within a Java <i>jmod</i> file. This class file locator should not be used
      * for reading modular jar files for which {@link ForJarFile} is appropriate.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class ForModuleFile implements ClassFileLocator {
 
         /**
@@ -698,7 +880,7 @@ public interface ClassFileLocator extends Closeable {
         /**
          * A list of potential locations of the boot path for different platforms.
          */
-        private static final List<String> BOOT_LOCATIONS = Arrays.asList("jmods", "../jmods");
+        private static final List<String> BOOT_LOCATIONS = Arrays.asList("jmods", "../jmods", "modules");
 
         /**
          * The represented jmod file.
@@ -752,6 +934,8 @@ public interface ClassFileLocator extends Closeable {
             for (File aModule : module) {
                 if (aModule.isFile()) {
                     classFileLocators.add(of(aModule));
+                } else if (aModule.isDirectory()) { // Relevant for locally built OpenJDK.
+                    classFileLocators.add(new ForFolder(aModule));
                 }
             }
             return new Compound(classFileLocators);
@@ -842,11 +1026,13 @@ public interface ClassFileLocator extends Closeable {
             return new ForModuleFile(new ZipFile(file));
         }
 
-        @Override
-        public Resolution locate(String typeName) throws IOException {
-            ZipEntry zipEntry = zipFile.getEntry("classes/" + typeName.replace('.', '/') + CLASS_FILE_EXTENSION);
+        /**
+         * {@inheritDoc}
+         */
+        public Resolution locate(String name) throws IOException {
+            ZipEntry zipEntry = zipFile.getEntry("classes/" + name.replace('.', '/') + CLASS_FILE_EXTENSION);
             if (zipEntry == null) {
-                return new Resolution.Illegal(typeName);
+                return new Resolution.Illegal(name);
             } else {
                 InputStream inputStream = zipFile.getInputStream(zipEntry);
                 try {
@@ -857,7 +1043,9 @@ public interface ClassFileLocator extends Closeable {
             }
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public void close() throws IOException {
             zipFile.close();
         }
@@ -868,7 +1056,7 @@ public interface ClassFileLocator extends Closeable {
      * folders donating packages and class files being saved as {@code <classname>.class} files
      * within their package folder.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class ForFolder implements ClassFileLocator {
 
         /**
@@ -885,9 +1073,11 @@ public interface ClassFileLocator extends Closeable {
             this.folder = folder;
         }
 
-        @Override
-        public Resolution locate(String typeName) throws IOException {
-            File file = new File(folder, typeName.replace('.', File.separatorChar) + CLASS_FILE_EXTENSION);
+        /**
+         * {@inheritDoc}
+         */
+        public Resolution locate(String name) throws IOException {
+            File file = new File(folder, name.replace('.', File.separatorChar) + CLASS_FILE_EXTENSION);
             if (file.exists()) {
                 InputStream inputStream = new FileInputStream(file);
                 try {
@@ -896,13 +1086,102 @@ public interface ClassFileLocator extends Closeable {
                     inputStream.close();
                 }
             } else {
-                return new Resolution.Illegal(typeName);
+                return new Resolution.Illegal(name);
             }
         }
 
-        @Override
-        public void close() throws IOException {
+        /**
+         * {@inheritDoc}
+         */
+        public void close() {
             /* do nothing */
+        }
+    }
+
+    /**
+     * A class file locator that reads class files from one or several URLs. The reading is accomplished via using an {@link URLClassLoader}.
+     * Doing so, boot loader resources might be located additionally to those found via the specified URLs.
+     */
+    @HashCodeAndEqualsPlugin.Enhance
+    class ForUrl implements ClassFileLocator {
+
+        /**
+         * The class loader that delegates to the URLs.
+         */
+        private final ClassLoader classLoader;
+
+        /**
+         * Creates a new class file locator for the given URLs.
+         *
+         * @param url The URLs to search for class files.
+         */
+        public ForUrl(URL... url) {
+            classLoader = doPrivileged(new ClassLoaderCreationAction(url));
+        }
+
+        /**
+         * Creates a new class file locator for the given URLs.
+         *
+         * @param urls The URLs to search for class files.
+         */
+        public ForUrl(Collection<? extends URL> urls) {
+            this(urls.toArray(new URL[0]));
+        }
+
+        /**
+         * A proxy for {@code java.security.AccessController#doPrivileged} that is activated if available.
+         *
+         * @param action The action to execute from a privileged context.
+         * @param <T>    The type of the action's resolved value.
+         * @return The action's resolved value.
+         */
+        @AccessControllerPlugin.Enhance
+        private static <T> T doPrivileged(PrivilegedAction<T> action) {
+            return action.run();
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public Resolution locate(String name) throws IOException {
+            return ForClassLoader.locate(classLoader, name);
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public void close() throws IOException {
+            if (classLoader instanceof Closeable) {
+                ((Closeable) classLoader).close();
+            }
+        }
+
+        /**
+         * An action to create a class loader with the purpose of locating classes from an URL location.
+         */
+        @HashCodeAndEqualsPlugin.Enhance
+        protected static class ClassLoaderCreationAction implements PrivilegedAction<ClassLoader> {
+
+            /**
+             * The URLs to locate classes from.
+             */
+            private final URL[] url;
+
+            /**
+             * Creates a new class loader creation action.
+             *
+             * @param url The URLs to locate classes from.
+             */
+            protected ClassLoaderCreationAction(URL[] url) {
+                this.url = url;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public ClassLoader run() {
+                return new URLClassLoader(url, ClassLoadingStrategy.BOOTSTRAP_LOADER);
+            }
         }
     }
 
@@ -911,23 +1190,13 @@ public interface ClassFileLocator extends Closeable {
      * locator causes a class to be loaded in order to look up its class file. Also, this locator does deliberately not
      * support the look-up of classes that represent lambda expressions.
      */
-    @EqualsAndHashCode
-    class AgentBased implements ClassFileLocator {
+    @HashCodeAndEqualsPlugin.Enhance
+    class ForInstrumentation implements ClassFileLocator {
 
         /**
-         * The name of the Byte Buddy {@code net.bytebuddy.agent.Installer} class.
+         * A dispatcher for interacting with the instrumentation API.
          */
-        private static final String INSTALLER_TYPE = "net.bytebuddy.agent.Installer";
-
-        /**
-         * The name of the {@code net.bytebuddy.agent.Installer} getter for reading an installed {@link Instrumentation}.
-         */
-        private static final String INSTRUMENTATION_GETTER = "getInstrumentation";
-
-        /**
-         * Indicator for access to a static member via reflection to make the code more readable.
-         */
-        private static final Object STATIC_MEMBER = null;
+        private static final Dispatcher DISPATCHER = doPrivileged(JavaDispatcher.of(Dispatcher.class));
 
         /**
          * The instrumentation instance to use for looking up the binary format of a type.
@@ -943,10 +1212,22 @@ public interface ClassFileLocator extends Closeable {
          * Creates an agent-based class file locator.
          *
          * @param instrumentation The instrumentation to be used.
-         * @param classLoader     The class loader to read a class from.
+         * @param classLoader     The class loader to read a class from or {@code null} to use the boot loader.
          */
-        public AgentBased(Instrumentation instrumentation, ClassLoader classLoader) {
+        public ForInstrumentation(Instrumentation instrumentation, @MaybeNull ClassLoader classLoader) {
             this(instrumentation, ClassLoadingDelegate.Default.of(classLoader));
+        }
+
+        /**
+         * A proxy for {@code java.security.AccessController#doPrivileged} that is activated if available.
+         *
+         * @param action The action to execute from a privileged context.
+         * @param <T>    The type of the action's resolved value.
+         * @return The action's resolved value.
+         */
+        @AccessControllerPlugin.Enhance
+        private static <T> T doPrivileged(PrivilegedAction<T> action) {
+            return action.run();
         }
 
         /**
@@ -955,12 +1236,33 @@ public interface ClassFileLocator extends Closeable {
          * @param instrumentation      The instrumentation to be used.
          * @param classLoadingDelegate The delegate responsible for class loading.
          */
-        public AgentBased(Instrumentation instrumentation, ClassLoadingDelegate classLoadingDelegate) {
-            if (!instrumentation.isRetransformClassesSupported()) {
+        public ForInstrumentation(Instrumentation instrumentation, ClassLoadingDelegate classLoadingDelegate) {
+            if (!DISPATCHER.isRetransformClassesSupported(instrumentation)) {
                 throw new IllegalArgumentException(instrumentation + " does not support retransformation");
             }
             this.instrumentation = instrumentation;
             this.classLoadingDelegate = classLoadingDelegate;
+        }
+
+        /**
+         * Resolves the instrumentation provided by {@code net.bytebuddy.agent.Installer}.
+         *
+         * @return The installed instrumentation instance.
+         */
+        private static Instrumentation resolveByteBuddyAgentInstrumentation() {
+            try {
+                Class<?> installer = ClassLoader.getSystemClassLoader().loadClass("net.bytebuddy.agent.Installer");
+                JavaModule source = JavaModule.ofType(AgentBuilder.class), target = JavaModule.ofType(installer);
+                if (source != null && !source.canRead(target)) {
+                    Class<?> module = Class.forName("java.lang.Module");
+                    module.getMethod("addReads", module).invoke(source.unwrap(), target.unwrap());
+                }
+                return (Instrumentation) installer.getMethod("getInstrumentation").invoke(null);
+            } catch (RuntimeException exception) {
+                throw exception;
+            } catch (Exception exception) {
+                throw new IllegalStateException("The Byte Buddy agent is not installed or not accessible", exception);
+            }
         }
 
         /**
@@ -970,17 +1272,8 @@ public interface ClassFileLocator extends Closeable {
          * @param classLoader The class loader that is expected to load the looked-up a class.
          * @return A class file locator for the given class loader based on a Byte Buddy agent.
          */
-        public static ClassFileLocator fromInstalledAgent(ClassLoader classLoader) {
-            try {
-                return new AgentBased((Instrumentation) ClassLoader.getSystemClassLoader()
-                        .loadClass(INSTALLER_TYPE)
-                        .getMethod(INSTRUMENTATION_GETTER)
-                        .invoke(STATIC_MEMBER), classLoader);
-            } catch (RuntimeException exception) {
-                throw exception;
-            } catch (Exception exception) {
-                throw new IllegalStateException("The Byte Buddy agent is not installed or not accessible", exception);
-            }
+        public static ClassFileLocator fromInstalledAgent(@MaybeNull ClassLoader classLoader) {
+            return new ForInstrumentation(resolveByteBuddyAgentInstrumentation(), classLoader);
         }
 
         /**
@@ -991,19 +1284,21 @@ public interface ClassFileLocator extends Closeable {
          * @return A class file locator for locating the class file of the given type.
          */
         public static ClassFileLocator of(Instrumentation instrumentation, Class<?> type) {
-            return new AgentBased(instrumentation, ClassLoadingDelegate.Explicit.of(type));
+            return new ForInstrumentation(instrumentation, ClassLoadingDelegate.Explicit.of(type));
         }
 
-        @Override
-        public Resolution locate(String typeName) {
+        /**
+         * {@inheritDoc}
+         */
+        public Resolution locate(String name) {
             try {
-                ExtractionClassFileTransformer classFileTransformer = new ExtractionClassFileTransformer(classLoadingDelegate.getClassLoader(), typeName);
-                instrumentation.addTransformer(classFileTransformer, true);
+                ExtractionClassFileTransformer classFileTransformer = new ExtractionClassFileTransformer(classLoadingDelegate.getClassLoader(), name);
+                DISPATCHER.addTransformer(instrumentation, classFileTransformer, true);
                 try {
-                    instrumentation.retransformClasses(classLoadingDelegate.locate(typeName));
+                    DISPATCHER.retransformClasses(instrumentation, new Class<?>[]{classLoadingDelegate.locate(name)});
                     byte[] binaryRepresentation = classFileTransformer.getBinaryRepresentation();
                     return binaryRepresentation == null
-                            ? new Resolution.Illegal(typeName)
+                            ? new Resolution.Illegal(name)
                             : new Resolution.Explicit(binaryRepresentation);
                 } finally {
                     instrumentation.removeTransformer(classFileTransformer);
@@ -1011,13 +1306,48 @@ public interface ClassFileLocator extends Closeable {
             } catch (RuntimeException exception) {
                 throw exception;
             } catch (Exception ignored) {
-                return new Resolution.Illegal(typeName);
+                return new Resolution.Illegal(name);
             }
         }
 
-        @Override
-        public void close() throws IOException {
+        /**
+         * {@inheritDoc}
+         */
+        public void close() {
             /* do nothing */
+        }
+
+        /**
+         * A dispatcher to interact with the {@link Instrumentation} API.
+         */
+        @JavaDispatcher.Proxied("java.lang.instrument.Instrumentation")
+        protected interface Dispatcher {
+
+            /**
+             * Invokes the {@code Instrumentation#isRetransformClassesSupported} method.
+             *
+             * @param instrumentation The instrumentation instance to invoke the method on.
+             * @return {@code true} if the supplied instrumentation instance supports retransformation.
+             */
+            boolean isRetransformClassesSupported(Instrumentation instrumentation);
+
+            /**
+             * Registers a transformer.
+             *
+             * @param instrumentation      The instrumentation instance to invoke the method on.
+             * @param classFileTransformer The class file transformer to register.
+             * @param canRetransform       {@code true} if the class file transformer should be invoked upon a retransformation.
+             */
+            void addTransformer(Instrumentation instrumentation, ClassFileTransformer classFileTransformer, boolean canRetransform);
+
+            /**
+             * Retransforms the supplied classes.
+             *
+             * @param instrumentation The instrumentation instance to invoke the method on.
+             * @param type            The types to retransform.
+             * @throws UnmodifiableClassException If any of the supplied types are unmodifiable.
+             */
+            void retransformClasses(Instrumentation instrumentation, Class<?>[] type) throws UnmodifiableClassException;
         }
 
         /**
@@ -1039,13 +1369,19 @@ public interface ClassFileLocator extends Closeable {
              *
              * @return The underlying class loader.
              */
+            @MaybeNull
             ClassLoader getClassLoader();
 
             /**
              * A default implementation of a class loading delegate.
              */
-            @EqualsAndHashCode
+            @HashCodeAndEqualsPlugin.Enhance
             class Default implements ClassLoadingDelegate {
+
+                /**
+                 * A class loader that does not define resources of its own but allows querying for resources supplied by the boot loader.
+                 */
+                private static final ClassLoader BOOT_LOADER_PROXY = doPrivileged(BootLoaderProxyCreationAction.INSTANCE);
 
                 /**
                  * The underlying class loader.
@@ -1064,23 +1400,48 @@ public interface ClassFileLocator extends Closeable {
                 /**
                  * Creates a class loading delegate for the given class loader.
                  *
-                 * @param classLoader The class loader for which to create a delegate.
+                 * @param classLoader The class loader for which to create a delegate or {@code null} to use the boot loader.
                  * @return The class loading delegate for the provided class loader.
                  */
-                public static ClassLoadingDelegate of(ClassLoader classLoader) {
+                public static ClassLoadingDelegate of(@MaybeNull ClassLoader classLoader) {
                     return ForDelegatingClassLoader.isDelegating(classLoader)
                             ? new ForDelegatingClassLoader(classLoader)
-                            : new Default(classLoader == null ? ClassLoader.getSystemClassLoader() : classLoader);
+                            : new Default(classLoader == null ? BOOT_LOADER_PROXY : classLoader);
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public Class<?> locate(String name) throws ClassNotFoundException {
                     return classLoader.loadClass(name);
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
+                @MaybeNull
                 public ClassLoader getClassLoader() {
-                    return classLoader;
+                    return classLoader == BOOT_LOADER_PROXY
+                            ? ClassLoadingStrategy.BOOTSTRAP_LOADER
+                            : classLoader;
+                }
+
+                /**
+                 * A privileged action for creating a proxy class loader for the boot class loader.
+                 */
+                protected enum BootLoaderProxyCreationAction implements PrivilegedAction<ClassLoader> {
+
+                    /**
+                     * The singleton instance.
+                     */
+                    INSTANCE;
+
+                    /**
+                     * {@inheritDoc}
+                     */
+                    public ClassLoader run() {
+                        return new URLClassLoader(new URL[0], ClassLoadingStrategy.BOOTSTRAP_LOADER);
+                    }
                 }
             }
 
@@ -1103,7 +1464,7 @@ public interface ClassFileLocator extends Closeable {
                 /**
                  * A dispatcher for extracting a class loader's loaded classes.
                  */
-                private static final Dispatcher.Initializable DISPATCHER = AccessController.doPrivileged(Dispatcher.CreationAction.INSTANCE);
+                private static final Dispatcher.Initializable DISPATCHER = doPrivileged(Dispatcher.CreationAction.INSTANCE);
 
                 /**
                  * Creates a class loading delegate for a delegating class loader.
@@ -1115,17 +1476,30 @@ public interface ClassFileLocator extends Closeable {
                 }
 
                 /**
+                 * A proxy for {@code java.security.AccessController#doPrivileged} that is activated if available.
+                 *
+                 * @param action The action to execute from a privileged context.
+                 * @param <T>    The type of the action's resolved value.
+                 * @return The action's resolved value.
+                 */
+                @AccessControllerPlugin.Enhance
+                private static <T> T doPrivileged(PrivilegedAction<T> action) {
+                    return action.run();
+                }
+
+                /**
                  * Checks if a class loader is a delegating class loader.
                  *
-                 * @param classLoader The class loader to inspect.
+                 * @param classLoader The class loader to inspect or {@code null} to check the boot loader.
                  * @return {@code true} if the class loader is a delegating class loader.
                  */
-                protected static boolean isDelegating(ClassLoader classLoader) {
+                protected static boolean isDelegating(@MaybeNull ClassLoader classLoader) {
                     return classLoader != null && classLoader.getClass().getName().equals(DELEGATING_CLASS_LOADER_NAME);
                 }
 
-                @Override
-                @SuppressWarnings("unchecked")
+                /**
+                 * {@inheritDoc}
+                 */
                 public Class<?> locate(String name) throws ClassNotFoundException {
                     Vector<Class<?>> classes;
                     try {
@@ -1178,12 +1552,14 @@ public interface ClassFileLocator extends Closeable {
                          */
                         INSTANCE;
 
-                        @Override
+                        /**
+                         * {@inheritDoc}
+                         */
                         public Initializable run() {
                             try {
                                 return new Dispatcher.Resolved(ClassLoader.class.getDeclaredField("classes"));
                             } catch (Exception exception) {
-                                return new Dispatcher.Unresolved(exception);
+                                return new Dispatcher.Unresolved(exception.getMessage());
                             }
                         }
                     }
@@ -1191,7 +1567,7 @@ public interface ClassFileLocator extends Closeable {
                     /**
                      * Represents a field that could be located.
                      */
-                    @EqualsAndHashCode
+                    @HashCodeAndEqualsPlugin.Enhance
                     class Resolved implements Dispatcher, Initializable, PrivilegedAction<Dispatcher> {
 
                         /**
@@ -1208,12 +1584,28 @@ public interface ClassFileLocator extends Closeable {
                             this.field = field;
                         }
 
-                        @Override
-                        public Dispatcher initialize() {
-                            return AccessController.doPrivileged(this);
+                        /**
+                         * A proxy for {@code java.security.AccessController#doPrivileged} that is activated if available.
+                         *
+                         * @param action The action to execute from a privileged context.
+                         * @param <T>    The type of the action's resolved value.
+                         * @return The action's resolved value.
+                         */
+                        @AccessControllerPlugin.Enhance
+                        private static <T> T doPrivileged(PrivilegedAction<T> action) {
+                            return action.run();
                         }
 
-                        @Override
+                        /**
+                         * {@inheritDoc}
+                         */
+                        public Dispatcher initialize() {
+                            return doPrivileged(this);
+                        }
+
+                        /**
+                         * {@inheritDoc}
+                         */
                         @SuppressWarnings("unchecked")
                         public Vector<Class<?>> extract(ClassLoader classLoader) {
                             try {
@@ -1223,7 +1615,9 @@ public interface ClassFileLocator extends Closeable {
                             }
                         }
 
-                        @Override
+                        /**
+                         * {@inheritDoc}
+                         */
                         public Dispatcher run() {
                             field.setAccessible(true);
                             return this;
@@ -1233,26 +1627,28 @@ public interface ClassFileLocator extends Closeable {
                     /**
                      * Represents a field that could not be located.
                      */
-                    @EqualsAndHashCode
+                    @HashCodeAndEqualsPlugin.Enhance
                     class Unresolved implements Initializable {
 
                         /**
-                         * The exception that occurred when attempting to locate the field.
+                         * The reason why this dispatcher is unavailable.
                          */
-                        private final Exception exception;
+                        private final String message;
 
                         /**
                          * Creates a representation of a non-resolved field.
                          *
-                         * @param exception The exception that occurred when attempting to locate the field.
+                         * @param message The reason why this dispatcher is unavailable.
                          */
-                        public Unresolved(Exception exception) {
-                            this.exception = exception;
+                        public Unresolved(String message) {
+                            this.message = message;
                         }
 
-                        @Override
+                        /**
+                         * {@inheritDoc}
+                         */
                         public Dispatcher initialize() {
-                            throw new IllegalStateException("Could not locate classes vector", exception);
+                            throw new UnsupportedOperationException("Could not locate classes vector: " + message);
                         }
                     }
                 }
@@ -1263,7 +1659,7 @@ public interface ClassFileLocator extends Closeable {
              * be located by a class loader directly. This allows for locating classes that are loaded by
              * an anonymous class loader which does not register its classes in a system dictionary.
              */
-            @EqualsAndHashCode
+            @HashCodeAndEqualsPlugin.Enhance
             class Explicit implements ClassLoadingDelegate {
 
                 /**
@@ -1283,7 +1679,7 @@ public interface ClassFileLocator extends Closeable {
                  * @param classLoader The class loader to be used for looking up classes.
                  * @param types       A collection of classes that cannot be looked up explicitly.
                  */
-                public Explicit(ClassLoader classLoader, Collection<? extends Class<?>> types) {
+                public Explicit(@MaybeNull ClassLoader classLoader, Collection<? extends Class<?>> types) {
                     this(Default.of(classLoader), types);
                 }
 
@@ -1313,7 +1709,9 @@ public interface ClassFileLocator extends Closeable {
                     return new Explicit(type.getClassLoader(), Collections.singleton(type));
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public Class<?> locate(String name) throws ClassNotFoundException {
                     Class<?> type = types.get(name);
                     return type == null
@@ -1321,7 +1719,10 @@ public interface ClassFileLocator extends Closeable {
                             : type;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
+                @MaybeNull
                 public ClassLoader getClassLoader() {
                     return fallbackDelegate.getClassLoader();
                 }
@@ -1336,11 +1737,13 @@ public interface ClassFileLocator extends Closeable {
             /**
              * An indicator that an attempted class file transformation did not alter the handed class file.
              */
+            @AlwaysNull
             private static final byte[] DO_NOT_TRANSFORM = null;
 
             /**
              * The class loader that is expected to have loaded the looked-up a class.
              */
+            @MaybeNull
             private final ClassLoader classLoader;
 
             /**
@@ -1351,6 +1754,7 @@ public interface ClassFileLocator extends Closeable {
             /**
              * The binary representation of the looked-up class.
              */
+            @MaybeNull
             @SuppressFBWarnings(value = "VO_VOLATILE_REFERENCE_TO_ARRAY", justification = "The array is not to be modified by contract")
             private volatile byte[] binaryRepresentation;
 
@@ -1360,16 +1764,19 @@ public interface ClassFileLocator extends Closeable {
              * @param classLoader The class loader that is expected to have loaded the looked-up a class.
              * @param typeName    The name of the type to look up.
              */
-            protected ExtractionClassFileTransformer(ClassLoader classLoader, String typeName) {
+            protected ExtractionClassFileTransformer(@MaybeNull ClassLoader classLoader, String typeName) {
                 this.classLoader = classLoader;
                 this.typeName = typeName;
             }
 
-            @Override
-            @SuppressFBWarnings(value = {"EI_EXPOSE_REP", "EI_EXPOSE_REP2"}, justification = "The array is not to be modified by contract")
-            public byte[] transform(ClassLoader classLoader,
-                                    String internalName,
-                                    Class<?> redefinedType,
+            /**
+             * {@inheritDoc}
+             */
+            @MaybeNull
+            @SuppressFBWarnings(value = {"EI_EXPOSE_REP", "EI_EXPOSE_REP2"}, justification = "The array is not modified by class contract.")
+            public byte[] transform(@MaybeNull ClassLoader classLoader,
+                                    @MaybeNull String internalName,
+                                    @MaybeNull Class<?> redefinedType,
                                     ProtectionDomain protectionDomain,
                                     byte[] binaryRepresentation) {
                 if (internalName != null && isChildOf(this.classLoader).matches(classLoader) && typeName.equals(internalName.replace('/', '.'))) {
@@ -1384,6 +1791,7 @@ public interface ClassFileLocator extends Closeable {
              * @return The binary representation of the class file or {@code null} if no such class file could
              * be located.
              */
+            @MaybeNull
             @SuppressFBWarnings(value = "EI_EXPOSE_REP", justification = "The array is not to be modified by contract")
             protected byte[] getBinaryRepresentation() {
                 return binaryRepresentation;
@@ -1394,7 +1802,7 @@ public interface ClassFileLocator extends Closeable {
     /**
      * A class file locator that discriminates by a type's package.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class PackageDiscriminating implements ClassFileLocator {
 
         /**
@@ -1411,18 +1819,22 @@ public interface ClassFileLocator extends Closeable {
             this.classFileLocators = classFileLocators;
         }
 
-        @Override
-        public Resolution locate(String typeName) throws IOException {
-            int packageIndex = typeName.lastIndexOf('.');
+        /**
+         * {@inheritDoc}
+         */
+        public Resolution locate(String name) throws IOException {
+            int packageIndex = name.lastIndexOf('.');
             ClassFileLocator classFileLocator = classFileLocators.get(packageIndex == -1
                     ? NamedElement.EMPTY_NAME
-                    : typeName.substring(0, packageIndex));
+                    : name.substring(0, packageIndex));
             return classFileLocator == null
-                    ? new Resolution.Illegal(typeName)
-                    : classFileLocator.locate(typeName);
+                    ? new Resolution.Illegal(name)
+                    : classFileLocator.locate(name);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public void close() throws IOException {
             for (ClassFileLocator classFileLocator : classFileLocators.values()) {
                 classFileLocator.close();
@@ -1435,7 +1847,7 @@ public interface ClassFileLocator extends Closeable {
      * Any class file locator is queried in the supplied order until one locator is able to provide an input
      * stream of the class file.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class Compound implements ClassFileLocator, Closeable {
 
         /**
@@ -1471,18 +1883,22 @@ public interface ClassFileLocator extends Closeable {
             }
         }
 
-        @Override
-        public Resolution locate(String typeName) throws IOException {
+        /**
+         * {@inheritDoc}
+         */
+        public Resolution locate(String name) throws IOException {
             for (ClassFileLocator classFileLocator : classFileLocators) {
-                Resolution resolution = classFileLocator.locate(typeName);
+                Resolution resolution = classFileLocator.locate(name);
                 if (resolution.isResolved()) {
                     return resolution;
                 }
             }
-            return new Resolution.Illegal(typeName);
+            return new Resolution.Illegal(name);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public void close() throws IOException {
             for (ClassFileLocator classFileLocator : classFileLocators) {
                 classFileLocator.close();

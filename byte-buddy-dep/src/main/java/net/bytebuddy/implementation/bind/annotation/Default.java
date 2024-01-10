@@ -1,6 +1,21 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation.bind.annotation;
 
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.annotation.AnnotationDescription;
 import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.method.MethodList;
@@ -71,17 +86,21 @@ public @interface Default {
          * Extracts method references of the default annotation.
          */
         static {
-            MethodList<MethodDescription.InDefinedShape> annotationProperties = new TypeDescription.ForLoadedType(Default.class).getDeclaredMethods();
+            MethodList<MethodDescription.InDefinedShape> annotationProperties = TypeDescription.ForLoadedType.of(Default.class).getDeclaredMethods();
             SERIALIZABLE_PROXY = annotationProperties.filter(named("serializableProxy")).getOnly();
             PROXY_TYPE = annotationProperties.filter(named("proxyType")).getOnly();
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Class<Default> getHandledType() {
             return Default.class;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public MethodDelegationBinder.ParameterBinding<?> bind(AnnotationDescription.Loadable<Default> annotation,
                                                                MethodDescription source,
                                                                ParameterDescription target,
@@ -124,7 +143,9 @@ public @interface Default {
                  */
                 INSTANCE;
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public TypeDescription resolve(TypeDescription.Generic parameterType) {
                     return parameterType.asErasure();
                 }
@@ -133,7 +154,7 @@ public @interface Default {
             /**
              * A type locator that returns a given type.
              */
-            @EqualsAndHashCode
+            @HashCodeAndEqualsPlugin.Enhance
             class ForType implements TypeLocator {
 
                 /**
@@ -166,7 +187,9 @@ public @interface Default {
                     }
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public TypeDescription resolve(TypeDescription.Generic parameterType) {
                     if (!typeDescription.isAssignableTo(parameterType.asErasure())) {
                         throw new IllegalStateException("Impossible to assign " + typeDescription + " to parameter of type " + parameterType);

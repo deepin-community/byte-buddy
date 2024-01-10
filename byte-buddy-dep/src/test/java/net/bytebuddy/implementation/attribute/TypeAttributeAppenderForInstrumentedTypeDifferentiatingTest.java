@@ -1,18 +1,13 @@
 package net.bytebuddy.implementation.attribute;
 
-import net.bytebuddy.description.annotation.AnnotationDescription;
 import net.bytebuddy.description.annotation.AnnotationList;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.description.type.TypeList;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.Mock;
 import org.objectweb.asm.Type;
 import org.objectweb.asm.TypeReference;
-
-import java.util.Arrays;
-import java.util.Random;
 
 import static org.mockito.Mockito.*;
 
@@ -21,8 +16,8 @@ public class TypeAttributeAppenderForInstrumentedTypeDifferentiatingTest extends
     @Mock
     private TypeDescription.Generic pseudoType;
 
-    @Override
     @Before
+    @Override
     public void setUp() throws Exception {
         super.setUp();
         when(pseudoType.asGenericType()).thenReturn(pseudoType);
@@ -34,7 +29,7 @@ public class TypeAttributeAppenderForInstrumentedTypeDifferentiatingTest extends
         when(instrumentedType.getInterfaces()).thenReturn(new TypeList.Generic.Empty());
         when(instrumentedType.getDeclaredAnnotations()).thenReturn(new AnnotationList.ForLoadedAnnotations(new Baz.Instance(), new Qux.Instance()));
         new TypeAttributeAppender.ForInstrumentedType.Differentiating(1, 0, 0).apply(classVisitor, instrumentedType, annotationValueFilter);
-        verifyZeroInteractions(classVisitor);
+        verifyNoMoreInteractions(classVisitor);
         verify(instrumentedType).getDeclaredAnnotations();
         verify(instrumentedType).getInterfaces();
         verify(instrumentedType).getTypeVariables();
@@ -48,7 +43,7 @@ public class TypeAttributeAppenderForInstrumentedTypeDifferentiatingTest extends
         when(instrumentedType.getDeclaredAnnotations()).thenReturn(new AnnotationList.ForLoadedAnnotations(new QuxBaz.Instance(), new Baz.Instance()));
         new TypeAttributeAppender.ForInstrumentedType.Differentiating(1, 0, 0).apply(classVisitor, instrumentedType, annotationValueFilter);
         verify(classVisitor).visitAnnotation(Type.getDescriptor(Baz.class), true);
-        verifyZeroInteractions(classVisitor);
+        verifyNoMoreInteractions(classVisitor);
         verify(instrumentedType).getDeclaredAnnotations();
         verify(instrumentedType).getInterfaces();
         verify(instrumentedType).getTypeVariables();
@@ -62,7 +57,7 @@ public class TypeAttributeAppenderForInstrumentedTypeDifferentiatingTest extends
         when(instrumentedType.getDeclaredAnnotations()).thenReturn(new AnnotationList.ForLoadedAnnotations(new Baz.Instance(), new QuxBaz.Instance()));
         new TypeAttributeAppender.ForInstrumentedType.Differentiating(1, 0, 0).apply(classVisitor, instrumentedType, annotationValueFilter);
         verify(classVisitor).visitAnnotation(Type.getDescriptor(QuxBaz.class), false);
-        verifyZeroInteractions(classVisitor);
+        verifyNoMoreInteractions(classVisitor);
         verify(instrumentedType).getDeclaredAnnotations();
         verify(instrumentedType).getInterfaces();
         verify(instrumentedType).getTypeVariables();
@@ -76,7 +71,7 @@ public class TypeAttributeAppenderForInstrumentedTypeDifferentiatingTest extends
         when(simpleAnnotatedType.getDeclaredAnnotations()).thenReturn(new AnnotationList.ForLoadedAnnotations(new Qux.Instance()));
         when(instrumentedType.getDeclaredAnnotations()).thenReturn(new AnnotationList.Empty());
         new TypeAttributeAppender.ForInstrumentedType.Differentiating(0, 0, 1).apply(classVisitor, instrumentedType, annotationValueFilter);
-        verifyZeroInteractions(classVisitor);
+        verifyNoMoreInteractions(classVisitor);
         verify(instrumentedType).getDeclaredAnnotations();
         verify(instrumentedType).getInterfaces();
         verify(instrumentedType).getTypeVariables();
@@ -121,7 +116,7 @@ public class TypeAttributeAppenderForInstrumentedTypeDifferentiatingTest extends
         when(instrumentedType.getInterfaces()).thenReturn(new TypeList.Generic.Empty());
         when(instrumentedType.getDeclaredAnnotations()).thenReturn(new AnnotationList.Empty());
         new TypeAttributeAppender.ForInstrumentedType.Differentiating(0, 1, 0).apply(classVisitor, instrumentedType, annotationValueFilter);
-        verifyZeroInteractions(classVisitor);
+        verifyNoMoreInteractions(classVisitor);
         verify(instrumentedType).getDeclaredAnnotations();
         verify(instrumentedType).getInterfaces();
         verify(instrumentedType).getTypeVariables();
@@ -172,18 +167,5 @@ public class TypeAttributeAppenderForInstrumentedTypeDifferentiatingTest extends
         verify(instrumentedType).getInterfaces();
         verify(instrumentedType).getTypeVariables();
         verifyNoMoreInteractions(instrumentedType);
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(TypeAttributeAppender.ForInstrumentedType.Differentiating.class).refine(new ObjectPropertyAssertion.Refinement<TypeDescription>() {
-            @Override
-            public void apply(TypeDescription mock) {
-                AnnotationDescription[] annotationDescription = new AnnotationDescription[new Random().nextInt(10000)];
-                when(mock.getDeclaredAnnotations()).thenReturn(new AnnotationList.Explicit(Arrays.asList(annotationDescription)));
-                when(mock.getTypeVariables()).thenReturn(new TypeList.Generic.Empty());
-                when(mock.getInterfaces()).thenReturn(new TypeList.Generic.Empty());
-            }
-        }).apply();
     }
 }

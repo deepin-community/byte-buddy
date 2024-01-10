@@ -1,11 +1,27 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.dynamic;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.dynamic.loading.ClassLoadingStrategy;
 import net.bytebuddy.dynamic.scaffold.TypeInitializer;
 import net.bytebuddy.implementation.LoadedTypeInitializer;
+import net.bytebuddy.utility.nullability.MaybeNull;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -47,7 +63,7 @@ public interface TypeResolutionStrategy {
          * @return A map of all type descriptions mapped to their representation as a loaded class.
          */
         <S extends ClassLoader> Map<TypeDescription, Class<?>> initialize(DynamicType dynamicType,
-                                                                          S classLoader,
+                                                                          @MaybeNull S classLoader,
                                                                           ClassLoadingStrategy<? super S> classLoadingStrategy);
     }
 
@@ -62,19 +78,25 @@ public interface TypeResolutionStrategy {
          */
         INSTANCE;
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Resolved resolve() {
             return this;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public TypeInitializer injectedInto(TypeInitializer typeInitializer) {
             return typeInitializer;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public <S extends ClassLoader> Map<TypeDescription, Class<?>> initialize(DynamicType dynamicType,
-                                                                                 S classLoader,
+                                                                                 @MaybeNull S classLoader,
                                                                                  ClassLoadingStrategy<? super S> classLoadingStrategy) {
             Map<TypeDescription, Class<?>> types = classLoadingStrategy.load(classLoader, dynamicType.getAllTypes());
             for (Map.Entry<TypeDescription, LoadedTypeInitializer> entry : dynamicType.getLoadedTypeInitializers().entrySet()) {
@@ -88,7 +110,7 @@ public interface TypeResolutionStrategy {
      * A type resolution strategy that applies all {@link LoadedTypeInitializer} as a part of class loading using reflection. This implies that the initializers
      * are executed <b>before</b> (as a first action of) a type initializer is executed.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class Active implements TypeResolutionStrategy {
 
         /**
@@ -112,8 +134,10 @@ public interface TypeResolutionStrategy {
             this.nexusAccessor = nexusAccessor;
         }
 
-        @Override
-        @SuppressFBWarnings(value = "DMI_RANDOM_USED_ONLY_ONCE", justification = "Avoid thread-contention")
+        /**
+         * {@inheritDoc}
+         */
+        @SuppressFBWarnings(value = "DMI_RANDOM_USED_ONLY_ONCE", justification = "Avoids thread-contention.")
         public TypeResolutionStrategy.Resolved resolve() {
             return new Resolved(nexusAccessor, new Random().nextInt());
         }
@@ -121,7 +145,7 @@ public interface TypeResolutionStrategy {
         /**
          * A resolved version of an active type resolution strategy.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         protected static class Resolved implements TypeResolutionStrategy.Resolved {
 
             /**
@@ -145,14 +169,18 @@ public interface TypeResolutionStrategy {
                 this.identification = identification;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public TypeInitializer injectedInto(TypeInitializer typeInitializer) {
                 return typeInitializer.expandWith(new NexusAccessor.InitializationAppender(identification));
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public <S extends ClassLoader> Map<TypeDescription, Class<?>> initialize(DynamicType dynamicType,
-                                                                                     S classLoader,
+                                                                                     @MaybeNull S classLoader,
                                                                                      ClassLoadingStrategy<? super S> classLoadingStrategy) {
                 Map<TypeDescription, LoadedTypeInitializer> loadedTypeInitializers = new HashMap<TypeDescription, LoadedTypeInitializer>(dynamicType.getLoadedTypeInitializers());
                 TypeDescription instrumentedType = dynamicType.getTypeDescription();
@@ -179,19 +207,25 @@ public interface TypeResolutionStrategy {
          */
         INSTANCE;
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Resolved resolve() {
             return this;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public TypeInitializer injectedInto(TypeInitializer typeInitializer) {
             return typeInitializer;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public <S extends ClassLoader> Map<TypeDescription, Class<?>> initialize(DynamicType dynamicType,
-                                                                                 S classLoader,
+                                                                                 @MaybeNull S classLoader,
                                                                                  ClassLoadingStrategy<? super S> classLoadingStrategy) {
             return classLoadingStrategy.load(classLoader, dynamicType.getAllTypes());
         }
@@ -207,19 +241,25 @@ public interface TypeResolutionStrategy {
          */
         INSTANCE;
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Resolved resolve() {
             return this;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public TypeInitializer injectedInto(TypeInitializer typeInitializer) {
             return typeInitializer;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public <S extends ClassLoader> Map<TypeDescription, Class<?>> initialize(DynamicType dynamicType,
-                                                                                 S classLoader,
+                                                                                 @MaybeNull S classLoader,
                                                                                  ClassLoadingStrategy<? super S> classLoadingStrategy) {
             throw new IllegalStateException("Cannot initialize a dynamic type for a disabled type resolution strategy");
         }

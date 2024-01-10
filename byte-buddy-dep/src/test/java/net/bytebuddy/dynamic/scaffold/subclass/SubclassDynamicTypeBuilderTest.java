@@ -5,24 +5,21 @@ import net.bytebuddy.description.annotation.AnnotationDescription;
 import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.modifier.Visibility;
 import net.bytebuddy.description.type.PackageDescription;
+import net.bytebuddy.description.type.TypeDefinition;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.dynamic.AbstractDynamicTypeBuilderTest;
+import net.bytebuddy.dynamic.ClassFileLocator;
 import net.bytebuddy.dynamic.DynamicType;
 import net.bytebuddy.dynamic.TargetType;
 import net.bytebuddy.dynamic.loading.ByteArrayClassLoader;
 import net.bytebuddy.dynamic.loading.ClassLoadingStrategy;
-import net.bytebuddy.dynamic.loading.PackageDefinitionStrategy;
 import net.bytebuddy.dynamic.scaffold.TypeValidation;
-import net.bytebuddy.implementation.FixedValue;
-import net.bytebuddy.implementation.Implementation;
-import net.bytebuddy.implementation.MethodDelegation;
-import net.bytebuddy.implementation.StubMethod;
+import net.bytebuddy.implementation.*;
 import net.bytebuddy.implementation.bytecode.constant.TextConstant;
 import net.bytebuddy.implementation.bytecode.member.MethodReturn;
 import net.bytebuddy.test.scope.GenericType;
-import net.bytebuddy.test.utility.ClassFileExtraction;
+import net.bytebuddy.test.utility.InjectionStrategyResolver;
 import net.bytebuddy.test.utility.JavaVersionRule;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.hamcrest.CoreMatchers;
 import org.junit.Rule;
 import org.junit.Test;
@@ -32,13 +29,8 @@ import org.objectweb.asm.Opcodes;
 import java.lang.annotation.Annotation;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
-import java.lang.reflect.Type;
-import java.security.ProtectionDomain;
+import java.lang.reflect.*;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
@@ -50,15 +42,15 @@ import static org.hamcrest.MatcherAssert.assertThat;
 
 public class SubclassDynamicTypeBuilderTest extends AbstractDynamicTypeBuilderTest {
 
-    private static final String TYPE_VARIABLE_NAME = "net.bytebuddy.test.precompiled.TypeAnnotation", VALUE = "value";
+    private static final String TYPE_VARIABLE_NAME = "net.bytebuddy.test.precompiled.v8.TypeAnnotation", VALUE = "value";
 
     private static final String FOO = "foo", BAR = "bar", QUX = "qux";
 
     private static final int BAZ = 42;
 
-    private static final String DEFAULT_METHOD_INTERFACE = "net.bytebuddy.test.precompiled.SingleDefaultMethodInterface";
+    private static final String DEFAULT_METHOD_INTERFACE = "net.bytebuddy.test.precompiled.v8.SingleDefaultMethodInterface";
 
-    private static final String PARAMETER_NAME_CLASS = "net.bytebuddy.test.precompiled.ParameterNames";
+    private static final String PARAMETER_NAME_CLASS = "net.bytebuddy.test.precompiled.v8parameters.ParameterNames";
 
     private static final Object STATIC_FIELD = null;
 
@@ -67,12 +59,14 @@ public class SubclassDynamicTypeBuilderTest extends AbstractDynamicTypeBuilderTe
     @Rule
     public MethodRule javaVersionRule = new JavaVersionRule();
 
-    @Override
     protected DynamicType.Builder<?> createPlain() {
         return new ByteBuddy().subclass(Object.class);
     }
 
-    @Override
+    protected DynamicType.Builder<?> createPlainEmpty() {
+        return createPlain();
+    }
+
     protected DynamicType.Builder<?> createPlainWithoutValidation() {
         return new ByteBuddy().with(TypeValidation.DISABLED).subclass(Object.class);
     }
@@ -174,7 +168,7 @@ public class SubclassDynamicTypeBuilderTest extends AbstractDynamicTypeBuilderTe
     }
 
     @Test
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings({"unchecked", "rawtypes"})
     public void testEnumerationDefinition() throws Exception {
         Class<? extends Enum<?>> type = new ByteBuddy()
                 .makeEnumeration(FOO, BAR)
@@ -189,10 +183,10 @@ public class SubclassDynamicTypeBuilderTest extends AbstractDynamicTypeBuilderTe
         assertThat(type.isInterface(), is(false));
         assertThat(type.isAnnotation(), is(false));
         assertThat(type.isEnum(), is(true));
-        Enum foo = Enum.valueOf((Class) type, FOO);
+        Enum<?> foo = Enum.valueOf((Class) type, FOO);
         assertThat(foo.name(), is(FOO));
         assertThat(foo.ordinal(), is(0));
-        Enum bar = Enum.valueOf((Class) type, BAR);
+        Enum<?> bar = Enum.valueOf((Class) type, BAR);
         assertThat(bar.name(), is(BAR));
         assertThat(bar.ordinal(), is(1));
     }
@@ -203,7 +197,7 @@ public class SubclassDynamicTypeBuilderTest extends AbstractDynamicTypeBuilderTe
                 .makePackage(FOO)
                 .annotateType(AnnotationDescription.Builder.ofType(Foo.class).build())
                 .make()
-                .load(getClass().getClassLoader(), ClassLoadingStrategy.Default.INJECTION)
+                .load(getClass().getClassLoader(), ClassLoadingStrategy.Default.WRAPPER)
                 .getLoaded();
         assertThat(packageType.getSimpleName(), is(PackageDescription.PACKAGE_CLASS_NAME));
         assertThat(packageType.getName(), is(FOO + "." + PackageDescription.PACKAGE_CLASS_NAME));
@@ -300,8 +294,8 @@ public class SubclassDynamicTypeBuilderTest extends AbstractDynamicTypeBuilderTe
                 .method(isDeclaredBy(PackagePrivateReturnType.class))
                 .intercept(StubMethod.INSTANCE)
                 .make()
-                .load(new ByteArrayClassLoader(ClassLoadingStrategy.BOOTSTRAP_LOADER,
-                        ClassFileExtraction.of(PackagePrivateReturnType.class, PackagePrivateReturnType.Argument.class)), ClassLoadingStrategy.Default.WRAPPER)
+                .load(new ByteArrayClassLoader(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassFileLocator.ForClassLoader.readToNames(PackagePrivateReturnType.class,
+                        PackagePrivateReturnType.Argument.class)), ClassLoadingStrategy.Default.WRAPPER)
                 .getLoaded();
         assertThat(type.getDeclaredMethods().length, is(0));
     }
@@ -314,8 +308,8 @@ public class SubclassDynamicTypeBuilderTest extends AbstractDynamicTypeBuilderTe
                 .method(isDeclaredBy(PackagePrivateArgumentType.class))
                 .intercept(StubMethod.INSTANCE)
                 .make()
-                .load(new ByteArrayClassLoader(ClassLoadingStrategy.BOOTSTRAP_LOADER,
-                        ClassFileExtraction.of(PackagePrivateArgumentType.class, PackagePrivateArgumentType.Argument.class)), ClassLoadingStrategy.Default.WRAPPER)
+                .load(new ByteArrayClassLoader(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassFileLocator.ForClassLoader.readToNames(PackagePrivateArgumentType.class,
+                        PackagePrivateArgumentType.Argument.class)), ClassLoadingStrategy.Default.WRAPPER)
                 .getLoaded();
         assertThat(type.getDeclaredMethods().length, is(0));
     }
@@ -327,8 +321,8 @@ public class SubclassDynamicTypeBuilderTest extends AbstractDynamicTypeBuilderTe
                 .method(isDeclaredBy(PrivateMethod.class))
                 .intercept(StubMethod.INSTANCE)
                 .make()
-                .load(new ByteArrayClassLoader(ClassLoadingStrategy.BOOTSTRAP_LOADER,
-                        ClassFileExtraction.of(PrivateMethod.class)), ClassLoadingStrategy.Default.WRAPPER)
+                .load(new ByteArrayClassLoader(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassFileLocator.ForClassLoader.readToNames(PrivateMethod.class)),
+                        ClassLoadingStrategy.Default.WRAPPER)
                 .getLoaded();
         assertThat(type.getDeclaredMethods().length, is(0));
     }
@@ -339,7 +333,7 @@ public class SubclassDynamicTypeBuilderTest extends AbstractDynamicTypeBuilderTe
                 .subclass(GenericType.Inner.class)
                 .method(named(FOO).or(named("call"))).intercept(StubMethod.INSTANCE)
                 .make()
-                .load(getClass().getClassLoader(), ClassLoadingStrategy.Default.INJECTION)
+                .load(getClass().getClassLoader(), InjectionStrategyResolver.resolve(GenericType.Inner.class))
                 .getLoaded();
         assertThat(dynamicType.getTypeParameters().length, is(0));
         assertThat(dynamicType.getGenericSuperclass(), instanceOf(Class.class));
@@ -415,7 +409,7 @@ public class SubclassDynamicTypeBuilderTest extends AbstractDynamicTypeBuilderTe
                 .subclass(VisibilityBridge.class)
                 .modifiers(Visibility.PUBLIC)
                 .make()
-                .load(getClass().getClassLoader(), ClassLoadingStrategy.Default.INJECTION)
+                .load(getClass().getClassLoader(), InjectionStrategyResolver.resolve(VisibilityBridge.class))
                 .getLoaded();
         assertThat(type.getDeclaredConstructors().length, is(1));
         assertThat(type.getDeclaredMethods().length, is(2));
@@ -443,13 +437,13 @@ public class SubclassDynamicTypeBuilderTest extends AbstractDynamicTypeBuilderTe
                 .defineMethod(FOO, String.class, Visibility.PUBLIC)
                 .intercept(FixedValue.value(BAR))
                 .make()
-                .load(ClassLoadingStrategy.BOOTSTRAP_LOADER)
+                .load(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassLoadingStrategy.Default.WRAPPER.opened())
                 .getLoaded();
         Class<?> type = new ByteBuddy()
                 .subclass(defaultInterface)
                 .modifiers(Visibility.PUBLIC)
                 .make()
-                .load(defaultInterface.getClassLoader(), ClassLoadingStrategy.Default.INJECTION)
+                .load(defaultInterface.getClassLoader())
                 .getLoaded();
         assertThat(type.getDeclaredConstructors().length, is(1));
         assertThat(type.getDeclaredMethods().length, is(1));
@@ -464,7 +458,7 @@ public class SubclassDynamicTypeBuilderTest extends AbstractDynamicTypeBuilderTe
                 .subclass(VisibilityBridge.class)
                 .modifiers(0)
                 .make()
-                .load(getClass().getClassLoader(), ClassLoadingStrategy.Default.INJECTION)
+                .load(getClass().getClassLoader(), InjectionStrategyResolver.resolve(VisibilityBridge.class))
                 .getLoaded();
         assertThat(type.getDeclaredConstructors().length, is(1));
         assertThat(type.getDeclaredMethods().length, is(0));
@@ -476,7 +470,7 @@ public class SubclassDynamicTypeBuilderTest extends AbstractDynamicTypeBuilderTe
                 .subclass(VisibilityBridgeExtension.class)
                 .modifiers(Opcodes.ACC_PUBLIC)
                 .make()
-                .load(getClass().getClassLoader(), ClassLoadingStrategy.Default.INJECTION)
+                .load(getClass().getClassLoader(), ClassLoadingStrategy.Default.WRAPPER)
                 .getLoaded();
         assertThat(type.getDeclaredConstructors().length, is(1));
         assertThat(type.getDeclaredMethods().length, is(0));
@@ -488,7 +482,7 @@ public class SubclassDynamicTypeBuilderTest extends AbstractDynamicTypeBuilderTe
                 .subclass(VisibilityBridgeAbstractMethod.class)
                 .modifiers(Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT)
                 .make()
-                .load(getClass().getClassLoader(), ClassLoadingStrategy.Default.INJECTION)
+                .load(getClass().getClassLoader(), InjectionStrategyResolver.resolve(VisibilityBridgeAbstractMethod.class))
                 .getLoaded();
         assertThat(type.getDeclaredConstructors().length, is(1));
         assertThat(type.getDeclaredMethods().length, is(0));
@@ -499,7 +493,7 @@ public class SubclassDynamicTypeBuilderTest extends AbstractDynamicTypeBuilderTe
     @SuppressWarnings("unchecked")
     public void testAnnotationTypeOnSuperClass() throws Exception {
         Class<? extends Annotation> typeAnnotationType = (Class<? extends Annotation>) Class.forName(TYPE_VARIABLE_NAME);
-        MethodDescription.InDefinedShape value = new TypeDescription.ForLoadedType(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
+        MethodDescription.InDefinedShape value = TypeDescription.ForLoadedType.of(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
         Class<?> type = new ByteBuddy()
                 .subclass(TypeDescription.Generic.Builder.rawType(Object.class)
                         .build(AnnotationDescription.Builder.ofType(typeAnnotationType).define(VALUE, BAZ).build()))
@@ -507,8 +501,8 @@ public class SubclassDynamicTypeBuilderTest extends AbstractDynamicTypeBuilderTe
                 .load(typeAnnotationType.getClassLoader(), ClassLoadingStrategy.Default.CHILD_FIRST)
                 .getLoaded();
         assertThat(type.getSuperclass(), is((Object) Object.class));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveSuperClassType(type).asList().size(), is(1));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveSuperClassType(type).asList().ofType(typeAnnotationType)
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedSuperClass(type).asList().size(), is(1));
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedSuperClass(type).asList().ofType(typeAnnotationType)
                 .getValue(value).resolve(Integer.class), is(BAZ));
     }
 
@@ -517,7 +511,7 @@ public class SubclassDynamicTypeBuilderTest extends AbstractDynamicTypeBuilderTe
     @SuppressWarnings("unchecked")
     public void testReceiverTypeDefinition() throws Exception {
         Class<? extends Annotation> typeAnnotationType = (Class<? extends Annotation>) Class.forName(TYPE_VARIABLE_NAME);
-        MethodDescription.InDefinedShape value = new TypeDescription.ForLoadedType(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
+        MethodDescription.InDefinedShape value = TypeDescription.ForLoadedType.of(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
         Method method = createPlain()
                 .defineMethod(FOO, void.class)
                 .intercept(StubMethod.INSTANCE)
@@ -528,9 +522,9 @@ public class SubclassDynamicTypeBuilderTest extends AbstractDynamicTypeBuilderTe
                 .load(typeAnnotationType.getClassLoader(), ClassLoadingStrategy.Default.WRAPPER)
                 .getLoaded()
                 .getDeclaredMethod(FOO);
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveReceiverType(method).getDeclaredAnnotations().size(), is(1));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveReceiverType(method).getDeclaredAnnotations()
-                .ofType(typeAnnotationType).getValue(value).resolve(Integer.class), is(BAZ));
+        TypeDescription.Generic receiver = TypeDefinition.Sort.describeAnnotated((AnnotatedElement) Method.class.getMethod("getAnnotatedReceiverType").invoke(method));
+        assertThat(receiver.getDeclaredAnnotations().size(), is(1));
+        assertThat(receiver.getDeclaredAnnotations().ofType(typeAnnotationType).getValue(value).resolve(Integer.class), is(BAZ));
     }
 
     @Test
@@ -538,7 +532,7 @@ public class SubclassDynamicTypeBuilderTest extends AbstractDynamicTypeBuilderTe
     @SuppressWarnings("unchecked")
     public void testReceiverTypeInterception() throws Exception {
         Class<? extends Annotation> typeAnnotationType = (Class<? extends Annotation>) Class.forName(TYPE_VARIABLE_NAME);
-        MethodDescription.InDefinedShape value = new TypeDescription.ForLoadedType(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
+        MethodDescription.InDefinedShape value = TypeDescription.ForLoadedType.of(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
         Method method = createPlain()
                 .method(named("toString"))
                 .intercept(StubMethod.INSTANCE)
@@ -549,19 +543,19 @@ public class SubclassDynamicTypeBuilderTest extends AbstractDynamicTypeBuilderTe
                 .load(typeAnnotationType.getClassLoader(), ClassLoadingStrategy.Default.WRAPPER)
                 .getLoaded()
                 .getDeclaredMethod("toString");
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveReceiverType(method).getDeclaredAnnotations().size(), is(1));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveReceiverType(method).getDeclaredAnnotations()
-                .ofType(typeAnnotationType).getValue(value).resolve(Integer.class), is(BAZ));
+        TypeDescription.Generic receiver = TypeDefinition.Sort.describeAnnotated((AnnotatedElement) Method.class.getMethod("getAnnotatedReceiverType").invoke(method));
+        assertThat(receiver.getDeclaredAnnotations().size(), is(1));
+        assertThat(receiver.getDeclaredAnnotations().ofType(typeAnnotationType).getValue(value).resolve(Integer.class), is(BAZ));
     }
 
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(SubclassDynamicTypeBuilder.class).create(new ObjectPropertyAssertion.Creator<List<?>>() {
-            @Override
-            public List<?> create() {
-                return Collections.singletonList(new Object());
-            }
-        }).apply();
+    @Test(expected = IllegalStateException.class)
+    public void testBridgeMethodExplicit() throws Exception {
+        new ByteBuddy()
+                .subclass(GenericBase.Subclass.class)
+                .defineMethod("foo", void.class, Modifier.PUBLIC)
+                .withParameters(Object.class)
+                .intercept(SuperMethodCall.INSTANCE)
+                .make();
     }
 
     @SuppressWarnings("unused")
@@ -663,6 +657,19 @@ public class SubclassDynamicTypeBuilderTest extends AbstractDynamicTypeBuilderTe
 
         public abstract static class Inner extends AbstractGenericType<Void> {
             /* empty */
+        }
+    }
+
+    public static abstract class GenericBase<T> {
+
+        public abstract void foo(T argument);
+
+        public static class Subclass extends GenericBase<String> {
+
+            @Override
+            public void foo(String argument) {
+                /* empty */
+            }
         }
     }
 }

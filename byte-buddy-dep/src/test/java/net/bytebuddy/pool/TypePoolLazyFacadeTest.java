@@ -1,13 +1,12 @@
 package net.bytebuddy.pool;
 
 import net.bytebuddy.description.type.TypeDescription;
-import net.bytebuddy.test.utility.MockitoRule;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -20,7 +19,7 @@ public class TypePoolLazyFacadeTest {
     private static final int MODIFIERS = 42;
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     @Mock
     private TypePool typePool;
@@ -43,7 +42,7 @@ public class TypePoolLazyFacadeTest {
     public void testDoesNotQueryActualTypePoolForName() throws Exception {
         TypePool typePool = new TypePool.LazyFacade(this.typePool);
         assertThat(typePool.describe(FOO).resolve().getName(), is(FOO));
-        verifyZeroInteractions(this.typePool);
+        verifyNoMoreInteractions(this.typePool);
     }
 
     @Test
@@ -66,11 +65,5 @@ public class TypePoolLazyFacadeTest {
         verifyNoMoreInteractions(resolution);
         verify(typeDescription).getModifiers();
         verifyNoMoreInteractions(typeDescription);
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(TypePool.LazyFacade.class).apply();
-        ObjectPropertyAssertion.of(TypePool.LazyFacade.LazyResolution.class).apply();
     }
 }

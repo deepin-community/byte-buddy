@@ -1,6 +1,21 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation.attribute;
 
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.annotation.AnnotationDescription;
 import net.bytebuddy.description.annotation.AnnotationList;
 import net.bytebuddy.description.type.TypeDescription;
@@ -35,7 +50,9 @@ public interface TypeAttributeAppender {
          */
         INSTANCE;
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public void apply(ClassVisitor classVisitor, TypeDescription instrumentedType, AnnotationValueFilter annotationValueFilter) {
             /* do nothing */
         }
@@ -53,7 +70,9 @@ public interface TypeAttributeAppender {
          */
         INSTANCE;
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public void apply(ClassVisitor classVisitor, TypeDescription instrumentedType, AnnotationValueFilter annotationValueFilter) {
             AnnotationAppender annotationAppender = new AnnotationAppender.Default(new AnnotationAppender.Target.OnType(classVisitor));
             annotationAppender = AnnotationAppender.ForTypeAnnotations.ofTypeVariable(annotationAppender,
@@ -79,7 +98,7 @@ public interface TypeAttributeAppender {
          * A type attribute appender that writes all annotations of the instrumented but excludes annotations up to
          * a given index.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         public static class Differentiating implements TypeAttributeAppender {
 
             /**
@@ -119,7 +138,9 @@ public interface TypeAttributeAppender {
                 this.interfaceTypeIndex = interfaceTypeIndex;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public void apply(ClassVisitor classVisitor, TypeDescription instrumentedType, AnnotationValueFilter annotationValueFilter) {
                 AnnotationAppender annotationAppender = new AnnotationAppender.Default(new AnnotationAppender.Target.OnType(classVisitor));
                 AnnotationAppender.ForTypeAnnotations.ofTypeVariable(annotationAppender,
@@ -146,7 +167,7 @@ public interface TypeAttributeAppender {
      * An attribute appender that appends a single annotation to a given type. The visibility for the annotation
      * will be inferred from the annotation's {@link java.lang.annotation.RetentionPolicy}.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class Explicit implements TypeAttributeAppender {
 
         /**
@@ -163,7 +184,9 @@ public interface TypeAttributeAppender {
             this.annotations = annotations;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public void apply(ClassVisitor classVisitor, TypeDescription instrumentedType, AnnotationValueFilter annotationValueFilter) {
             AnnotationAppender appender = new AnnotationAppender.Default(new AnnotationAppender.Target.OnType(classVisitor));
             for (AnnotationDescription annotation : annotations) {
@@ -175,7 +198,7 @@ public interface TypeAttributeAppender {
     /**
      * A compound type attribute appender that concatenates a number of other attribute appenders.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class Compound implements TypeAttributeAppender {
 
         /**
@@ -208,7 +231,9 @@ public interface TypeAttributeAppender {
             }
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public void apply(ClassVisitor classVisitor, TypeDescription instrumentedType, AnnotationValueFilter annotationValueFilter) {
             for (TypeAttributeAppender typeAttributeAppender : typeAttributeAppenders) {
                 typeAttributeAppender.apply(classVisitor, instrumentedType, annotationValueFilter);

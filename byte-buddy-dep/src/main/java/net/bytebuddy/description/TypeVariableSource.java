@@ -1,8 +1,25 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.description;
 
 import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.description.type.TypeList;
+import net.bytebuddy.utility.nullability.AlwaysNull;
+import net.bytebuddy.utility.nullability.MaybeNull;
 
 import static net.bytebuddy.matcher.ElementMatchers.named;
 
@@ -14,6 +31,7 @@ public interface TypeVariableSource extends ModifierReviewable.OfAbstraction {
     /**
      * Indicates that a type variable source is undefined.
      */
+    @AlwaysNull
     TypeVariableSource UNDEFINED = null;
 
     /**
@@ -28,15 +46,33 @@ public interface TypeVariableSource extends ModifierReviewable.OfAbstraction {
      *
      * @return The enclosing source or {@code null} if no such source exists.
      */
+    @MaybeNull
     TypeVariableSource getEnclosingSource();
+
+    /**
+     * Returns {@code true} if type variables declared by this type variable source allow dynamic type inference.
+     *
+     * @return {@code true} if type variables declared by this type variable source allow dynamic type inference.
+     */
+    boolean isInferrable();
 
     /**
      * Finds a particular variable with the given name in the closes type variable source that is visible from this instance.
      *
      * @param symbol The symbolic name of the type variable.
+     * @return The type variable or {@code null} if it was not found.
+     */
+    @MaybeNull
+    TypeDescription.Generic findVariable(String symbol);
+
+    /**
+     * Finds a particular variable with the given name in the closes type variable source that is visible from this instance.
+     * If the variable is not found, an exception is thrown.
+     *
+     * @param symbol The symbolic name of the type variable.
      * @return The type variable.
      */
-    TypeDescription.Generic findVariable(String symbol);
+    TypeDescription.Generic findExpectedVariable(String symbol);
 
     /**
      * Applies a visitor on this type variable source.
@@ -52,6 +88,7 @@ public interface TypeVariableSource extends ModifierReviewable.OfAbstraction {
      * <ul>
      * <li>A type declares type variables or is an inner class of a type with a generic declaration.</li>
      * <li>A method declares at least one type variable.</li>
+     * <li>A type is a class that is declared within a method with a generic declaration.</li>
      * </ul>
      *
      * @return {@code true} if this type code element has a generic declaration.
@@ -91,12 +128,16 @@ public interface TypeVariableSource extends ModifierReviewable.OfAbstraction {
              */
             INSTANCE;
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public TypeVariableSource onType(TypeDescription typeDescription) {
                 return typeDescription;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public TypeVariableSource onMethod(MethodDescription.InDefinedShape methodDescription) {
                 return methodDescription;
             }
@@ -108,7 +149,10 @@ public interface TypeVariableSource extends ModifierReviewable.OfAbstraction {
      */
     abstract class AbstractBase extends ModifierReviewable.AbstractBase implements TypeVariableSource {
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
+        @MaybeNull
         public TypeDescription.Generic findVariable(String symbol) {
             TypeList.Generic typeVariables = getTypeVariables().filter(named(symbol));
             if (typeVariables.isEmpty()) {
@@ -120,5 +164,24 @@ public interface TypeVariableSource extends ModifierReviewable.OfAbstraction {
                 return typeVariables.getOnly();
             }
         }
+
+        /**
+         * {@inheritDoc}
+         */
+        public TypeDescription.Generic findExpectedVariable(String symbol) {
+            TypeDescription.Generic variable = findVariable(symbol);
+            if (variable == null) {
+                throw new IllegalArgumentException("Cannot resolve " + symbol + " from " + toSafeString());
+            }
+            return variable;
+        }
+
+        /**
+         * Returns a {@link Object#toString()} representation that does not attempt to resolve any
+         * type variables to avoid stack overflow exceptions.
+         *
+         * @return A safe string representation.
+         */
+        protected abstract String toSafeString();
     }
 }

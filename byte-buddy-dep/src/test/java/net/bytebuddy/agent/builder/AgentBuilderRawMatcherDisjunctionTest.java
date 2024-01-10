@@ -1,24 +1,23 @@
 package net.bytebuddy.agent.builder;
 
 import net.bytebuddy.description.type.TypeDescription;
-import net.bytebuddy.test.utility.MockitoRule;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import net.bytebuddy.utility.JavaModule;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 
 import java.security.ProtectionDomain;
 
 import static org.hamcrest.CoreMatchers.is;
-import static org.junit.Assert.assertThat;
+import static org.hamcrest.MatcherAssert.assertThat;
 import static org.mockito.Mockito.*;
 
 public class AgentBuilderRawMatcherDisjunctionTest {
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     @Mock
     private AgentBuilder.RawMatcher left, right;
@@ -43,7 +42,7 @@ public class AgentBuilderRawMatcherDisjunctionTest {
         assertThat(rawMatcher.matches(typeDescription, classLoader, module, Foo.class, protectionDomain), is(true));
         verify(left).matches(typeDescription, classLoader, module, Foo.class, protectionDomain);
         verifyNoMoreInteractions(left);
-        verifyZeroInteractions(right);
+        verifyNoMoreInteractions(right);
     }
 
     @Test
@@ -54,7 +53,7 @@ public class AgentBuilderRawMatcherDisjunctionTest {
         assertThat(rawMatcher.matches(typeDescription, classLoader, module, Foo.class, protectionDomain), is(true));
         verify(left).matches(typeDescription, classLoader, module, Foo.class, protectionDomain);
         verifyNoMoreInteractions(left);
-        verifyZeroInteractions(right);
+        verifyNoMoreInteractions(right);
     }
 
     @Test
@@ -81,13 +80,7 @@ public class AgentBuilderRawMatcherDisjunctionTest {
         verifyNoMoreInteractions(right);
     }
 
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(AgentBuilder.RawMatcher.Disjunction.class).apply();
-    }
-
     private static class Foo {
         /* empty */
     }
-
 }

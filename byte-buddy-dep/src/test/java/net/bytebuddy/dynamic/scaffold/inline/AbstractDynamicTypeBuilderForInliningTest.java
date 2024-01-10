@@ -16,7 +16,7 @@ import net.bytebuddy.dynamic.DynamicType;
 import net.bytebuddy.dynamic.Transformer;
 import net.bytebuddy.dynamic.loading.ByteArrayClassLoader;
 import net.bytebuddy.dynamic.loading.ClassLoadingStrategy;
-import net.bytebuddy.dynamic.loading.PackageDefinitionStrategy;
+import net.bytebuddy.dynamic.loading.InjectionClassLoader;
 import net.bytebuddy.implementation.Implementation;
 import net.bytebuddy.implementation.MethodCall;
 import net.bytebuddy.implementation.StubMethod;
@@ -26,14 +26,13 @@ import net.bytebuddy.implementation.bytecode.member.MethodReturn;
 import net.bytebuddy.matcher.ElementMatchers;
 import net.bytebuddy.pool.TypePool;
 import net.bytebuddy.test.scope.GenericType;
-import net.bytebuddy.test.utility.ClassFileExtraction;
 import net.bytebuddy.test.utility.JavaVersionRule;
+import net.bytebuddy.utility.OpenedClassReader;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.MethodRule;
-import org.mockito.Mockito;
 import org.mockito.invocation.InvocationOnMock;
 import org.mockito.stubbing.Answer;
 import org.objectweb.asm.*;
@@ -42,11 +41,8 @@ import org.objectweb.asm.commons.LocalVariablesSorter;
 import java.lang.annotation.Annotation;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
-import java.lang.reflect.*;
 import java.lang.reflect.Type;
-import java.net.URL;
-import java.net.URLClassLoader;
-import java.security.ProtectionDomain;
+import java.lang.reflect.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -66,11 +62,11 @@ public abstract class AbstractDynamicTypeBuilderForInliningTest extends Abstract
 
     private static final int QUX = 42;
 
-    private static final String PARAMETER_NAME_CLASS = "net.bytebuddy.test.precompiled.ParameterNames";
+    private static final String PARAMETER_NAME_CLASS = "net.bytebuddy.test.precompiled.v8parameters.ParameterNames";
 
-    private static final String SIMPLE_TYPE_ANNOTATED = "net.bytebuddy.test.precompiled.SimpleTypeAnnotatedType";
+    private static final String SIMPLE_TYPE_ANNOTATED = "net.bytebuddy.test.precompiled.v8.SimpleTypeAnnotatedType";
 
-    private static final String TYPE_VARIABLE_NAME = "net.bytebuddy.test.precompiled.TypeAnnotation", VALUE = "value";
+    private static final String TYPE_VARIABLE_NAME = "net.bytebuddy.test.precompiled.v8.TypeAnnotation", VALUE = "value";
 
     @Rule
     public MethodRule javaVersionRule = new JavaVersionRule();
@@ -78,9 +74,10 @@ public abstract class AbstractDynamicTypeBuilderForInliningTest extends Abstract
     private TypePool typePool;
 
     @Before
+    @Override
     public void setUp() throws Exception {
         super.setUp();
-        typePool = TypePool.Default.ofClassPath();
+        typePool = TypePool.Default.ofSystemLoader();
     }
 
     @After
@@ -101,7 +98,7 @@ public abstract class AbstractDynamicTypeBuilderForInliningTest extends Abstract
         Class<?> type = create(Qux.class)
                 .invokable(isTypeInitializer()).intercept(MethodCall.invoke(Qux.class.getDeclaredMethod("invoke")))
                 .make()
-                .load(new URLClassLoader(new URL[0], null), ClassLoadingStrategy.Default.WRAPPER)
+                .load(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassLoadingStrategy.Default.WRAPPER)
                 .getLoaded();
         assertThat(type.getDeclaredConstructor().newInstance(), notNullValue(Object.class));
         assertThat(type.getDeclaredField(FOO).get(null), is((Object) FOO));
@@ -113,7 +110,7 @@ public abstract class AbstractDynamicTypeBuilderForInliningTest extends Abstract
         Class<?> dynamicType = create(Baz.class)
                 .method(named(FOO)).defaultValue(FOO, String.class)
                 .make()
-                .load(new URLClassLoader(new URL[0], null), ClassLoadingStrategy.Default.WRAPPER)
+                .load(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassLoadingStrategy.Default.WRAPPER)
                 .getLoaded();
         assertThat(dynamicType.getDeclaredMethods().length, is(1));
         assertThat(dynamicType.getDeclaredMethod(FOO).getDefaultValue(), is((Object) FOO));
@@ -125,7 +122,7 @@ public abstract class AbstractDynamicTypeBuilderForInliningTest extends Abstract
         Class<?> dynamicType = create(Class.forName(PARAMETER_NAME_CLASS))
                 .method(named(FOO)).intercept(StubMethod.INSTANCE)
                 .make()
-                .load(new URLClassLoader(new URL[0], null), ClassLoadingStrategy.Default.WRAPPER)
+                .load(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassLoadingStrategy.Default.WRAPPER)
                 .getLoaded();
         Class<?> executable = Class.forName("java.lang.reflect.Executable");
         Method getParameters = executable.getDeclaredMethod("getParameters");
@@ -144,11 +141,13 @@ public abstract class AbstractDynamicTypeBuilderForInliningTest extends Abstract
 
     @Test
     public void testGenericType() throws Exception {
-        ClassLoader classLoader = new ByteArrayClassLoader(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassFileExtraction.of(GenericType.class));
+        InjectionClassLoader classLoader = new ByteArrayClassLoader(ClassLoadingStrategy.BOOTSTRAP_LOADER,
+                false,
+                ClassFileLocator.ForClassLoader.readToNames(GenericType.class));
         Class<?> dynamicType = create(GenericType.Inner.class)
                 .method(named(FOO)).intercept(StubMethod.INSTANCE)
                 .make()
-                .load(classLoader, ClassLoadingStrategy.Default.INJECTION)
+                .load(classLoader, InjectionClassLoader.Strategy.INSTANCE)
                 .getLoaded();
         assertThat(dynamicType.getTypeParameters().length, is(2));
         assertThat(dynamicType.getTypeParameters()[0].getName(), is("T"));
@@ -267,12 +266,13 @@ public abstract class AbstractDynamicTypeBuilderForInliningTest extends Abstract
 
     @Test
     public void testVisibilityBridge() throws Exception {
-        ClassLoader classLoader = new ByteArrayClassLoader(ClassLoadingStrategy.BOOTSTRAP_LOADER,
-                ClassFileExtraction.of(PackagePrivateVisibilityBridgeExtension.class, VisibilityBridge.class, FooBar.class));
+        InjectionClassLoader classLoader = new ByteArrayClassLoader(ClassLoadingStrategy.BOOTSTRAP_LOADER,
+                false,
+                ClassFileLocator.ForClassLoader.readToNames(VisibilityBridge.class, FooBar.class));
         Class<?> type = create(PackagePrivateVisibilityBridgeExtension.class)
                 .modifiers(Opcodes.ACC_PUBLIC)
                 .make()
-                .load(classLoader, ClassLoadingStrategy.Default.INJECTION)
+                .load(classLoader, InjectionClassLoader.Strategy.INSTANCE)
                 .getLoaded();
         assertThat(type.getDeclaredConstructors().length, is(1));
         Constructor<?> constructor = type.getDeclaredConstructor();
@@ -300,12 +300,13 @@ public abstract class AbstractDynamicTypeBuilderForInliningTest extends Abstract
 
     @Test
     public void testNoVisibilityBridgeForNonPublicType() throws Exception {
-        ClassLoader classLoader = new ByteArrayClassLoader(ClassLoadingStrategy.BOOTSTRAP_LOADER,
-                ClassFileExtraction.of(PackagePrivateVisibilityBridgeExtension.class, VisibilityBridge.class, FooBar.class));
+        InjectionClassLoader classLoader = new ByteArrayClassLoader(ClassLoadingStrategy.BOOTSTRAP_LOADER,
+                false,
+                ClassFileLocator.ForClassLoader.readToNames(PackagePrivateVisibilityBridgeExtension.class, VisibilityBridge.class, FooBar.class));
         Class<?> type = create(PackagePrivateVisibilityBridgeExtension.class)
                 .modifiers(0)
                 .make()
-                .load(classLoader, ClassLoadingStrategy.Default.INJECTION)
+                .load(classLoader, InjectionClassLoader.Strategy.INSTANCE)
                 .getLoaded();
         assertThat(type.getDeclaredConstructors().length, is(1));
         assertThat(type.getDeclaredMethods().length, is(0));
@@ -313,12 +314,13 @@ public abstract class AbstractDynamicTypeBuilderForInliningTest extends Abstract
 
     @Test
     public void testNoVisibilityBridgeForInheritedType() throws Exception {
-        ClassLoader classLoader = new ByteArrayClassLoader(ClassLoadingStrategy.BOOTSTRAP_LOADER,
-                ClassFileExtraction.of(PublicVisibilityBridgeExtension.class, VisibilityBridge.class, FooBar.class));
+        InjectionClassLoader classLoader = new ByteArrayClassLoader(ClassLoadingStrategy.BOOTSTRAP_LOADER,
+                false,
+                ClassFileLocator.ForClassLoader.readToNames(PublicVisibilityBridgeExtension.class, VisibilityBridge.class, FooBar.class));
         Class<?> type = new ByteBuddy().subclass(PublicVisibilityBridgeExtension.class)
                 .modifiers(Opcodes.ACC_PUBLIC)
                 .make()
-                .load(classLoader, ClassLoadingStrategy.Default.INJECTION)
+                .load(classLoader, InjectionClassLoader.Strategy.INSTANCE)
                 .getLoaded();
         assertThat(type.getDeclaredConstructors().length, is(1));
         assertThat(type.getDeclaredMethods().length, is(0));
@@ -326,12 +328,13 @@ public abstract class AbstractDynamicTypeBuilderForInliningTest extends Abstract
 
     @Test
     public void testNoVisibilityBridgeForAbstractMethod() throws Exception {
-        ClassLoader classLoader = new ByteArrayClassLoader(ClassLoadingStrategy.BOOTSTRAP_LOADER,
-                ClassFileExtraction.of(PackagePrivateVisibilityBridgeExtensionAbstractMethod.class, VisibilityBridgeAbstractMethod.class));
+        InjectionClassLoader classLoader = new ByteArrayClassLoader(ClassLoadingStrategy.BOOTSTRAP_LOADER,
+                false,
+                ClassFileLocator.ForClassLoader.readToNames(PackagePrivateVisibilityBridgeExtensionAbstractMethod.class, VisibilityBridgeAbstractMethod.class));
         Class<?> type = create(PackagePrivateVisibilityBridgeExtensionAbstractMethod.class)
                 .modifiers(Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT)
                 .make()
-                .load(classLoader, ClassLoadingStrategy.Default.INJECTION)
+                .load(classLoader, InjectionClassLoader.Strategy.INSTANCE)
                 .getLoaded();
         assertThat(type.getDeclaredConstructors().length, is(1));
         assertThat(type.getDeclaredMethods().length, is(0));
@@ -344,7 +347,7 @@ public abstract class AbstractDynamicTypeBuilderForInliningTest extends Abstract
                 .intercept(new Implementation.Simple(new TextConstant(FOO), MethodReturn.REFERENCE))
                 .transform(Transformer.ForMethod.withModifiers(MethodManifestation.FINAL))
                 .make()
-                .load(new URLClassLoader(new URL[0], null), ClassLoadingStrategy.Default.WRAPPER)
+                .load(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassLoadingStrategy.Default.WRAPPER)
                 .getLoaded();
         Method foo = type.getDeclaredMethod(FOO);
         assertThat(foo.invoke(type.getDeclaredConstructor().newInstance()), is((Object) FOO));
@@ -357,7 +360,7 @@ public abstract class AbstractDynamicTypeBuilderForInliningTest extends Abstract
                 .field(named(FOO))
                 .transform(Transformer.ForField.withModifiers(Visibility.PUBLIC))
                 .make()
-                .load(new URLClassLoader(new URL[0], null), ClassLoadingStrategy.Default.WRAPPER)
+                .load(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassLoadingStrategy.Default.WRAPPER)
                 .getLoaded();
         assertThat(type.getDeclaredField(FOO).getModifiers(), is(Opcodes.ACC_PUBLIC));
     }
@@ -374,9 +377,8 @@ public abstract class AbstractDynamicTypeBuilderForInliningTest extends Abstract
                 any(MethodList.class),
                 anyInt(),
                 anyInt())).then(new Answer<ClassVisitor>() {
-            @Override
             public ClassVisitor answer(InvocationOnMock invocationOnMock) throws Throwable {
-                return new ClassVisitor(Opcodes.ASM6, (ClassVisitor) invocationOnMock.getArguments()[1]) {
+                return new ClassVisitor(OpenedClassReader.ASM_API, (ClassVisitor) invocationOnMock.getArguments()[1]) {
                     @Override
                     public MethodVisitor visitMethod(int access, String name, String desc, String signature, String[] exceptions) {
                         return new LocalVariablesSorter(access, desc, super.visitMethod(access, name, desc, signature, exceptions));
@@ -419,7 +421,7 @@ public abstract class AbstractDynamicTypeBuilderForInliningTest extends Abstract
                 .method(ElementMatchers.any()).intercept(StubMethod.INSTANCE)
                 .make()
                 .load(new ByteArrayClassLoader(ClassLoadingStrategy.BOOTSTRAP_LOADER,
-                        ClassFileExtraction.of(SampleAnnotation.class)), ClassLoadingStrategy.Default.WRAPPER)
+                        ClassFileLocator.ForClassLoader.readToNames(SampleAnnotation.class)), ClassLoadingStrategy.Default.WRAPPER)
                 .getLoaded();
         @SuppressWarnings("unchecked")
         Class<? extends Annotation> sampleAnnotation = (Class<? extends Annotation>) type.getClassLoader().loadClass(SampleAnnotation.class.getName());
@@ -436,7 +438,7 @@ public abstract class AbstractDynamicTypeBuilderForInliningTest extends Abstract
                 .method(ElementMatchers.any()).intercept(StubMethod.INSTANCE)
                 .make()
                 .load(new ByteArrayClassLoader(ClassLoadingStrategy.BOOTSTRAP_LOADER,
-                        ClassFileExtraction.of(SampleAnnotation.class)), ClassLoadingStrategy.Default.WRAPPER)
+                        ClassFileLocator.ForClassLoader.readToNames(SampleAnnotation.class)), ClassLoadingStrategy.Default.WRAPPER)
                 .getLoaded();
         @SuppressWarnings("unchecked")
         Class<? extends Annotation> sampleAnnotation = (Class<? extends Annotation>) type.getClassLoader().loadClass(SampleAnnotation.class.getName());
@@ -452,7 +454,7 @@ public abstract class AbstractDynamicTypeBuilderForInliningTest extends Abstract
     @SuppressWarnings("unchecked")
     public void testAnnotationTypeOnInterfaceType() throws Exception {
         Class<? extends Annotation> typeAnnotationType = (Class<? extends Annotation>) Class.forName(TYPE_VARIABLE_NAME);
-        MethodDescription.InDefinedShape value = new TypeDescription.ForLoadedType(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
+        MethodDescription.InDefinedShape value = TypeDescription.ForLoadedType.of(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
         Class<?> type = create(Class.forName(SIMPLE_TYPE_ANNOTATED))
                 .merge(TypeManifestation.ABSTRACT)
                 .implement(TypeDescription.Generic.Builder.rawType(Callable.class)
@@ -461,11 +463,11 @@ public abstract class AbstractDynamicTypeBuilderForInliningTest extends Abstract
                 .load(typeAnnotationType.getClassLoader(), ClassLoadingStrategy.Default.CHILD_FIRST)
                 .getLoaded();
         assertThat(type.getInterfaces().length, is(2));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveInterfaceType(type, 0).asList().size(), is(1));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveInterfaceType(type, 0).asList().ofType(typeAnnotationType)
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedInterface(type, 0).asList().size(), is(1));
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedInterface(type, 0).asList().ofType(typeAnnotationType)
                 .getValue(value).resolve(Integer.class), is(QUX * 2));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveInterfaceType(type, 1).asList().size(), is(1));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveInterfaceType(type, 1).asList().ofType(typeAnnotationType)
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedInterface(type, 1).asList().size(), is(1));
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedInterface(type, 1).asList().ofType(typeAnnotationType)
                 .getValue(value).resolve(Integer.class), is(QUX * 3));
     }
 
@@ -474,7 +476,7 @@ public abstract class AbstractDynamicTypeBuilderForInliningTest extends Abstract
     @SuppressWarnings("unchecked")
     public void testAnnotationTypeOnTypeVariableType() throws Exception {
         Class<? extends Annotation> typeAnnotationType = (Class<? extends Annotation>) Class.forName(TYPE_VARIABLE_NAME);
-        MethodDescription.InDefinedShape value = new TypeDescription.ForLoadedType(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
+        MethodDescription.InDefinedShape value = TypeDescription.ForLoadedType.of(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
         Class<?> type = create(Class.forName(SIMPLE_TYPE_ANNOTATED))
                 .merge(TypeManifestation.ABSTRACT)
                 .typeVariable(BAR, TypeDescription.Generic.Builder.rawType(Callable.class)
@@ -484,15 +486,15 @@ public abstract class AbstractDynamicTypeBuilderForInliningTest extends Abstract
                 .load(typeAnnotationType.getClassLoader(), ClassLoadingStrategy.Default.CHILD_FIRST)
                 .getLoaded();
         assertThat(type.getTypeParameters().length, is(2));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveTypeVariable(type.getTypeParameters()[0]).asList().size(), is(1));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveTypeVariable(type.getTypeParameters()[0]).asList().ofType(typeAnnotationType)
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedTypeVariable(type.getTypeParameters()[0]).asList().size(), is(1));
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedTypeVariable(type.getTypeParameters()[0]).asList().ofType(typeAnnotationType)
                 .getValue(value).resolve(Integer.class), is(QUX));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveTypeVariable(type.getTypeParameters()[1]).asList().size(), is(1));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveTypeVariable(type.getTypeParameters()[1]).asList().ofType(typeAnnotationType)
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedTypeVariable(type.getTypeParameters()[1]).asList().size(), is(1));
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedTypeVariable(type.getTypeParameters()[1]).asList().ofType(typeAnnotationType)
                 .getValue(value).resolve(Integer.class), is(QUX * 3));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveTypeVariable(type.getTypeParameters()[1]).ofTypeVariableBoundType(0)
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedTypeVariable(type.getTypeParameters()[1]).ofTypeVariableBoundType(0)
                 .asList().size(), is(1));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveTypeVariable(type.getTypeParameters()[1]).ofTypeVariableBoundType(0)
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedTypeVariable(type.getTypeParameters()[1]).ofTypeVariableBoundType(0)
                 .asList().ofType(typeAnnotationType).getValue(value).resolve(Integer.class), is(QUX * 4));
     }
 

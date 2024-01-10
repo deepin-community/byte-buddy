@@ -1,5 +1,6 @@
 package net.bytebuddy.description.method;
 
+import net.bytebuddy.test.utility.JavaVersionRule;
 import org.junit.Test;
 
 import java.lang.reflect.Constructor;
@@ -10,12 +11,10 @@ import static org.hamcrest.MatcherAssert.assertThat;
 
 public class MethodDescriptionForLoadedTest extends AbstractMethodDescriptionTest {
 
-    @Override
     protected MethodDescription.InDefinedShape describe(Method method) {
         return new MethodDescription.ForLoadedMethod(method);
     }
 
-    @Override
     protected MethodDescription.InDefinedShape describe(Constructor<?> constructor) {
         return new MethodDescription.ForLoadedConstructor(constructor);
     }
@@ -26,8 +25,14 @@ public class MethodDescriptionForLoadedTest extends AbstractMethodDescriptionTes
         assertThat(new MethodDescription.ForLoadedMethod(method).getLoadedMethod(), sameInstance(method));
     }
 
-    @Override
     protected boolean canReadDebugInformation() {
         return false;
+    }
+
+    @Test
+    @Override
+    @JavaVersionRule.Enforce(17)
+    public void testEnumConstructorAnnotation() throws Exception {
+        super.testEnumConstructorAnnotation();
     }
 }

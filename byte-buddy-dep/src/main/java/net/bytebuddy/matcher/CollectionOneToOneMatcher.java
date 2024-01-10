@@ -1,6 +1,21 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.matcher;
 
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 
 import java.util.Collection;
 import java.util.Iterator;
@@ -14,8 +29,8 @@ import java.util.List;
  *
  * @param <T> The type of the matched entity.
  */
-@EqualsAndHashCode(callSuper = false)
-public class CollectionOneToOneMatcher<T> extends ElementMatcher.Junction.AbstractBase<Iterable<? extends T>> {
+@HashCodeAndEqualsPlugin.Enhance
+public class CollectionOneToOneMatcher<T> extends ElementMatcher.Junction.ForNonNullValues<Iterable<? extends T>> {
 
     /**
      * The list of element matchers to match any elements of the matched iterable collection against.
@@ -26,14 +41,16 @@ public class CollectionOneToOneMatcher<T> extends ElementMatcher.Junction.Abstra
      * Creates a new matcher that compares a matched iterable collection against a list of element matchers.
      *
      * @param matchers The list of element matchers to match any elements of the matched iterable collection
-     *                        against.
+     *                 against.
      */
     public CollectionOneToOneMatcher(List<? extends ElementMatcher<? super T>> matchers) {
         this.matchers = matchers;
     }
 
-    @Override
-    public boolean matches(Iterable<? extends T> target) {
+    /**
+     * {@inheritDoc}
+     */
+    protected boolean doMatch(Iterable<? extends T> target) {
         if ((target instanceof Collection) && ((Collection<?>) target).size() != matchers.size()) {
             return false;
         }
@@ -58,6 +75,6 @@ public class CollectionOneToOneMatcher<T> extends ElementMatcher.Junction.Abstra
             }
             stringBuilder.append(value);
         }
-        return stringBuilder.append(")").toString();
+        return stringBuilder.append(')').toString();
     }
 }

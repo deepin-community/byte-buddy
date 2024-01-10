@@ -57,11 +57,11 @@ public class MethodAttributeAppenderForInstrumentedMethodTest extends AbstractMe
         when(annotationValueFilter.isRelevant(any(AnnotationDescription.class), any(MethodDescription.InDefinedShape.class))).thenReturn(true);
         when(methodDescription.getDeclaredAnnotations()).thenReturn(new AnnotationList.ForLoadedAnnotations(new Qux.Instance()));
         when(methodDescription.getParameters()).thenReturn((ParameterList) new ParameterList.Empty<ParameterDescription>());
-        when(methodDescription.getReturnType()).thenReturn(TypeDescription.Generic.VOID);
+        when(methodDescription.getReturnType()).thenReturn(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(void.class));
         when(methodDescription.getTypeVariables()).thenReturn(new TypeList.Generic.Empty());
         when(methodDescription.getExceptionTypes()).thenReturn(new TypeList.Generic.Empty());
         methodAttributeAppender.apply(methodVisitor, methodDescription, annotationValueFilter);
-        verifyZeroInteractions(methodVisitor);
+        verifyNoMoreInteractions(methodVisitor);
     }
 
     @Test
@@ -70,7 +70,7 @@ public class MethodAttributeAppenderForInstrumentedMethodTest extends AbstractMe
         when(annotationValueFilter.isRelevant(any(AnnotationDescription.class), any(MethodDescription.InDefinedShape.class))).thenReturn(true);
         when(methodDescription.getDeclaredAnnotations()).thenReturn(new AnnotationList.ForLoadedAnnotations(new Baz.Instance()));
         when(methodDescription.getParameters()).thenReturn((ParameterList) new ParameterList.Empty<ParameterDescription>());
-        when(methodDescription.getReturnType()).thenReturn(TypeDescription.Generic.VOID);
+        when(methodDescription.getReturnType()).thenReturn(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(void.class));
         when(methodDescription.getTypeVariables()).thenReturn(new TypeList.Generic.Empty());
         when(methodDescription.getExceptionTypes()).thenReturn(new TypeList.Generic.Empty());
         methodAttributeAppender.apply(methodVisitor, methodDescription, annotationValueFilter);
@@ -84,7 +84,7 @@ public class MethodAttributeAppenderForInstrumentedMethodTest extends AbstractMe
         when(annotationValueFilter.isRelevant(any(AnnotationDescription.class), any(MethodDescription.InDefinedShape.class))).thenReturn(true);
         when(methodDescription.getDeclaredAnnotations()).thenReturn(new AnnotationList.ForLoadedAnnotations(new QuxBaz.Instance()));
         when(methodDescription.getParameters()).thenReturn((ParameterList) new ParameterList.Empty<ParameterDescription>());
-        when(methodDescription.getReturnType()).thenReturn(TypeDescription.Generic.VOID);
+        when(methodDescription.getReturnType()).thenReturn(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(void.class));
         when(methodDescription.getTypeVariables()).thenReturn(new TypeList.Generic.Empty());
         when(methodDescription.getExceptionTypes()).thenReturn(new TypeList.Generic.Empty());
         methodAttributeAppender.apply(methodVisitor, methodDescription, annotationValueFilter);
@@ -98,14 +98,14 @@ public class MethodAttributeAppenderForInstrumentedMethodTest extends AbstractMe
         when(annotationValueFilter.isRelevant(any(AnnotationDescription.class), any(MethodDescription.InDefinedShape.class))).thenReturn(true);
         when(methodDescription.getDeclaredAnnotations()).thenReturn(new AnnotationList.Empty());
         ParameterDescription parameterDescription = mock(ParameterDescription.class);
-        when(parameterDescription.getType()).thenReturn(TypeDescription.Generic.OBJECT);
+        when(parameterDescription.getType()).thenReturn(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class));
         when(parameterDescription.getDeclaredAnnotations()).thenReturn(new AnnotationList.ForLoadedAnnotations(new Qux.Instance()));
         when(methodDescription.getParameters()).thenReturn((ParameterList) new ParameterList.Explicit<ParameterDescription>(parameterDescription));
-        when(methodDescription.getReturnType()).thenReturn(TypeDescription.Generic.VOID);
+        when(methodDescription.getReturnType()).thenReturn(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(void.class));
         when(methodDescription.getTypeVariables()).thenReturn(new TypeList.Generic.Empty());
         when(methodDescription.getExceptionTypes()).thenReturn(new TypeList.Generic.Empty());
         methodAttributeAppender.apply(methodVisitor, methodDescription, annotationValueFilter);
-        verifyZeroInteractions(methodVisitor);
+        verifyNoMoreInteractions(methodVisitor);
     }
 
     @Test
@@ -114,10 +114,10 @@ public class MethodAttributeAppenderForInstrumentedMethodTest extends AbstractMe
         when(annotationValueFilter.isRelevant(any(AnnotationDescription.class), any(MethodDescription.InDefinedShape.class))).thenReturn(true);
         when(methodDescription.getDeclaredAnnotations()).thenReturn(new AnnotationList.Empty());
         ParameterDescription parameterDescription = mock(ParameterDescription.class);
-        when(parameterDescription.getType()).thenReturn(TypeDescription.Generic.OBJECT);
+        when(parameterDescription.getType()).thenReturn(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class));
         when(parameterDescription.getDeclaredAnnotations()).thenReturn(new AnnotationList.ForLoadedAnnotations(new Baz.Instance()));
         when(methodDescription.getParameters()).thenReturn((ParameterList) new ParameterList.Explicit<ParameterDescription>(parameterDescription));
-        when(methodDescription.getReturnType()).thenReturn(TypeDescription.Generic.VOID);
+        when(methodDescription.getReturnType()).thenReturn(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(void.class));
         when(methodDescription.getTypeVariables()).thenReturn(new TypeList.Generic.Empty());
         when(methodDescription.getExceptionTypes()).thenReturn(new TypeList.Generic.Empty());
         methodAttributeAppender.apply(methodVisitor, methodDescription, annotationValueFilter);
@@ -131,10 +131,10 @@ public class MethodAttributeAppenderForInstrumentedMethodTest extends AbstractMe
         when(annotationValueFilter.isRelevant(any(AnnotationDescription.class), any(MethodDescription.InDefinedShape.class))).thenReturn(true);
         when(methodDescription.getDeclaredAnnotations()).thenReturn(new AnnotationList.Empty());
         ParameterDescription parameterDescription = mock(ParameterDescription.class);
-        when(parameterDescription.getType()).thenReturn(TypeDescription.Generic.OBJECT);
+        when(parameterDescription.getType()).thenReturn(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class));
         when(parameterDescription.getDeclaredAnnotations()).thenReturn(new AnnotationList.ForLoadedAnnotations(new QuxBaz.Instance()));
         when(methodDescription.getParameters()).thenReturn((ParameterList) new ParameterList.Explicit<ParameterDescription>(parameterDescription));
-        when(methodDescription.getReturnType()).thenReturn(TypeDescription.Generic.VOID);
+        when(methodDescription.getReturnType()).thenReturn(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(void.class));
         when(methodDescription.getTypeVariables()).thenReturn(new TypeList.Generic.Empty());
         when(methodDescription.getExceptionTypes()).thenReturn(new TypeList.Generic.Empty());
         methodAttributeAppender.apply(methodVisitor, methodDescription, annotationValueFilter);
@@ -153,7 +153,7 @@ public class MethodAttributeAppenderForInstrumentedMethodTest extends AbstractMe
         when(methodDescription.getTypeVariables()).thenReturn(new TypeList.Generic.Empty());
         when(methodDescription.getExceptionTypes()).thenReturn(new TypeList.Generic.Empty());
         methodAttributeAppender.apply(methodVisitor, methodDescription, annotationValueFilter);
-        verifyZeroInteractions(methodVisitor);
+        verifyNoMoreInteractions(methodVisitor);
     }
 
     @Test
@@ -198,12 +198,12 @@ public class MethodAttributeAppenderForInstrumentedMethodTest extends AbstractMe
         when(annotationValueFilter.isRelevant(any(AnnotationDescription.class), any(MethodDescription.InDefinedShape.class))).thenReturn(true);
         when(methodDescription.getDeclaredAnnotations()).thenReturn(new AnnotationList.Empty());
         when(methodDescription.getParameters()).thenReturn((ParameterList) new ParameterList.Empty<ParameterDescription>());
-        when(methodDescription.getReturnType()).thenReturn(TypeDescription.Generic.VOID);
+        when(methodDescription.getReturnType()).thenReturn(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(void.class));
         when(methodDescription.getTypeVariables()).thenReturn(new TypeList.Generic.Empty());
         when(methodDescription.getExceptionTypes()).thenReturn(new TypeList.Generic.Explicit(simpleAnnotatedType));
         when(simpleAnnotatedType.getDeclaredAnnotations()).thenReturn(new AnnotationList.ForLoadedAnnotations(new Qux.Instance()));
         methodAttributeAppender.apply(methodVisitor, methodDescription, annotationValueFilter);
-        verifyZeroInteractions(methodVisitor);
+        verifyNoMoreInteractions(methodVisitor);
     }
 
     @Test
@@ -212,7 +212,7 @@ public class MethodAttributeAppenderForInstrumentedMethodTest extends AbstractMe
         when(annotationValueFilter.isRelevant(any(AnnotationDescription.class), any(MethodDescription.InDefinedShape.class))).thenReturn(true);
         when(methodDescription.getDeclaredAnnotations()).thenReturn(new AnnotationList.Empty());
         when(methodDescription.getParameters()).thenReturn((ParameterList) new ParameterList.Empty<ParameterDescription>());
-        when(methodDescription.getReturnType()).thenReturn(TypeDescription.Generic.VOID);
+        when(methodDescription.getReturnType()).thenReturn(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(void.class));
         when(methodDescription.getTypeVariables()).thenReturn(new TypeList.Generic.Empty());
         when(methodDescription.getExceptionTypes()).thenReturn(new TypeList.Generic.Explicit(simpleAnnotatedType));
         when(simpleAnnotatedType.getDeclaredAnnotations()).thenReturn(new AnnotationList.ForLoadedAnnotations(new Baz.Instance()));
@@ -230,7 +230,7 @@ public class MethodAttributeAppenderForInstrumentedMethodTest extends AbstractMe
         when(annotationValueFilter.isRelevant(any(AnnotationDescription.class), any(MethodDescription.InDefinedShape.class))).thenReturn(true);
         when(methodDescription.getDeclaredAnnotations()).thenReturn(new AnnotationList.Empty());
         when(methodDescription.getParameters()).thenReturn((ParameterList) new ParameterList.Empty<ParameterDescription>());
-        when(methodDescription.getReturnType()).thenReturn(TypeDescription.Generic.VOID);
+        when(methodDescription.getReturnType()).thenReturn(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(void.class));
         when(methodDescription.getTypeVariables()).thenReturn(new TypeList.Generic.Empty());
         when(methodDescription.getExceptionTypes()).thenReturn(new TypeList.Generic.Explicit(simpleAnnotatedType));
         when(simpleAnnotatedType.getDeclaredAnnotations()).thenReturn(new AnnotationList.ForLoadedAnnotations(new QuxBaz.Instance()));
@@ -251,12 +251,12 @@ public class MethodAttributeAppenderForInstrumentedMethodTest extends AbstractMe
         when(parameterDescription.getDeclaredAnnotations()).thenReturn(new AnnotationList.Empty());
         when(parameterDescription.getType()).thenReturn(simpleAnnotatedType);
         when(methodDescription.getParameters()).thenReturn((ParameterList) new ParameterList.Explicit<ParameterDescription>(parameterDescription));
-        when(methodDescription.getReturnType()).thenReturn(TypeDescription.Generic.VOID);
+        when(methodDescription.getReturnType()).thenReturn(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(void.class));
         when(methodDescription.getTypeVariables()).thenReturn(new TypeList.Generic.Empty());
         when(methodDescription.getExceptionTypes()).thenReturn(new TypeList.Generic.Empty());
         when(simpleAnnotatedType.getDeclaredAnnotations()).thenReturn(new AnnotationList.ForLoadedAnnotations(new Qux.Instance()));
         methodAttributeAppender.apply(methodVisitor, methodDescription, annotationValueFilter);
-        verifyZeroInteractions(methodVisitor);
+        verifyNoMoreInteractions(methodVisitor);
     }
 
     @Test
@@ -268,7 +268,7 @@ public class MethodAttributeAppenderForInstrumentedMethodTest extends AbstractMe
         when(parameterDescription.getDeclaredAnnotations()).thenReturn(new AnnotationList.Empty());
         when(parameterDescription.getType()).thenReturn(simpleAnnotatedType);
         when(methodDescription.getParameters()).thenReturn((ParameterList) new ParameterList.Explicit<ParameterDescription>(parameterDescription));
-        when(methodDescription.getReturnType()).thenReturn(TypeDescription.Generic.VOID);
+        when(methodDescription.getReturnType()).thenReturn(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(void.class));
         when(methodDescription.getTypeVariables()).thenReturn(new TypeList.Generic.Empty());
         when(methodDescription.getExceptionTypes()).thenReturn(new TypeList.Generic.Empty());
         when(simpleAnnotatedType.getDeclaredAnnotations()).thenReturn(new AnnotationList.ForLoadedAnnotations(new Baz.Instance()));
@@ -289,7 +289,7 @@ public class MethodAttributeAppenderForInstrumentedMethodTest extends AbstractMe
         when(parameterDescription.getDeclaredAnnotations()).thenReturn(new AnnotationList.Empty());
         when(parameterDescription.getType()).thenReturn(simpleAnnotatedType);
         when(methodDescription.getParameters()).thenReturn((ParameterList) new ParameterList.Explicit<ParameterDescription>(parameterDescription));
-        when(methodDescription.getReturnType()).thenReturn(TypeDescription.Generic.VOID);
+        when(methodDescription.getReturnType()).thenReturn(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(void.class));
         when(methodDescription.getTypeVariables()).thenReturn(new TypeList.Generic.Empty());
         when(methodDescription.getExceptionTypes()).thenReturn(new TypeList.Generic.Empty());
         when(simpleAnnotatedType.getDeclaredAnnotations()).thenReturn(new AnnotationList.ForLoadedAnnotations(new QuxBaz.Instance()));
@@ -307,12 +307,12 @@ public class MethodAttributeAppenderForInstrumentedMethodTest extends AbstractMe
         when(annotatedTypeVariable.getDeclaredAnnotations()).thenReturn(new AnnotationList.ForLoadedAnnotations(new Qux.Instance()));
         when(annotatedTypeVariableBound.getDeclaredAnnotations()).thenReturn(new AnnotationList.ForLoadedAnnotations(new Qux.Instance()));
         when(methodDescription.getParameters()).thenReturn((ParameterList) new ParameterList.Empty<ParameterDescription>());
-        when(methodDescription.getReturnType()).thenReturn(TypeDescription.Generic.VOID);
+        when(methodDescription.getReturnType()).thenReturn(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(void.class));
         when(methodDescription.getTypeVariables()).thenReturn(new TypeList.Generic.Explicit(annotatedTypeVariable));
         when(methodDescription.getExceptionTypes()).thenReturn(new TypeList.Generic.Empty());
         when(methodDescription.getDeclaredAnnotations()).thenReturn(new AnnotationList.Empty());
         methodAttributeAppender.apply(methodVisitor, methodDescription, annotationValueFilter);
-        verifyZeroInteractions(methodVisitor);
+        verifyNoMoreInteractions(methodVisitor);
     }
 
     @Test
@@ -321,7 +321,7 @@ public class MethodAttributeAppenderForInstrumentedMethodTest extends AbstractMe
         when(annotatedTypeVariable.getDeclaredAnnotations()).thenReturn(new AnnotationList.ForLoadedAnnotations(new Baz.Instance()));
         when(annotatedTypeVariableBound.getDeclaredAnnotations()).thenReturn(new AnnotationList.ForLoadedAnnotations(new Baz.Instance()));
         when(methodDescription.getParameters()).thenReturn((ParameterList) new ParameterList.Empty<ParameterDescription>());
-        when(methodDescription.getReturnType()).thenReturn(TypeDescription.Generic.VOID);
+        when(methodDescription.getReturnType()).thenReturn(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(void.class));
         when(methodDescription.getTypeVariables()).thenReturn(new TypeList.Generic.Explicit(annotatedTypeVariable));
         when(methodDescription.getExceptionTypes()).thenReturn(new TypeList.Generic.Empty());
         when(methodDescription.getDeclaredAnnotations()).thenReturn(new AnnotationList.Empty());
@@ -334,7 +334,7 @@ public class MethodAttributeAppenderForInstrumentedMethodTest extends AbstractMe
                 null,
                 Type.getDescriptor(Baz.class),
                 true);
-        verifyZeroInteractions(methodVisitor);
+        verifyNoMoreInteractions(methodVisitor);
     }
 
     @Test
@@ -343,7 +343,7 @@ public class MethodAttributeAppenderForInstrumentedMethodTest extends AbstractMe
         when(annotatedTypeVariable.getDeclaredAnnotations()).thenReturn(new AnnotationList.ForLoadedAnnotations(new QuxBaz.Instance()));
         when(annotatedTypeVariableBound.getDeclaredAnnotations()).thenReturn(new AnnotationList.ForLoadedAnnotations(new QuxBaz.Instance()));
         when(methodDescription.getParameters()).thenReturn((ParameterList) new ParameterList.Empty<ParameterDescription>());
-        when(methodDescription.getReturnType()).thenReturn(TypeDescription.Generic.VOID);
+        when(methodDescription.getReturnType()).thenReturn(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(void.class));
         when(methodDescription.getTypeVariables()).thenReturn(new TypeList.Generic.Explicit(annotatedTypeVariable));
         when(methodDescription.getExceptionTypes()).thenReturn(new TypeList.Generic.Empty());
         when(methodDescription.getDeclaredAnnotations()).thenReturn(new AnnotationList.Empty());
@@ -371,10 +371,10 @@ public class MethodAttributeAppenderForInstrumentedMethodTest extends AbstractMe
         when(annotationType.getActualName()).thenReturn("jdk.internal.Sample");
         when(methodDescription.getDeclaredAnnotations()).thenReturn(new AnnotationList.Explicit(annotationDescription));
         when(methodDescription.getParameters()).thenReturn((ParameterList) new ParameterList.Empty<ParameterDescription>());
-        when(methodDescription.getReturnType()).thenReturn(TypeDescription.Generic.VOID);
+        when(methodDescription.getReturnType()).thenReturn(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(void.class));
         when(methodDescription.getTypeVariables()).thenReturn(new TypeList.Generic.Empty());
         when(methodDescription.getExceptionTypes()).thenReturn(new TypeList.Generic.Empty());
         methodAttributeAppender.apply(methodVisitor, methodDescription, annotationValueFilter);
-        verifyZeroInteractions(methodVisitor);
+        verifyNoMoreInteractions(methodVisitor);
     }
 }

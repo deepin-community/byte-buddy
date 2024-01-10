@@ -2,24 +2,21 @@ package net.bytebuddy.dynamic.loading;
 
 import net.bytebuddy.test.utility.IntegrationRule;
 import net.bytebuddy.test.utility.JavaVersionRule;
-import net.bytebuddy.test.utility.MockitoRule;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.MethodRule;
-import org.junit.rules.TestRule;
 import org.mockito.Mock;
 import org.mockito.invocation.InvocationOnMock;
+import org.mockito.junit.MockitoJUnit;
 import org.mockito.stubbing.Answer;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.net.URL;
-import java.util.Arrays;
-import java.util.Iterator;
 import java.util.jar.Attributes;
+import java.util.jar.JarFile;
 import java.util.jar.Manifest;
 
 import static org.hamcrest.CoreMatchers.is;
@@ -38,7 +35,7 @@ public class PackageTypeStrategyManifestReadingTest {
     public MethodRule javaVersionRule = new JavaVersionRule();
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     @Mock
     private PackageDefinitionStrategy.ManifestReading.SealBaseLocator sealBaseLocator;
@@ -66,7 +63,7 @@ public class PackageTypeStrategyManifestReadingTest {
         assertThat(definition.getSpecificationVendor(), nullValue(String.class));
         assertThat(definition.getSealBase(), nullValue(URL.class));
         assertThat(definition.isCompatibleTo(getClass().getPackage()), is(true));
-        verifyZeroInteractions(sealBaseLocator);
+        verifyNoMoreInteractions(sealBaseLocator);
     }
 
     @Test
@@ -80,8 +77,7 @@ public class PackageTypeStrategyManifestReadingTest {
         manifest.getMainAttributes().put(Attributes.Name.IMPLEMENTATION_VERSION, FOO + BAR);
         manifest.getMainAttributes().put(Attributes.Name.IMPLEMENTATION_VENDOR, QUX + BAZ);
         manifest.getMainAttributes().put(Attributes.Name.SEALED, Boolean.FALSE.toString());
-        when(classLoader.getResourceAsStream("/META-INF/MANIFEST.MF")).then(new Answer<InputStream>() {
-            @Override
+        when(classLoader.getResourceAsStream(JarFile.MANIFEST_NAME)).then(new Answer<InputStream>() {
             public InputStream answer(InvocationOnMock invocationOnMock) throws Throwable {
                 ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
                 manifest.write(outputStream);
@@ -99,7 +95,7 @@ public class PackageTypeStrategyManifestReadingTest {
         assertThat(definition.getImplementationVendor(), is(QUX + BAZ));
         assertThat(definition.getSealBase(), nullValue(URL.class));
         assertThat(definition.isCompatibleTo(getClass().getPackage()), is(true));
-        verifyZeroInteractions(sealBaseLocator);
+        verifyNoMoreInteractions(sealBaseLocator);
     }
 
     @Test
@@ -121,8 +117,7 @@ public class PackageTypeStrategyManifestReadingTest {
         manifest.getAttributes(FOO + "/" + BAR + "/").put(Attributes.Name.IMPLEMENTATION_VERSION, FOO + BAR);
         manifest.getAttributes(FOO + "/" + BAR + "/").put(Attributes.Name.IMPLEMENTATION_VENDOR, QUX + BAZ);
         manifest.getAttributes(FOO + "/" + BAR + "/").put(Attributes.Name.SEALED, Boolean.FALSE.toString());
-        when(classLoader.getResourceAsStream("/META-INF/MANIFEST.MF")).then(new Answer<InputStream>() {
-            @Override
+        when(classLoader.getResourceAsStream(JarFile.MANIFEST_NAME)).then(new Answer<InputStream>() {
             public InputStream answer(InvocationOnMock invocationOnMock) throws Throwable {
                 ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
                 manifest.write(outputStream);
@@ -140,7 +135,7 @@ public class PackageTypeStrategyManifestReadingTest {
         assertThat(definition.getImplementationVendor(), is(QUX + BAZ));
         assertThat(definition.getSealBase(), nullValue(URL.class));
         assertThat(definition.isCompatibleTo(getClass().getPackage()), is(true));
-        verifyZeroInteractions(sealBaseLocator);
+        verifyNoMoreInteractions(sealBaseLocator);
     }
 
     @Test
@@ -149,8 +144,7 @@ public class PackageTypeStrategyManifestReadingTest {
         final Manifest manifest = new Manifest();
         manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
         manifest.getMainAttributes().put(Attributes.Name.SEALED, Boolean.TRUE.toString());
-        when(classLoader.getResourceAsStream("/META-INF/MANIFEST.MF")).then(new Answer<InputStream>() {
-            @Override
+        when(classLoader.getResourceAsStream(JarFile.MANIFEST_NAME)).then(new Answer<InputStream>() {
             public InputStream answer(InvocationOnMock invocationOnMock) throws Throwable {
                 ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
                 manifest.write(outputStream);
@@ -173,8 +167,7 @@ public class PackageTypeStrategyManifestReadingTest {
         manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
         manifest.getEntries().put(FOO + "/" + BAR + "/", new Attributes());
         manifest.getAttributes(FOO + "/" + BAR + "/").put(Attributes.Name.SEALED, Boolean.TRUE.toString());
-        when(classLoader.getResourceAsStream("/META-INF/MANIFEST.MF")).then(new Answer<InputStream>() {
-            @Override
+        when(classLoader.getResourceAsStream(JarFile.MANIFEST_NAME)).then(new Answer<InputStream>() {
             public InputStream answer(InvocationOnMock invocationOnMock) throws Throwable {
                 ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
                 manifest.write(outputStream);
@@ -218,7 +211,7 @@ public class PackageTypeStrategyManifestReadingTest {
         when(classLoader.getResource(FOO + "/" + BAR + ".class")).thenReturn(url);
         assertThat(new PackageDefinitionStrategy.ManifestReading.SealBaseLocator.ForTypeResourceUrl(sealBaseLocator)
                 .findSealBase(classLoader, FOO + "." + BAR), is(url));
-        verifyZeroInteractions(sealBaseLocator);
+        verifyNoMoreInteractions(sealBaseLocator);
     }
 
     @Test
@@ -228,7 +221,7 @@ public class PackageTypeStrategyManifestReadingTest {
         when(classLoader.getResource(FOO + "/" + BAR + ".class")).thenReturn(url);
         assertThat(new PackageDefinitionStrategy.ManifestReading.SealBaseLocator.ForTypeResourceUrl(sealBaseLocator)
                 .findSealBase(classLoader, FOO + "." + BAR), is(new URL("file:/foo.jar")));
-        verifyZeroInteractions(sealBaseLocator);
+        verifyNoMoreInteractions(sealBaseLocator);
     }
 
     @Test
@@ -239,7 +232,7 @@ public class PackageTypeStrategyManifestReadingTest {
         when(classLoader.getResource(FOO + "/" + BAR + ".class")).thenReturn(url);
         assertThat(new PackageDefinitionStrategy.ManifestReading.SealBaseLocator.ForTypeResourceUrl(sealBaseLocator)
                 .findSealBase(classLoader, FOO + "." + BAR), is(new URL("jrt:/foo")));
-        verifyZeroInteractions(sealBaseLocator);
+        verifyNoMoreInteractions(sealBaseLocator);
     }
 
     @Test
@@ -250,22 +243,6 @@ public class PackageTypeStrategyManifestReadingTest {
         when(classLoader.getResource(FOO + "/" + BAR + ".class")).thenReturn(url);
         assertThat(new PackageDefinitionStrategy.ManifestReading.SealBaseLocator.ForTypeResourceUrl(sealBaseLocator)
                 .findSealBase(classLoader, FOO + "." + BAR), is(new URL("jrt:/foo")));
-        verifyZeroInteractions(sealBaseLocator);
-    }
-
-    @Test
-    @IntegrationRule.Enforce
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(PackageDefinitionStrategy.ManifestReading.class).apply();
-        ObjectPropertyAssertion.of(PackageDefinitionStrategy.ManifestReading.SealBaseLocator.NonSealing.class).apply();
-        final Iterator<URL> urls = Arrays.asList(new URL("file://foo"), new URL("file://bar")).iterator();
-        ObjectPropertyAssertion.of(PackageDefinitionStrategy.ManifestReading.SealBaseLocator.ForFixedValue.class)
-                .create(new ObjectPropertyAssertion.Creator<URL>() {
-                    @Override
-                    public URL create() {
-                        return urls.next();
-                    }
-                }).apply();
-        ObjectPropertyAssertion.of(PackageDefinitionStrategy.ManifestReading.SealBaseLocator.ForTypeResourceUrl.class).apply();
+        verifyNoMoreInteractions(sealBaseLocator);
     }
 }

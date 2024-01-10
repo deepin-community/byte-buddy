@@ -1,7 +1,22 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation.bytecode.constant;
 
-import lombok.EqualsAndHashCode;
 import net.bytebuddy.ClassFileVersion;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.implementation.Implementation;
 import net.bytebuddy.implementation.bytecode.StackManipulation;
@@ -97,8 +112,8 @@ public enum ClassConstant implements StackManipulation {
      * @return The corresponding stack manipulation.
      */
     public static StackManipulation of(TypeDescription typeDescription) {
-        if (typeDescription.represents(void.class)) {
-            return VOID;
+        if (!typeDescription.isPrimitive()) {
+            return new ForReferenceType(typeDescription);
         } else if (typeDescription.represents(boolean.class)) {
             return BOOLEAN;
         } else if (typeDescription.represents(byte.class)) {
@@ -116,16 +131,20 @@ public enum ClassConstant implements StackManipulation {
         } else if (typeDescription.represents(double.class)) {
             return DOUBLE;
         } else {
-            return new ForReferenceType(typeDescription);
+            return VOID;
         }
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public boolean isValid() {
         return true;
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext) {
         methodVisitor.visitFieldInsn(Opcodes.GETSTATIC, fieldOwnerInternalName, PRIMITIVE_TYPE_FIELD, CLASS_TYPE_INTERNAL_NAME);
         return SIZE;
@@ -134,7 +153,7 @@ public enum ClassConstant implements StackManipulation {
     /**
      * A class constant for a non-primitive {@link java.lang.Class}.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     protected static class ForReferenceType implements StackManipulation {
 
         /**
@@ -151,12 +170,16 @@ public enum ClassConstant implements StackManipulation {
             this.typeDescription = typeDescription;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public boolean isValid() {
             return true;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext) {
             if (implementationContext.getClassFileVersion().isAtLeast(ClassFileVersion.JAVA_V5) && typeDescription.isVisibleTo(implementationContext.getInstrumentedType())) {
                 methodVisitor.visitLdcInsn(Type.getType(typeDescription.getDescriptor()));

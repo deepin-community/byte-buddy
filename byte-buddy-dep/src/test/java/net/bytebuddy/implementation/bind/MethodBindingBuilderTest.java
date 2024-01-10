@@ -7,18 +7,17 @@ import net.bytebuddy.implementation.Implementation;
 import net.bytebuddy.implementation.bind.annotation.TargetMethodAnnotationDrivenBinder;
 import net.bytebuddy.implementation.bytecode.StackManipulation;
 import net.bytebuddy.implementation.bytecode.StackSize;
-import net.bytebuddy.test.utility.MockitoRule;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.mockito.Answers;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 import org.objectweb.asm.MethodVisitor;
 
 import static org.hamcrest.CoreMatchers.is;
-import static org.hamcrest.CoreMatchers.not;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.mockito.Mockito.*;
 
@@ -31,7 +30,7 @@ public class MethodBindingBuilderTest {
     private static final String BAZ = "baz";
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     @Mock
     private MethodDescription methodDescription;
@@ -74,7 +73,7 @@ public class MethodBindingBuilderTest {
 
     @After
     public void tearDown() throws Exception {
-        verifyZeroInteractions(implementationContext);
+        verifyNoMoreInteractions(implementationContext);
     }
 
     @Test
@@ -95,7 +94,7 @@ public class MethodBindingBuilderTest {
         assertThat(methodBinding.getTarget(), is(methodDescription));
         methodBinding.apply(methodVisitor, implementationContext);
         verify(legalStackManipulation, times(2)).apply(methodVisitor, implementationContext);
-        verifyZeroInteractions(methodVisitor);
+        verifyNoMoreInteractions(methodVisitor);
     }
 
     @Test
@@ -122,7 +121,7 @@ public class MethodBindingBuilderTest {
         assertThat(methodBinding.getTarget(), is(methodDescription));
         methodBinding.apply(methodVisitor, implementationContext);
         verify(legalStackManipulation, times(4)).apply(methodVisitor, implementationContext);
-        verifyZeroInteractions(methodVisitor);
+        verifyNoMoreInteractions(methodVisitor);
     }
 
     @Test
@@ -153,19 +152,6 @@ public class MethodBindingBuilderTest {
         new MethodDelegationBinder.MethodBinding.Builder(methodInvoker, methodDescription).build(legalStackManipulation);
     }
 
-    @Test
-    public void testBuildHashCodeEquals() throws Exception {
-        when(methodInvoker.invoke(any(MethodDescription.class))).thenReturn(legalStackManipulation);
-        MethodDelegationBinder.MethodBinding.Builder builder = new MethodDelegationBinder.MethodBinding.Builder(methodInvoker, methodDescription);
-        MethodDelegationBinder.MethodBinding methodBinding = builder.build(legalStackManipulation);
-        MethodDelegationBinder.MethodBinding equalMethodBinding = builder.build(legalStackManipulation);
-        assertThat(methodBinding.hashCode(), is(equalMethodBinding.hashCode()));
-        assertThat(methodBinding, is(equalMethodBinding));
-        MethodDelegationBinder.MethodBinding unequalMethodBinding = builder.build(mock(StackManipulation.class));
-        assertThat(methodBinding.hashCode(), not(unequalMethodBinding.hashCode()));
-        assertThat(methodBinding, not(unequalMethodBinding));
-    }
-
     private static class Key {
 
         private final String identifier;
@@ -175,15 +161,15 @@ public class MethodBindingBuilderTest {
         }
 
         @Override
+        public int hashCode() {
+            return identifier.hashCode();
+        }
+
+        @Override
         public boolean equals(Object other) {
             return this == other || !(other == null || getClass() != other.getClass())
                     && identifier.equals(((Key) other).identifier);
 
-        }
-
-        @Override
-        public int hashCode() {
-            return identifier.hashCode();
         }
     }
 }

@@ -8,9 +8,8 @@ import java.lang.reflect.Field;
 
 public class FieldDescriptionLatentTest extends AbstractFieldDescriptionTest {
 
-    @Override
     protected FieldDescription.InDefinedShape describe(Field field) {
-        return new FieldDescription.Latent(new TypeDescription.ForLoadedType(field.getDeclaringClass()),
+        return new FieldDescription.Latent(TypeDescription.ForLoadedType.of(field.getDeclaringClass()),
                 field.getName(),
                 field.getModifiers(),
                 TypeDefinition.Sort.describe(field.getGenericType()),

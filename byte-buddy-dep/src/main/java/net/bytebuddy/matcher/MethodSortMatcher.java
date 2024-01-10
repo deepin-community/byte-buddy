@@ -1,6 +1,21 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.matcher;
 
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.method.MethodDescription;
 
 /**
@@ -9,8 +24,20 @@ import net.bytebuddy.description.method.MethodDescription;
  *
  * @param <T> The type of the matched entity.
  */
-@EqualsAndHashCode(callSuper = false)
-public class MethodSortMatcher<T extends MethodDescription> extends ElementMatcher.Junction.AbstractBase<T> {
+@HashCodeAndEqualsPlugin.Enhance
+public class MethodSortMatcher<T extends MethodDescription> extends ElementMatcher.Junction.ForNonNullValues<T> {
+
+    /**
+     * Returns an element matcher that matches a specific sort of method description.
+     *
+     * @param <T>  The type of the matched entity.
+     * @param sort The sort of method description to be matched by this element matcher.
+     * @return A matcher that matches methods of the provided sort.
+     */
+    @SuppressWarnings("unchecked")
+    public static <T extends MethodDescription> ElementMatcher.Junction<T> of(Sort sort) {
+        return (ElementMatcher.Junction<T>) sort.getMatcher();
+    }
 
     /**
      * The sort of method description to be matched by this element matcher.
@@ -26,8 +53,10 @@ public class MethodSortMatcher<T extends MethodDescription> extends ElementMatch
         this.sort = sort;
     }
 
-    @Override
-    public boolean matches(T target) {
+    /**
+     * {@inheritDoc}
+     */
+    protected boolean doMatch(T target) {
         return sort.isSort(target);
     }
 
@@ -50,7 +79,6 @@ public class MethodSortMatcher<T extends MethodDescription> extends ElementMatch
                 return target.isMethod();
             }
         },
-
 
         /**
          * Matches method descriptions that represent constructors, not methods or the type initializer.
@@ -98,12 +126,18 @@ public class MethodSortMatcher<T extends MethodDescription> extends ElementMatch
         private final String description;
 
         /**
+         * A reusable matcher for this sort.
+         */
+        private final MethodSortMatcher<?> matcher;
+
+        /**
          * Creates a new method sort representation.
          *
          * @param description A textual representation of the method sort that is represented by this instance.
          */
         Sort(String description) {
             this.description = description;
+            matcher = new MethodSortMatcher<MethodDescription>(this);
         }
 
         /**
@@ -123,9 +157,13 @@ public class MethodSortMatcher<T extends MethodDescription> extends ElementMatch
             return description;
         }
 
-        @Override
-        public String toString() {
-            return "MethodSortMatcher.Sort." + name();
+        /**
+         * Returns the predefined matcher for this method sort.
+         *
+         * @return The predefined matcher for this method sort.
+         */
+        protected MethodSortMatcher<?> getMatcher() {
+            return matcher;
         }
     }
 }

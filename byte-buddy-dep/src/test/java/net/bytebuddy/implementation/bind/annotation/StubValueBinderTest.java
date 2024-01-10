@@ -2,7 +2,6 @@ package net.bytebuddy.implementation.bind.annotation;
 
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.implementation.bytecode.assign.Assigner;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.Mock;
@@ -23,22 +22,21 @@ public class StubValueBinderTest extends AbstractAnnotationBinderTest<StubValue>
         super(StubValue.class);
     }
 
-    @Override
     @Before
+    @Override
     public void setUp() throws Exception {
         super.setUp();
         when(genericType.asErasure()).thenReturn(type);
     }
 
-    @Override
     protected TargetMethodAnnotationDrivenBinder.ParameterBinder<StubValue> getSimpleBinder() {
         return StubValue.Binder.INSTANCE;
     }
 
     @Test
     public void testVoidReturnType() throws Exception {
-        when(target.getType()).thenReturn(TypeDescription.Generic.OBJECT);
-        when(source.getReturnType()).thenReturn(TypeDescription.Generic.VOID);
+        when(target.getType()).thenReturn(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class));
+        when(source.getReturnType()).thenReturn(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(void.class));
         assertThat(StubValue.Binder.INSTANCE.bind(annotationDescription,
                 source,
                 target,
@@ -49,7 +47,7 @@ public class StubValueBinderTest extends AbstractAnnotationBinderTest<StubValue>
 
     @Test
     public void testNonVoidAssignableReturnType() throws Exception {
-        when(target.getType()).thenReturn(TypeDescription.Generic.OBJECT);
+        when(target.getType()).thenReturn(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class));
         when(source.getReturnType()).thenReturn(genericType);
         when(stackManipulation.isValid()).thenReturn(true);
         assertThat(StubValue.Binder.INSTANCE.bind(annotationDescription,
@@ -62,8 +60,8 @@ public class StubValueBinderTest extends AbstractAnnotationBinderTest<StubValue>
 
     @Test
     public void testNonVoidNonAssignableReturnType() throws Exception {
-        when(target.getType()).thenReturn(TypeDescription.Generic.OBJECT);
-        when(source.getReturnType()).thenReturn(TypeDescription.Generic.OBJECT);
+        when(target.getType()).thenReturn(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class));
+        when(source.getReturnType()).thenReturn(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class));
         when(stackManipulation.isValid()).thenReturn(false);
         assertThat(StubValue.Binder.INSTANCE.bind(annotationDescription,
                 source,
@@ -77,10 +75,5 @@ public class StubValueBinderTest extends AbstractAnnotationBinderTest<StubValue>
     public void testIllegalParameter() throws Exception {
         when(target.getType()).thenReturn(genericType);
         StubValue.Binder.INSTANCE.bind(annotationDescription, source, target, implementationTarget, assigner, Assigner.Typing.STATIC);
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(StubValue.Binder.class).apply();
     }
 }

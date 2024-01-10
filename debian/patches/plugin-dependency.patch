@@ -1,0 +1,57 @@
+Description: Use the relocated copy of byte-buddy-maven-plugin to build byte-buddy-dep without the circular dependency
+Author: Emmanuel Bourg <ebourg@apache.org>
+Forwarded: not-needed
+--- a/byte-buddy-dep/pom.xml
++++ b/byte-buddy-dep/pom.xml
+@@ -126,8 +126,8 @@
+             <!-- Create hashCode/equals method and cache some expensive properties. -->
+             <plugin>
+                 <groupId>net.bytebuddy</groupId>
+-                <artifactId>byte-buddy-maven-plugin</artifactId>
+-                <version>1.12.22</version>
++                <artifactId>byte-buddy-previous-maven-plugin</artifactId>
++                <version>previous</version>
+                 <executions>
+                     <execution>
+                         <phase>compile</phase>
+@@ -142,7 +142,7 @@
+                                 <transformation>
+                                     <groupId>net.bytebuddy</groupId>
+                                     <artifactId>byte-buddy</artifactId>
+-                                    <version>1.12.22</version>
++                                    <version>debian</version>
+                                     <plugin>net.bytebuddy.build.HashCodeAndEqualsPlugin$WithNonNullableFields</plugin>
+                                     <arguments>
+                                         <argument>
+@@ -154,13 +154,13 @@
+                                 <transformation>
+                                     <groupId>net.bytebuddy</groupId>
+                                     <artifactId>byte-buddy</artifactId>
+-                                    <version>1.12.22</version>
++                                    <version>debian</version>
+                                     <plugin>net.bytebuddy.build.CachedReturnPlugin</plugin>
+                                 </transformation>
+                                 <transformation>
+                                     <groupId>net.bytebuddy</groupId>
+                                     <artifactId>byte-buddy</artifactId>
+-                                    <version>1.12.22</version>
++                                    <version>debian</version>
+                                     <plugin>net.bytebuddy.build.AccessControllerPlugin</plugin>
+                                     <arguments>
+                                         <argument>
+@@ -172,13 +172,13 @@
+                                 <transformation>
+                                     <groupId>net.bytebuddy</groupId>
+                                     <artifactId>byte-buddy</artifactId>
+-                                    <version>1.12.22</version>
++                                    <version>debian</version>
+                                     <plugin>net.bytebuddy.build.DispatcherAnnotationPlugin</plugin>
+                                 </transformation>
+                                 <transformation>
+                                     <groupId>net.bytebuddy</groupId>
+                                     <artifactId>byte-buddy</artifactId>
+-                                    <version>1.12.22</version>
++                                    <version>debian</version>
+                                     <plugin>net.bytebuddy.build.RepeatedAnnotationPlugin</plugin>
+                                 </transformation>
+                             </transformations>

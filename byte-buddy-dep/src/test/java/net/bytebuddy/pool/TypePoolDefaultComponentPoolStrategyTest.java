@@ -3,11 +3,10 @@ package net.bytebuddy.pool;
 import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.method.MethodList;
 import net.bytebuddy.description.type.TypeDescription;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
-import net.bytebuddy.utility.RandomString;
 import org.junit.Test;
 
 import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.CoreMatchers.nullValue;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -36,24 +35,27 @@ public class TypePoolDefaultComponentPoolStrategyTest {
         TypeDescription rawComponentType = mock(TypeDescription.class);
         when(rawReturnType.getComponentType()).thenReturn(rawComponentType);
         when(rawComponentType.getName()).thenReturn(QUX);
-        assertThat(new TypePool.Default.ComponentTypeLocator.ForAnnotationProperty(typePool, BAR_DESCRIPTOR).bind(FOO).lookup(), is(QUX));
+        when(rawReturnType.isArray()).thenReturn(true);
+        assertThat(new TypePool.Default.ComponentTypeLocator.ForAnnotationProperty(typePool, BAR_DESCRIPTOR).bind(FOO).resolve(), is(QUX));
+    }
+
+    @Test
+    public void testForAnnotationPropertyNonArray() throws Exception {
+        TypePool typePool = mock(TypePool.class);
+        TypeDescription typeDescription = mock(TypeDescription.class);
+        when(typePool.describe(BAR)).thenReturn(new TypePool.Resolution.Simple(typeDescription));
+        MethodDescription.InDefinedShape methodDescription = mock(MethodDescription.InDefinedShape.class);
+        when(typeDescription.getDeclaredMethods()).thenReturn(new MethodList.Explicit<MethodDescription.InDefinedShape>(methodDescription));
+        when(methodDescription.getActualName()).thenReturn(FOO);
+        TypeDescription.Generic returnType = mock(TypeDescription.Generic.class);
+        TypeDescription rawReturnType = mock(TypeDescription.class);
+        when(returnType.asErasure()).thenReturn(rawReturnType);
+        when(methodDescription.getReturnType()).thenReturn(returnType);
+        assertThat(new TypePool.Default.ComponentTypeLocator.ForAnnotationProperty(typePool, BAR_DESCRIPTOR).bind(FOO).resolve(), nullValue(String.class));
     }
 
     @Test
     public void testForArrayType() throws Exception {
-        assertThat(new TypePool.Default.ComponentTypeLocator.ForArrayType("()[" + BAR_DESCRIPTOR).bind(FOO).lookup(), is(BAR));
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(TypePool.Default.ComponentTypeLocator.ForAnnotationProperty.class).apply();
-        ObjectPropertyAssertion.of(TypePool.Default.ComponentTypeLocator.ForAnnotationProperty.Bound.class).skipSynthetic().apply();
-        ObjectPropertyAssertion.of(TypePool.Default.ComponentTypeLocator.ForArrayType.class).create(new ObjectPropertyAssertion.Creator<String>() {
-            @Override
-            public String create() {
-                return "()L" + RandomString.make() + ";";
-            }
-        }).apply();
-        ObjectPropertyAssertion.of(TypePool.Default.ComponentTypeLocator.Illegal.class).apply();
+        assertThat(new TypePool.Default.ComponentTypeLocator.ForArrayType("()[" + BAR_DESCRIPTOR).bind(FOO).resolve(), is(BAR));
     }
 }

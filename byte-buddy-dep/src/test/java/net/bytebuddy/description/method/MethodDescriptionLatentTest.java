@@ -4,6 +4,7 @@ import net.bytebuddy.description.annotation.AnnotationList;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.description.type.TypeList;
 import net.bytebuddy.matcher.ElementMatchers;
+import net.bytebuddy.test.utility.JavaVersionRule;
 import org.junit.Test;
 
 import java.lang.reflect.Constructor;
@@ -15,15 +16,13 @@ import static org.mockito.Mockito.mock;
 
 public class MethodDescriptionLatentTest extends AbstractMethodDescriptionTest {
 
-    @Override
     protected MethodDescription.InDefinedShape describe(Method method) {
-        return new MethodDescription.Latent(new TypeDescription.ForLoadedType(method.getDeclaringClass()),
+        return new MethodDescription.Latent(TypeDescription.ForLoadedType.of(method.getDeclaringClass()),
                 new MethodDescription.ForLoadedMethod(method).asToken(ElementMatchers.is(method.getDeclaringClass())));
     }
 
-    @Override
     protected MethodDescription.InDefinedShape describe(Constructor<?> constructor) {
-        return new MethodDescription.Latent(new TypeDescription.ForLoadedType(constructor.getDeclaringClass()),
+        return new MethodDescription.Latent(TypeDescription.ForLoadedType.of(constructor.getDeclaringClass()),
                 new MethodDescription.ForLoadedConstructor(constructor).asToken(ElementMatchers.is(constructor.getDeclaringClass())));
     }
 
@@ -32,15 +31,21 @@ public class MethodDescriptionLatentTest extends AbstractMethodDescriptionTest {
         TypeDescription typeDescription = mock(TypeDescription.class);
         MethodDescription.InDefinedShape typeInitializer = new MethodDescription.Latent.TypeInitializer(typeDescription);
         assertThat(typeInitializer.getDeclaringType(), is(typeDescription));
-        assertThat(typeInitializer.getReturnType(), is(TypeDescription.Generic.VOID));
+        assertThat(typeInitializer.getReturnType(), is(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(void.class)));
         assertThat(typeInitializer.getParameters(), is((ParameterList<ParameterDescription.InDefinedShape>) new ParameterList.Empty<ParameterDescription.InDefinedShape>()));
         assertThat(typeInitializer.getExceptionTypes(), is((TypeList.Generic) new TypeList.Generic.Empty()));
         assertThat(typeInitializer.getDeclaredAnnotations(), is((AnnotationList) new AnnotationList.Empty()));
         assertThat(typeInitializer.getModifiers(), is(MethodDescription.TYPE_INITIALIZER_MODIFIER));
     }
 
-    @Override
     protected boolean canReadDebugInformation() {
         return false;
+    }
+
+    @Test
+    @Override
+    @JavaVersionRule.Enforce(17)
+    public void testEnumConstructorAnnotation() throws Exception {
+        super.testEnumConstructorAnnotation();
     }
 }

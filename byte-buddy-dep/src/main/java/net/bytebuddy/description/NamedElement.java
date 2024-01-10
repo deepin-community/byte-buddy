@@ -1,4 +1,22 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.description;
+
+import net.bytebuddy.utility.nullability.AlwaysNull;
+import net.bytebuddy.utility.nullability.MaybeNull;
 
 /**
  * Represents a Java element with a name.
@@ -8,6 +26,7 @@ public interface NamedElement {
     /**
      * Indicates that an element is not named.
      */
+    @AlwaysNull
     String NO_NAME = null;
 
     /**
@@ -16,7 +35,7 @@ public interface NamedElement {
     String EMPTY_NAME = "";
 
     /**
-     * Returns the name of this element as it is found in the source code. If no such name exists,
+     * Returns the display name of this element as it is found in the source code. If no such name exists,
      * an empty string is returned.
      *
      * @return The name of this element as given in a Java program's source code.
@@ -29,16 +48,18 @@ public interface NamedElement {
     interface WithRuntimeName extends NamedElement {
 
         /**
-         * Returns the internalName of this byte code element.
+         * Returns the binary name of this byte code element. If no well-defined internal name is known for this element,
+         * the actual name is returned.
          *
-         * @return The internalName of this byte code element as visible from within a running Java application.
+         * @return The binary ame of this byte code element as visible from within a running Java application.
          */
         String getName();
 
         /**
-         * Returns the internal internalName of this byte code element.
+         * Returns the internal name of this byte code element. If no well-defined internal name is known for this element,
+         * the actual name is returned.
          *
-         * @return The internal internalName of this byte code element as used within the Java class file format.
+         * @return The internal name of this byte code element as used within the Java class file format.
          */
         String getInternalName();
     }
@@ -67,5 +88,33 @@ public interface NamedElement {
          * @return A generic string of this byte code element.
          */
         String toGenericString();
+    }
+
+    /**
+     * A named element with a class file descriptor and a generic signature.
+     */
+    interface WithDescriptor extends NamedElement {
+
+        /**
+         * The generic type signature of a non-generic byte code element.
+         */
+        @AlwaysNull
+        String NON_GENERIC_SIGNATURE = null;
+
+        /**
+         * Returns the descriptor of this byte code element.
+         *
+         * @return The descriptor of this byte code element.
+         */
+        String getDescriptor();
+
+        /**
+         * Returns the generic signature of this byte code element. If this element does not reference generic types
+         * or references malformed generic types, {@code null} is returned as a signature.
+         *
+         * @return The generic signature or {@code null} if this element is not generic.
+         */
+        @MaybeNull
+        String getGenericSignature();
     }
 }

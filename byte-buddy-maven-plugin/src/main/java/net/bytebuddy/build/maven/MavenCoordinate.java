@@ -1,5 +1,21 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.build.maven;
 
+import net.bytebuddy.utility.nullability.MaybeNull;
 import org.eclipse.aether.artifact.Artifact;
 import org.eclipse.aether.artifact.DefaultArtifact;
 
@@ -26,7 +42,7 @@ public class MavenCoordinate {
     /**
      * The projects packaging.
      */
-    private String packaging;
+    private final String packaging;
 
     /**
      * Creates a new Maven coordinate.
@@ -34,7 +50,7 @@ public class MavenCoordinate {
      * @param groupId    The project's group id.
      * @param artifactId The project's artifact id.
      * @param version    The project's version.
-     * @param packaging    The project's packaging
+     * @param packaging  The project's packaging
      */
     protected MavenCoordinate(String groupId, String artifactId, String version, String packaging) {
         this.groupId = groupId;
@@ -53,7 +69,7 @@ public class MavenCoordinate {
     }
 
     @Override
-    public boolean equals(Object object) {
+    public boolean equals(@MaybeNull Object object) {
         if (this == object) {
             return true;
         }

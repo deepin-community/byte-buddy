@@ -1,7 +1,6 @@
 package net.bytebuddy.implementation.attribute;
 
 import net.bytebuddy.description.annotation.AnnotationList;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Test;
 import org.objectweb.asm.Type;
 import org.objectweb.asm.TypeReference;
@@ -15,9 +14,9 @@ public class MethodAttributeAppenderForReceiverTypeTest extends AbstractMethodAt
     public void testReceiverTypeAnnotationNoRetention() throws Exception {
         when(simpleAnnotatedType.getDeclaredAnnotations()).thenReturn(new AnnotationList.ForLoadedAnnotations(new Qux.Instance()));
         new MethodAttributeAppender.ForReceiverType(simpleAnnotatedType).apply(methodVisitor, methodDescription, annotationValueFilter);
-        verifyZeroInteractions(methodVisitor);
         verifyNoMoreInteractions(methodVisitor);
-        verifyZeroInteractions(methodDescription);
+        verifyNoMoreInteractions(methodVisitor);
+        verifyNoMoreInteractions(methodDescription);
     }
 
     @Test
@@ -30,7 +29,7 @@ public class MethodAttributeAppenderForReceiverTypeTest extends AbstractMethodAt
                 Type.getDescriptor(Baz.class),
                 true);
         verifyNoMoreInteractions(methodVisitor);
-        verifyZeroInteractions(methodDescription);
+        verifyNoMoreInteractions(methodDescription);
     }
 
     @Test
@@ -43,11 +42,6 @@ public class MethodAttributeAppenderForReceiverTypeTest extends AbstractMethodAt
                 Type.getDescriptor(QuxBaz.class),
                 false);
         verifyNoMoreInteractions(methodVisitor);
-        verifyZeroInteractions(methodDescription);
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(MethodAttributeAppender.ForReceiverType.class).apply();
+        verifyNoMoreInteractions(methodDescription);
     }
 }

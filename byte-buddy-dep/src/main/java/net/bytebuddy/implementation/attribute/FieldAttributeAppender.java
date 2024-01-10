@@ -1,6 +1,21 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation.attribute;
 
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.annotation.AnnotationDescription;
 import net.bytebuddy.description.field.FieldDescription;
 import net.bytebuddy.description.type.TypeDescription;
@@ -34,12 +49,16 @@ public interface FieldAttributeAppender {
          */
         INSTANCE;
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public FieldAttributeAppender make(TypeDescription typeDescription) {
             return this;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public void apply(FieldVisitor fieldVisitor, FieldDescription fieldDescription, AnnotationValueFilter annotationValueFilter) {
             /* do nothing */
         }
@@ -62,7 +81,7 @@ public interface FieldAttributeAppender {
          * A field attribute appender factory that combines several field attribute appender factories to be
          * represented as a single factory.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class Compound implements Factory {
 
             /**
@@ -95,7 +114,9 @@ public interface FieldAttributeAppender {
                 }
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public FieldAttributeAppender make(TypeDescription typeDescription) {
                 List<FieldAttributeAppender> fieldAttributeAppenders = new ArrayList<FieldAttributeAppender>(factories.size());
                 for (Factory factory : factories) {
@@ -116,7 +137,9 @@ public interface FieldAttributeAppender {
          */
         INSTANCE;
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public void apply(FieldVisitor fieldVisitor, FieldDescription fieldDescription, AnnotationValueFilter annotationValueFilter) {
             AnnotationAppender annotationAppender = new AnnotationAppender.Default(new AnnotationAppender.Target.OnField(fieldVisitor));
             annotationAppender = fieldDescription.getType().accept(AnnotationAppender.ForTypeAnnotations.ofFieldType(annotationAppender, annotationValueFilter));
@@ -125,7 +148,9 @@ public interface FieldAttributeAppender {
             }
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public FieldAttributeAppender make(TypeDescription typeDescription) {
             return this;
         }
@@ -135,7 +160,7 @@ public interface FieldAttributeAppender {
      * Appends an annotation to a field. The visibility of the annotation is determined by the annotation type's
      * {@link java.lang.annotation.RetentionPolicy} annotation.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class Explicit implements FieldAttributeAppender, Factory {
 
         /**
@@ -152,7 +177,9 @@ public interface FieldAttributeAppender {
             this.annotations = annotations;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public void apply(FieldVisitor fieldVisitor, FieldDescription fieldDescription, AnnotationValueFilter annotationValueFilter) {
             AnnotationAppender appender = new AnnotationAppender.Default(new AnnotationAppender.Target.OnField(fieldVisitor));
             for (AnnotationDescription annotation : annotations) {
@@ -160,7 +187,9 @@ public interface FieldAttributeAppender {
             }
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public FieldAttributeAppender make(TypeDescription typeDescription) {
             return this;
         }
@@ -170,7 +199,7 @@ public interface FieldAttributeAppender {
      * A field attribute appender that combines several method attribute appenders to be represented as a single
      * field attribute appender.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class Compound implements FieldAttributeAppender {
 
         /**
@@ -205,7 +234,9 @@ public interface FieldAttributeAppender {
             }
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public void apply(FieldVisitor fieldVisitor, FieldDescription fieldDescription, AnnotationValueFilter annotationValueFilter) {
             for (FieldAttributeAppender fieldAttributeAppender : fieldAttributeAppenders) {
                 fieldAttributeAppender.apply(fieldVisitor, fieldDescription, annotationValueFilter);

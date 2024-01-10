@@ -7,7 +7,7 @@ import org.objectweb.asm.Type;
 import org.objectweb.asm.TypeReference;
 
 import static org.hamcrest.CoreMatchers.is;
-import static org.junit.Assert.assertThat;
+import static org.hamcrest.MatcherAssert.assertThat;
 import static org.mockito.Mockito.*;
 
 public class FieldAttributeAppenderForInstrumentedFieldTest extends AbstractFieldAttributeAppenderTest {
@@ -20,10 +20,10 @@ public class FieldAttributeAppenderForInstrumentedFieldTest extends AbstractFiel
 
     @Test
     public void testAnnotationAppenderNoRetention() throws Exception {
-        when(fieldDescription.getType()).thenReturn(TypeDescription.Generic.OBJECT);
+        when(fieldDescription.getType()).thenReturn(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class));
         when(fieldDescription.getDeclaredAnnotations()).thenReturn(new AnnotationList.ForLoadedAnnotations(new Qux.Instance()));
         FieldAttributeAppender.ForInstrumentedField.INSTANCE.apply(fieldVisitor, fieldDescription, annotationValueFilter);
-        verifyZeroInteractions(fieldVisitor);
+        verifyNoMoreInteractions(fieldVisitor);
         verify(fieldDescription).getDeclaredAnnotations();
         verify(fieldDescription).getType();
         verifyNoMoreInteractions(fieldDescription);
@@ -31,7 +31,7 @@ public class FieldAttributeAppenderForInstrumentedFieldTest extends AbstractFiel
 
     @Test
     public void testAnnotationAppenderRuntimeRetention() throws Exception {
-        when(fieldDescription.getType()).thenReturn(TypeDescription.Generic.OBJECT);
+        when(fieldDescription.getType()).thenReturn(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class));
         when(fieldDescription.getDeclaredAnnotations()).thenReturn(new AnnotationList.ForLoadedAnnotations(new Baz.Instance()));
         FieldAttributeAppender.ForInstrumentedField.INSTANCE.apply(fieldVisitor, fieldDescription, annotationValueFilter);
         verify(fieldVisitor).visitAnnotation(Type.getDescriptor(Baz.class), true);
@@ -43,7 +43,7 @@ public class FieldAttributeAppenderForInstrumentedFieldTest extends AbstractFiel
 
     @Test
     public void testAnnotationAppenderByteCodeRetention() throws Exception {
-        when(fieldDescription.getType()).thenReturn(TypeDescription.Generic.OBJECT);
+        when(fieldDescription.getType()).thenReturn(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class));
         when(fieldDescription.getDeclaredAnnotations()).thenReturn(new AnnotationList.ForLoadedAnnotations(new QuxBaz.Instance()));
         FieldAttributeAppender.ForInstrumentedField.INSTANCE.apply(fieldVisitor, fieldDescription, annotationValueFilter);
         verify(fieldVisitor).visitAnnotation(Type.getDescriptor(QuxBaz.class), false);
@@ -59,7 +59,7 @@ public class FieldAttributeAppenderForInstrumentedFieldTest extends AbstractFiel
         when(simpleAnnotatedType.getDeclaredAnnotations()).thenReturn(new AnnotationList.ForLoadedAnnotations(new Qux.Instance()));
         when(fieldDescription.getDeclaredAnnotations()).thenReturn(new AnnotationList.Empty());
         FieldAttributeAppender.ForInstrumentedField.INSTANCE.apply(fieldVisitor, fieldDescription, annotationValueFilter);
-        verifyZeroInteractions(fieldVisitor);
+        verifyNoMoreInteractions(fieldVisitor);
         verify(fieldDescription).getDeclaredAnnotations();
         verify(fieldDescription).getType();
         verifyNoMoreInteractions(fieldDescription);

@@ -1,3 +1,18 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.utility;
 
 import java.util.ArrayList;
@@ -13,7 +28,7 @@ public class CompoundList {
      * A compound list cannot be created.
      */
     private CompoundList() {
-        throw new UnsupportedOperationException("Cannot create a compound list");
+        throw new UnsupportedOperationException("This class is a utility class and not supposed to be instantiated");
     }
 
     /**
@@ -25,7 +40,14 @@ public class CompoundList {
      * @return A compound list representing the element and the list.
      */
     public static <S> List<S> of(S left, List<? extends S> right) {
-        return of(Collections.singletonList(left), right);
+        if (right.isEmpty()) {
+            return Collections.singletonList(left);
+        } else {
+            List<S> list = new ArrayList<S>(1 + right.size());
+            list.add(left);
+            list.addAll(right);
+            return list;
+        }
     }
 
     /**
@@ -37,7 +59,14 @@ public class CompoundList {
      * @return A compound list representing the element and the list.
      */
     public static <S> List<S> of(List<? extends S> left, S right) {
-        return of(left, Collections.singletonList(right));
+        if (left.isEmpty()) {
+            return Collections.singletonList(right);
+        } else {
+            List<S> list = new ArrayList<S>(left.size() + 1);
+            list.addAll(left);
+            list.add(right);
+            return list;
+        }
     }
 
     /**
@@ -46,11 +75,29 @@ public class CompoundList {
      * @param left  The left list.
      * @param right The right list.
      * @param <S>   The type of the list's elements.
-     * @return A compound list representing the element and the list.
+     * @return A compound list representing the elements of both lists.
      */
     public static <S> List<S> of(List<? extends S> left, List<? extends S> right) {
         List<S> list = new ArrayList<S>(left.size() + right.size());
         list.addAll(left);
+        list.addAll(right);
+        return list;
+    }
+
+
+    /**
+     * Creates a list of a left, a middle and a right list.
+     *
+     * @param left   The left list.
+     * @param middle The middle list.
+     * @param right  The right list.
+     * @param <S>    The type of the list's elements.
+     * @return A compound list representing the elements of all lists.
+     */
+    public static <S> List<S> of(List<? extends S> left, List<? extends S> middle, List<? extends S> right) {
+        List<S> list = new ArrayList<S>(left.size() + middle.size() + right.size());
+        list.addAll(left);
+        list.addAll(middle);
         list.addAll(right);
         return list;
     }

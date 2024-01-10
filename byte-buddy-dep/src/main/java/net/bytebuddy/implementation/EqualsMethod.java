@@ -1,7 +1,22 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation;
 
-import lombok.EqualsAndHashCode;
-import net.bytebuddy.ClassFileVersion;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.field.FieldDescription;
 import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.type.TypeDefinition;
@@ -21,10 +36,8 @@ import net.bytebuddy.matcher.ElementMatcher;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
-import org.objectweb.asm.Type;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 
 import static net.bytebuddy.matcher.ElementMatchers.*;
 
@@ -34,13 +47,13 @@ import static net.bytebuddy.matcher.ElementMatchers.*;
  * the instance upon which the method is invoked returns {@code true} upon calling the value's {@code equals} method. For arrays, the corresponding
  * utilities of {@link java.util.Arrays} are used.
  */
-@EqualsAndHashCode
+@HashCodeAndEqualsPlugin.Enhance
 public class EqualsMethod implements Implementation {
 
     /**
      * The {@link Object#equals(Object)} method.
      */
-    private static final MethodDescription.InDefinedShape EQUALS = new TypeDescription.ForLoadedType(Object.class)
+    private static final MethodDescription.InDefinedShape EQUALS = TypeDescription.ForLoadedType.of(Object.class)
             .getDeclaredMethods()
             .filter(isEquals())
             .getOnly();
@@ -56,7 +69,7 @@ public class EqualsMethod implements Implementation {
     private final TypeCompatibilityCheck typeCompatibilityCheck;
 
     /**
-     * A matcher to filter fields that should not be used for a equality resoltion.
+     * A matcher to filter fields that should not be used for a equality resolution.
      */
     private final ElementMatcher.Junction<? super FieldDescription.InDefinedShape> ignored;
 
@@ -66,12 +79,17 @@ public class EqualsMethod implements Implementation {
     private final ElementMatcher.Junction<? super FieldDescription.InDefinedShape> nonNullable;
 
     /**
+     * The comparator to apply for ordering fields.
+     */
+    private final Comparator<? super FieldDescription.InDefinedShape> comparator;
+
+    /**
      * Creates a new equals method implementation.
      *
      * @param superClassCheck The baseline equality to check.
      */
     protected EqualsMethod(SuperClassCheck superClassCheck) {
-        this(superClassCheck, TypeCompatibilityCheck.EXACT, none(), none());
+        this(superClassCheck, TypeCompatibilityCheck.EXACT, none(), none(), NaturalOrderComparator.INSTANCE);
     }
 
     /**
@@ -79,17 +97,20 @@ public class EqualsMethod implements Implementation {
      *
      * @param superClassCheck        The baseline equality to check.
      * @param typeCompatibilityCheck The instance type compatibility check.
-     * @param ignored                A matcher to filter fields that should not be used for a equality resoltion.
+     * @param ignored                A matcher to filter fields that should not be used for a equality resolution.
      * @param nonNullable            A matcher to determine fields of a reference type that cannot be {@code null}.
+     * @param comparator             The comparator to apply for ordering fields.
      */
     private EqualsMethod(SuperClassCheck superClassCheck,
                          TypeCompatibilityCheck typeCompatibilityCheck,
                          ElementMatcher.Junction<? super FieldDescription.InDefinedShape> ignored,
-                         ElementMatcher.Junction<? super FieldDescription.InDefinedShape> nonNullable) {
+                         ElementMatcher.Junction<? super FieldDescription.InDefinedShape> nonNullable,
+                         Comparator<? super FieldDescription.InDefinedShape> comparator) {
         this.superClassCheck = superClassCheck;
         this.typeCompatibilityCheck = typeCompatibilityCheck;
         this.ignored = ignored;
         this.nonNullable = nonNullable;
+        this.comparator = comparator;
     }
 
     /**
@@ -118,7 +139,7 @@ public class EqualsMethod implements Implementation {
      * @return A new version of this equals method implementation that also ignores any fields matched by the provided matcher.
      */
     public EqualsMethod withIgnoredFields(ElementMatcher<? super FieldDescription.InDefinedShape> ignored) {
-        return new EqualsMethod(superClassCheck, typeCompatibilityCheck, this.ignored.<FieldDescription.InDefinedShape>or(ignored), nonNullable);
+        return new EqualsMethod(superClassCheck, typeCompatibilityCheck, this.ignored.<FieldDescription.InDefinedShape>or(ignored), nonNullable, comparator);
     }
 
     /**
@@ -130,7 +151,55 @@ public class EqualsMethod implements Implementation {
      * the provided matcher.
      */
     public EqualsMethod withNonNullableFields(ElementMatcher<? super FieldDescription.InDefinedShape> nonNullable) {
-        return new EqualsMethod(superClassCheck, typeCompatibilityCheck, ignored, this.nonNullable.<FieldDescription.InDefinedShape>or(nonNullable));
+        return new EqualsMethod(superClassCheck, typeCompatibilityCheck, ignored, this.nonNullable.<FieldDescription.InDefinedShape>or(nonNullable), comparator);
+    }
+
+    /**
+     * Returns a new version of this equals method that compares fields with primitive types prior to fields with non-primitive types.
+     *
+     * @return A new version of this equals method that compares primitive-typed fields before fields with non-primitive-typed fields.
+     */
+    public EqualsMethod withPrimitiveTypedFieldsFirst() {
+        return withFieldOrder(TypePropertyComparator.FOR_PRIMITIVE_TYPES);
+    }
+
+    /**
+     * Returns a new version of this equals method that compares fields with enumeration types prior to fields with non-enumeration types.
+     *
+     * @return A new version of this equals method that compares enumeration-typed fields before fields with non-enumeration-typed fields.
+     */
+    public EqualsMethod withEnumerationTypedFieldsFirst() {
+        return withFieldOrder(TypePropertyComparator.FOR_ENUMERATION_TYPES);
+    }
+
+    /**
+     * Returns a new version of this equals method that compares fields with primitive wrapper types prior to fields with non-primitive wrapper types.
+     *
+     * @return A new version of this equals method that compares primitive wrapper-typed fields before fields with non-primitive wrapper-typed fields.
+     */
+    public EqualsMethod withPrimitiveWrapperTypedFieldsFirst() {
+        return withFieldOrder(TypePropertyComparator.FOR_PRIMITIVE_WRAPPER_TYPES);
+    }
+
+    /**
+     * Returns a new version of this equals method that compares fields with {@link String} types prior to fields with non-{@link String} types.
+     *
+     * @return A new version of this equals method that compares {@link String}-typed fields before fields with non-{@link String}-typed fields.
+     */
+    public EqualsMethod withStringTypedFieldsFirst() {
+        return withFieldOrder(TypePropertyComparator.FOR_STRING_TYPES);
+    }
+
+    /**
+     * Applies the supplied comparator to determine an order for fields for being compared. Fields with the lowest sort order are compared
+     * first. Any previously defined comparators are applied prior to the supplied comparator.
+     *
+     * @param comparator The comparator to apply.
+     * @return A new version of this equals method that sorts fields in their application order using the supplied comparator.
+     */
+    @SuppressWarnings("unchecked") // In absence of @SafeVarargs
+    public EqualsMethod withFieldOrder(Comparator<? super FieldDescription.InDefinedShape> comparator) {
+        return new EqualsMethod(superClassCheck, typeCompatibilityCheck, ignored, nonNullable, new CompoundComparator(this.comparator, comparator));
     }
 
     /**
@@ -141,26 +210,34 @@ public class EqualsMethod implements Implementation {
      * of the instrumented type instead of requiring an exact match.
      */
     public Implementation withSubclassEquality() {
-        return new EqualsMethod(superClassCheck, TypeCompatibilityCheck.SUBCLASS, ignored, nonNullable);
+        return new EqualsMethod(superClassCheck, TypeCompatibilityCheck.SUBCLASS, ignored, nonNullable, comparator);
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public InstrumentedType prepare(InstrumentedType instrumentedType) {
         return instrumentedType;
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public ByteCodeAppender appender(Target implementationTarget) {
         if (implementationTarget.getInstrumentedType().isInterface()) {
             throw new IllegalStateException("Cannot implement meaningful equals method for " + implementationTarget.getInstrumentedType());
         }
+        List<FieldDescription.InDefinedShape> fields = new ArrayList<FieldDescription.InDefinedShape>(implementationTarget.getInstrumentedType()
+                .getDeclaredFields()
+                .filter(not(isStatic().or(ignored))));
+        Collections.sort(fields, comparator);
         return new Appender(implementationTarget.getInstrumentedType(), new StackManipulation.Compound(
                 superClassCheck.resolve(implementationTarget.getInstrumentedType()),
                 MethodVariableAccess.loadThis(),
                 MethodVariableAccess.REFERENCE.loadFrom(1),
                 ConditionalReturn.onIdentity().returningTrue(),
                 typeCompatibilityCheck.resolve(implementationTarget.getInstrumentedType())
-        ), implementationTarget.getInstrumentedType().getDeclaredFields().filter(not(isStatic().or(ignored))), nonNullable);
+        ), fields, nonNullable);
     }
 
     /**
@@ -244,7 +321,7 @@ public class EqualsMethod implements Implementation {
         /**
          * The {@link Object#getClass()} method.
          */
-        protected static final MethodDescription.InDefinedShape GET_CLASS = new TypeDescription.ForLoadedType(Object.class)
+        protected static final MethodDescription.InDefinedShape GET_CLASS = TypeDescription.ForLoadedType.of(Object.class)
                 .getDeclaredMethods()
                 .filter(named("getClass"))
                 .getOnly();
@@ -294,17 +371,23 @@ public class EqualsMethod implements Implementation {
              */
             INSTANCE;
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public StackManipulation before() {
                 return StackManipulation.Trivial.INSTANCE;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public StackManipulation after() {
                 return StackManipulation.Trivial.INSTANCE;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public int getRequiredVariablePadding() {
                 return StackSize.ZERO.getSize();
             }
@@ -314,18 +397,8 @@ public class EqualsMethod implements Implementation {
          * A null value guard that expects a reference type and that skips the comparison if both values are {@code null} but returns if
          * the invoked instance's field value is {@code null} but not the compared instance's value.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class UsingJump implements NullValueGuard {
-
-            /**
-             * An empty array.
-             */
-            private static final Object[] EMPTY = new Object[0];
-
-            /**
-             * An array containing a single reference value.
-             */
-            private static final Object[] REFERENCE = new Object[]{Type.getInternalName(Object.class)};
 
             /**
              * The instrumented method.
@@ -359,17 +432,23 @@ public class EqualsMethod implements Implementation {
                 endOfBlock = new Label();
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public StackManipulation before() {
-                return new UsingJump.BeforeInstruction(instrumentedMethod, firstValueNull, secondValueNull);
+                return new UsingJump.BeforeInstruction();
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public StackManipulation after() {
-                return new UsingJump.AfterInstruction(instrumentedMethod, firstValueNull, secondValueNull, endOfBlock);
+                return new UsingJump.AfterInstruction();
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public int getRequiredVariablePadding() {
                 return 2;
             }
@@ -377,43 +456,12 @@ public class EqualsMethod implements Implementation {
             /**
              * The stack manipulation to apply before the equality computation.
              */
-            @EqualsAndHashCode
-            protected static class BeforeInstruction implements StackManipulation {
+            @HashCodeAndEqualsPlugin.Enhance(includeSyntheticFields = true)
+            protected class BeforeInstruction extends StackManipulation.AbstractBase {
 
                 /**
-                 * The instrumented method.
+                 * {@inheritDoc}
                  */
-                private final MethodDescription instrumentedMethod;
-
-                /**
-                 * The label to jump to if the first value is {@code null} whereas the second value is not {@code null}.
-                 */
-                private final Label firstValueNull;
-
-                /**
-                 * The label to jump to if the second value is {@code null}.
-                 */
-                private final Label secondValueNull;
-
-                /**
-                 * Creates an instruction to execute before an equality check.
-                 *
-                 * @param instrumentedMethod The instrumented method.
-                 * @param firstValueNull     The label to jump to if the first value is {@code null} whereas the second value is not {@code null}.
-                 * @param secondValueNull    The label to jump to if the second value is {@code null}.
-                 */
-                protected BeforeInstruction(MethodDescription instrumentedMethod, Label firstValueNull, Label secondValueNull) {
-                    this.instrumentedMethod = instrumentedMethod;
-                    this.firstValueNull = firstValueNull;
-                    this.secondValueNull = secondValueNull;
-                }
-
-                @Override
-                public boolean isValid() {
-                    return true;
-                }
-
-                @Override
                 public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                     methodVisitor.visitVarInsn(Opcodes.ASTORE, instrumentedMethod.getStackSize());
                     methodVisitor.visitVarInsn(Opcodes.ASTORE, instrumentedMethod.getStackSize() + 1);
@@ -423,75 +471,35 @@ public class EqualsMethod implements Implementation {
                     methodVisitor.visitJumpInsn(Opcodes.IFNULL, firstValueNull);
                     methodVisitor.visitVarInsn(Opcodes.ALOAD, instrumentedMethod.getStackSize() + 1);
                     methodVisitor.visitVarInsn(Opcodes.ALOAD, instrumentedMethod.getStackSize());
-                    return new Size(0, 0);
+                    return Size.ZERO;
                 }
             }
 
             /**
              * The stack manipulation to apply after the equality computation.
              */
-            @EqualsAndHashCode
-            protected static class AfterInstruction implements StackManipulation {
+            @HashCodeAndEqualsPlugin.Enhance(includeSyntheticFields = true)
+            protected class AfterInstruction extends StackManipulation.AbstractBase {
 
                 /**
-                 * The instrumented method.
+                 * {@inheritDoc}
                  */
-                private final MethodDescription instrumentedMethod;
-
-                /**
-                 * The label to jump to if the first value is {@code null} whereas the second value is not {@code null}.
-                 */
-                private final Label firstValueNull;
-
-                /**
-                 * The label to jump to if the second value is {@code null}.
-                 */
-                private final Label secondValueNull;
-
-                /**
-                 * A label indicating the end of the null-guarding block.
-                 */
-                private final Label endOfBlock;
-
-                /**
-                 * Creates an instruction to execute after an equality check.
-                 *
-                 * @param instrumentedMethod The instrumented method.
-                 * @param firstValueNull     The label to jump to if the first value is {@code null} whereas the second value is not {@code null}.
-                 * @param secondValueNull    The label to jump to if the second value is {@code null}.
-                 * @param endOfBlock         A label indicating the end of the null-guarding block.
-                 */
-                protected AfterInstruction(MethodDescription instrumentedMethod, Label firstValueNull, Label secondValueNull, Label endOfBlock) {
-                    this.instrumentedMethod = instrumentedMethod;
-                    this.firstValueNull = firstValueNull;
-                    this.secondValueNull = secondValueNull;
-                    this.endOfBlock = endOfBlock;
-                }
-
-                @Override
-                public boolean isValid() {
-                    return true;
-                }
-
-                @Override
                 public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                     methodVisitor.visitJumpInsn(Opcodes.GOTO, endOfBlock);
                     methodVisitor.visitLabel(secondValueNull);
-                    if (implementationContext.getClassFileVersion().isAtLeast(ClassFileVersion.JAVA_V6)) {
-                        methodVisitor.visitFrame(Opcodes.F_SAME1, EMPTY.length, EMPTY, REFERENCE.length, REFERENCE);
-                    }
+                    implementationContext.getFrameGeneration().same1(methodVisitor,
+                            TypeDescription.ForLoadedType.of(Object.class),
+                            Arrays.asList(implementationContext.getInstrumentedType(), TypeDescription.ForLoadedType.of(Object.class)));
                     methodVisitor.visitJumpInsn(Opcodes.IFNULL, endOfBlock);
                     methodVisitor.visitLabel(firstValueNull);
-                    if (implementationContext.getClassFileVersion().isAtLeast(ClassFileVersion.JAVA_V6)) {
-                        methodVisitor.visitFrame(Opcodes.F_SAME, EMPTY.length, EMPTY, EMPTY.length, EMPTY);
-                    }
+                    implementationContext.getFrameGeneration().same(methodVisitor,
+                            Arrays.asList(implementationContext.getInstrumentedType(), TypeDescription.ForLoadedType.of(Object.class)));
                     methodVisitor.visitInsn(Opcodes.ICONST_0);
                     methodVisitor.visitInsn(Opcodes.IRETURN);
                     methodVisitor.visitLabel(endOfBlock);
-                    if (implementationContext.getClassFileVersion().isAtLeast(ClassFileVersion.JAVA_V6)) {
-                        methodVisitor.visitFrame(Opcodes.F_SAME, EMPTY.length, EMPTY, EMPTY.length, EMPTY);
-                    }
-                    return new Size(0, 0);
+                    implementationContext.getFrameGeneration().same(methodVisitor,
+                            Arrays.asList(implementationContext.getInstrumentedType(), TypeDescription.ForLoadedType.of(Object.class)));
+                    return Size.ZERO;
                 }
             }
         }
@@ -506,7 +514,7 @@ public class EqualsMethod implements Implementation {
          * A comparator for a {@code long} value.
          */
         LONG {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitInsn(Opcodes.LCMP);
                 return new Size(-2, 0);
@@ -517,9 +525,9 @@ public class EqualsMethod implements Implementation {
          * A comparator for a {@code float} value.
          */
         FLOAT {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
-                methodVisitor.visitInsn(Opcodes.FCMPL);
+                methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Float", "compare", "(FF)I", false);
                 return new Size(-1, 0);
             }
         },
@@ -528,9 +536,9 @@ public class EqualsMethod implements Implementation {
          * A comparator for a {@code double} value.
          */
         DOUBLE {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
-                methodVisitor.visitInsn(Opcodes.DCMPL);
+                methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Double", "compare", "(DD)I", false);
                 return new Size(-2, 0);
             }
         },
@@ -539,7 +547,7 @@ public class EqualsMethod implements Implementation {
          * A comparator for a {@code boolean[]} value.
          */
         BOOLEAN_ARRAY {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Arrays", "equals", "([Z[Z)Z", false);
                 return new Size(-1, 0);
@@ -550,7 +558,7 @@ public class EqualsMethod implements Implementation {
          * A comparator for a {@code byte[]} value.
          */
         BYTE_ARRAY {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Arrays", "equals", "([B[B)Z", false);
                 return new Size(-1, 0);
@@ -561,7 +569,7 @@ public class EqualsMethod implements Implementation {
          * A comparator for a {@code short[]} value.
          */
         SHORT_ARRAY {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Arrays", "equals", "([S[S)Z", false);
                 return new Size(-1, 0);
@@ -572,7 +580,7 @@ public class EqualsMethod implements Implementation {
          * A comparator for a {@code char[]} value.
          */
         CHARACTER_ARRAY {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Arrays", "equals", "([C[C)Z", false);
                 return new Size(-1, 0);
@@ -583,7 +591,7 @@ public class EqualsMethod implements Implementation {
          * A comparator for an {@code int[]} value.
          */
         INTEGER_ARRAY {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Arrays", "equals", "([I[I)Z", false);
                 return new Size(-1, 0);
@@ -594,7 +602,7 @@ public class EqualsMethod implements Implementation {
          * A comparator for a {@code long[]} value.
          */
         LONG_ARRAY {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Arrays", "equals", "([J[J)Z", false);
                 return new Size(-1, 0);
@@ -605,7 +613,7 @@ public class EqualsMethod implements Implementation {
          * A comparator for a {@code float[]} value.
          */
         FLOAT_ARRAY {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Arrays", "equals", "([F[F)Z", false);
                 return new Size(-1, 0);
@@ -616,7 +624,7 @@ public class EqualsMethod implements Implementation {
          * A transformer for a {@code double[]} value.
          */
         DOUBLE_ARRAY {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Arrays", "equals", "([D[D)Z", false);
                 return new Size(-1, 0);
@@ -627,7 +635,7 @@ public class EqualsMethod implements Implementation {
          * A transformer for a reference array value.
          */
         REFERENCE_ARRAY {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Arrays", "equals", "([Ljava/lang/Object;[Ljava/lang/Object;)Z", false);
                 return new Size(-1, 0);
@@ -638,7 +646,7 @@ public class EqualsMethod implements Implementation {
          * A transformer for a nested reference array value.
          */
         NESTED_ARRAY {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Arrays", "deepEquals", "([Ljava/lang/Object;[Ljava/lang/Object;)Z", false);
                 return new Size(-1, 0);
@@ -651,6 +659,7 @@ public class EqualsMethod implements Implementation {
          * @param typeDefinition The type definition to resolve.
          * @return The stack manipulation to apply.
          */
+        @SuppressFBWarnings(value = "NP_NULL_ON_SOME_PATH_FROM_RETURN_VALUE", justification = "Assuming component type for array type.")
         public static StackManipulation of(TypeDefinition typeDefinition) {
             if (typeDefinition.represents(boolean.class)
                     || typeDefinition.represents(byte.class)
@@ -689,7 +698,9 @@ public class EqualsMethod implements Implementation {
             }
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public boolean isValid() {
             return true;
         }
@@ -698,7 +709,7 @@ public class EqualsMethod implements Implementation {
     /**
      * A byte code appender to implement the {@link EqualsMethod}.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     protected static class Appender implements ByteCodeAppender {
 
         /**
@@ -739,7 +750,9 @@ public class EqualsMethod implements Implementation {
             this.nonNullable = nonNullable;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Size apply(MethodVisitor methodVisitor, Context implementationContext, MethodDescription instrumentedMethod) {
             if (instrumentedMethod.isStatic()) {
                 throw new IllegalStateException("Hash code method must not be static: " + instrumentedMethod);
@@ -774,8 +787,8 @@ public class EqualsMethod implements Implementation {
     /**
      * A conditional return aborts the equality computation if a given condition was reached.
      */
-    @EqualsAndHashCode
-    protected static class ConditionalReturn implements StackManipulation {
+    @HashCodeAndEqualsPlugin.Enhance
+    protected static class ConditionalReturn extends StackManipulation.AbstractBase {
 
         /**
          * An empty array.
@@ -875,22 +888,155 @@ public class EqualsMethod implements Implementation {
             return new ConditionalReturn(jumpCondition, Opcodes.ICONST_1);
         }
 
-        @Override
-        public boolean isValid() {
-            return true;
-        }
-
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
             Label label = new Label();
             methodVisitor.visitJumpInsn(jumpCondition, label);
             methodVisitor.visitInsn(value);
             methodVisitor.visitInsn(Opcodes.IRETURN);
             methodVisitor.visitLabel(label);
-            if (implementationContext.getClassFileVersion().isAtLeast(ClassFileVersion.JAVA_V6)) {
-                methodVisitor.visitFrame(Opcodes.F_SAME, EMPTY.length, EMPTY, EMPTY.length, EMPTY);
-            }
+            implementationContext.getFrameGeneration().same(methodVisitor,
+                    Arrays.asList(implementationContext.getInstrumentedType(), TypeDescription.ForLoadedType.of(Object.class)));
             return new Size(-1, 1);
+        }
+    }
+
+    /**
+     * A comparator that retains the natural order.
+     */
+    protected enum NaturalOrderComparator implements Comparator<FieldDescription.InDefinedShape> {
+
+        /**
+         * The singleton instance.
+         */
+        INSTANCE;
+
+        /**
+         * {@inheritDoc}
+         */
+        public int compare(FieldDescription.InDefinedShape left, FieldDescription.InDefinedShape right) {
+            return 0;
+        }
+    }
+
+    /**
+     * A comparator that sorts fields by a type property.
+     */
+    protected enum TypePropertyComparator implements Comparator<FieldDescription.InDefinedShape> {
+
+        /**
+         * Weights primitive types before non-primitive types.
+         */
+        FOR_PRIMITIVE_TYPES {
+            @Override
+            protected boolean resolve(TypeDefinition typeDefinition) {
+                return typeDefinition.isPrimitive();
+            }
+        },
+
+        /**
+         * Weights enumeration types before non-enumeration types.
+         */
+        FOR_ENUMERATION_TYPES {
+            @Override
+            protected boolean resolve(TypeDefinition typeDefinition) {
+                return typeDefinition.isEnum();
+            }
+        },
+
+        /**
+         * Weights {@link String} types first.
+         */
+        FOR_STRING_TYPES {
+            @Override
+            protected boolean resolve(TypeDefinition typeDefinition) {
+                return typeDefinition.represents(String.class);
+            }
+        },
+
+        /**
+         * Weights primitive wrapper types first.
+         */
+        FOR_PRIMITIVE_WRAPPER_TYPES {
+            @Override
+            protected boolean resolve(TypeDefinition typeDefinition) {
+                return typeDefinition.asErasure().isPrimitiveWrapper();
+            }
+        };
+
+        /**
+         * {@inheritDoc}
+         */
+        public int compare(FieldDescription.InDefinedShape left, FieldDescription.InDefinedShape right) {
+            if (resolve(left.getType()) && !resolve(right.getType())) {
+                return -1;
+            } else if (!resolve(left.getType()) && resolve(right.getType())) {
+                return 1;
+            } else {
+                return 0;
+            }
+        }
+
+        /**
+         * Resolves a type property.
+         *
+         * @param typeDefinition The type to resolve the property for.
+         * @return {@code true} if the type property is resolved.
+         */
+        protected abstract boolean resolve(TypeDefinition typeDefinition);
+    }
+
+    /**
+     * A compound comparator that compares the values of multiple fields.
+     */
+    @HashCodeAndEqualsPlugin.Enhance
+    @SuppressFBWarnings(value = "SE_COMPARATOR_SHOULD_BE_SERIALIZABLE", justification = "Not used within a serializable instance")
+    protected static class CompoundComparator implements Comparator<FieldDescription.InDefinedShape> {
+
+        /**
+         * All comparators to be applied in the application order.
+         */
+        private final List<Comparator<? super FieldDescription.InDefinedShape>> comparators;
+
+        /**
+         * Creates a compound comparator.
+         *
+         * @param comparator All comparators to be applied in the application order.
+         */
+        @SuppressWarnings("unchecked") // In absence of @SafeVarargs
+        protected CompoundComparator(Comparator<? super FieldDescription.InDefinedShape>... comparator) {
+            this(Arrays.asList(comparator));
+        }
+
+        /**
+         * Creates a compound comparator.
+         *
+         * @param comparators All comparators to be applied in the application order.
+         */
+        protected CompoundComparator(List<? extends Comparator<? super FieldDescription.InDefinedShape>> comparators) {
+            this.comparators = new ArrayList<Comparator<? super FieldDescription.InDefinedShape>>();
+            for (Comparator<? super FieldDescription.InDefinedShape> comparator : comparators) {
+                if (comparator instanceof CompoundComparator) {
+                    this.comparators.addAll(((CompoundComparator) comparator).comparators);
+                } else if (!(comparator instanceof NaturalOrderComparator)) {
+                    this.comparators.add(comparator);
+                }
+            }
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public int compare(FieldDescription.InDefinedShape left, FieldDescription.InDefinedShape right) {
+            for (Comparator<? super FieldDescription.InDefinedShape> comparator : comparators) {
+                int comparison = comparator.compare(left, right);
+                if (comparison != 0) {
+                    return comparison;
+                }
+            }
+            return 0;
         }
     }
 }

@@ -1,14 +1,29 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.matcher;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 
 /**
  * An element matcher that compares two strings by a given pattern which is characterized by a
  * {@link net.bytebuddy.matcher.StringMatcher.Mode}.
  */
-@EqualsAndHashCode(callSuper = false)
-public class StringMatcher extends ElementMatcher.Junction.AbstractBase<String> {
+@HashCodeAndEqualsPlugin.Enhance
+public class StringMatcher extends ElementMatcher.Junction.ForNonNullValues<String> {
 
     /**
      * The text value to match against.
@@ -31,8 +46,10 @@ public class StringMatcher extends ElementMatcher.Junction.AbstractBase<String> 
         this.mode = mode;
     }
 
-    @Override
-    public boolean matches(String target) {
+    /**
+     * {@inheritDoc}
+     */
+    protected boolean doMatch(String target) {
         return mode.matches(value, target);
     }
 
@@ -81,7 +98,7 @@ public class StringMatcher extends ElementMatcher.Junction.AbstractBase<String> 
          */
         STARTS_WITH_IGNORE_CASE("startsWithIgnoreCase") {
             @Override
-            @SuppressFBWarnings(value = "DM_CONVERT_CASE", justification = "Both strings are transformed by the default locale")
+            @SuppressFBWarnings(value = "DM_CONVERT_CASE", justification = "Both strings are transformed by the default locale.")
             protected boolean matches(String expected, String actual) {
                 return actual.toLowerCase().startsWith(expected.toLowerCase());
             }
@@ -102,7 +119,7 @@ public class StringMatcher extends ElementMatcher.Junction.AbstractBase<String> 
          */
         ENDS_WITH_IGNORE_CASE("endsWithIgnoreCase") {
             @Override
-            @SuppressFBWarnings(value = "DM_CONVERT_CASE", justification = "Both strings are transformed by the default locale")
+            @SuppressFBWarnings(value = "DM_CONVERT_CASE", justification = "Both strings are transformed by the default locale.")
             protected boolean matches(String expected, String actual) {
                 return actual.toLowerCase().endsWith(expected.toLowerCase());
             }
@@ -123,7 +140,7 @@ public class StringMatcher extends ElementMatcher.Junction.AbstractBase<String> 
          */
         CONTAINS_IGNORE_CASE("containsIgnoreCase") {
             @Override
-            @SuppressFBWarnings(value = "DM_CONVERT_CASE", justification = "Both strings are transformed by the default locale")
+            @SuppressFBWarnings(value = "DM_CONVERT_CASE", justification = "Both strings are transformed by the default locale.")
             protected boolean matches(String expected, String actual) {
                 return actual.toLowerCase().contains(expected.toLowerCase());
             }

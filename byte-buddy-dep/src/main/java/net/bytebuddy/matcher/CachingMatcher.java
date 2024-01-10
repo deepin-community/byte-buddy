@@ -1,6 +1,23 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.matcher;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
+import net.bytebuddy.utility.nullability.MaybeNull;
 
 import java.util.Iterator;
 import java.util.concurrent.ConcurrentMap;
@@ -10,7 +27,13 @@ import java.util.concurrent.ConcurrentMap;
  *
  * @param <T> The actual matched type of this matcher.
  */
+@HashCodeAndEqualsPlugin.Enhance(permitSubclassEquality = true)
 public class CachingMatcher<T> extends ElementMatcher.Junction.AbstractBase<T> {
+
+    /**
+     * A substitute value to store in a map instead of a {@code null} value.
+     */
+    private static final Object NULL_VALUE = new Object();
 
     /**
      * The underlying matcher to apply for non-cached targets.
@@ -20,6 +43,7 @@ public class CachingMatcher<T> extends ElementMatcher.Junction.AbstractBase<T> {
     /**
      * A map that serves as a cache for previous matches.
      */
+    @HashCodeAndEqualsPlugin.ValueHandling(HashCodeAndEqualsPlugin.ValueHandling.Sort.IGNORE)
     protected final ConcurrentMap<? super T, Boolean> map;
 
     /**
@@ -34,9 +58,13 @@ public class CachingMatcher<T> extends ElementMatcher.Junction.AbstractBase<T> {
         this.map = map;
     }
 
-    @Override
-    public boolean matches(T target) {
-        Boolean cached = map.get(target);
+    /**
+     * {@inheritDoc}
+     */
+    public boolean matches(@MaybeNull T target) {
+        Boolean cached = map.get(target == null
+                ? NULL_VALUE
+                : target);
         if (cached == null) {
             cached = onCacheMiss(target);
         }
@@ -49,23 +77,13 @@ public class CachingMatcher<T> extends ElementMatcher.Junction.AbstractBase<T> {
      * @param target The element to be matched.
      * @return {@code true} if the element is matched.
      */
-    protected boolean onCacheMiss(T target) {
+    @SuppressWarnings("unchecked")
+    protected boolean onCacheMiss(@MaybeNull T target) {
         boolean cached = matcher.matches(target);
-        map.put(target, cached);
+        map.put(target == null
+                ? (T) NULL_VALUE
+                : target, cached);
         return cached;
-    }
-
-    @Override
-    public boolean equals(Object object) {
-        if (this == object) return true;
-        if (!(object instanceof CachingMatcher)) return false;
-        CachingMatcher<?> that = (CachingMatcher<?>) object;
-        return matcher.equals(that.matcher);
-    }
-
-    @Override
-    public int hashCode() {
-        return matcher.hashCode();
     }
 
     @Override
@@ -78,7 +96,7 @@ public class CachingMatcher<T> extends ElementMatcher.Junction.AbstractBase<T> {
      *
      * @param <S> The actual matched type of this matcher.
      */
-    @SuppressFBWarnings(value = "EQ_DOESNT_OVERRIDE_EQUALS", justification = "Caching mechanism is not supposed to decide on equality")
+    @SuppressFBWarnings(value = "EQ_DOESNT_OVERRIDE_EQUALS", justification = "Equality does not consider eviction size.")
     public static class WithInlineEviction<S> extends CachingMatcher<S> {
 
         /**
@@ -99,8 +117,10 @@ public class CachingMatcher<T> extends ElementMatcher.Junction.AbstractBase<T> {
             this.evictionSize = evictionSize;
         }
 
-        @Override
-        protected boolean onCacheMiss(S target) {
+        /**
+         * {@inheritDoc}
+         */
+        protected boolean onCacheMiss(@MaybeNull S target) {
             if (map.size() >= evictionSize) {
                 Iterator<?> iterator = map.entrySet().iterator();
                 iterator.next();

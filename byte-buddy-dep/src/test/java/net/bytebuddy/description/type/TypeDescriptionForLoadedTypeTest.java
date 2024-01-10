@@ -1,12 +1,13 @@
 package net.bytebuddy.description.type;
 
+import net.bytebuddy.dynamic.ClassFileLocator;
 import net.bytebuddy.dynamic.loading.ByteArrayClassLoader;
 import net.bytebuddy.dynamic.loading.ClassLoadingStrategy;
-import net.bytebuddy.dynamic.loading.PackageDefinitionStrategy;
 import net.bytebuddy.matcher.ElementMatchers;
-import net.bytebuddy.test.utility.ClassFileExtraction;
-import org.junit.Ignore;
+import net.bytebuddy.test.utility.JavaVersionRule;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.MethodRule;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -16,114 +17,110 @@ import static org.hamcrest.MatcherAssert.assertThat;
 
 public class TypeDescriptionForLoadedTypeTest extends AbstractTypeDescriptionTest {
 
-    @Override
+    @Rule
+    public MethodRule javaVersionRule = new JavaVersionRule();
+
     protected TypeDescription describe(Class<?> type) {
-        return new TypeDescription.ForLoadedType(type);
+        return TypeDescription.ForLoadedType.of(type);
     }
 
-    @Override
     protected TypeDescription.Generic describeType(Field field) {
-        return new TypeDescription.ForLoadedType(field.getDeclaringClass()).getDeclaredFields().filter(ElementMatchers.is(field)).getOnly().getType();
+        return TypeDescription.ForLoadedType.of(field.getDeclaringClass()).getDeclaredFields().filter(ElementMatchers.is(field)).getOnly().getType();
     }
 
-    @Override
     protected TypeDescription.Generic describeReturnType(Method method) {
-        return new TypeDescription.ForLoadedType(method.getDeclaringClass()).getDeclaredMethods().filter(ElementMatchers.is(method)).getOnly().getReturnType();
+        return TypeDescription.ForLoadedType.of(method.getDeclaringClass()).getDeclaredMethods().filter(ElementMatchers.is(method)).getOnly().getReturnType();
     }
 
-    @Override
     protected TypeDescription.Generic describeParameterType(Method method, int index) {
-        return new TypeDescription.ForLoadedType(method.getDeclaringClass()).getDeclaredMethods().filter(ElementMatchers.is(method)).getOnly().getParameters().get(index).getType();
+        return TypeDescription.ForLoadedType.of(method.getDeclaringClass()).getDeclaredMethods().filter(ElementMatchers.is(method)).getOnly().getParameters().get(index).getType();
     }
 
-    @Override
     protected TypeDescription.Generic describeExceptionType(Method method, int index) {
-        return new TypeDescription.ForLoadedType(method.getDeclaringClass()).getDeclaredMethods().filter(ElementMatchers.is(method)).getOnly().getExceptionTypes().get(index);
+        return TypeDescription.ForLoadedType.of(method.getDeclaringClass()).getDeclaredMethods().filter(ElementMatchers.is(method)).getOnly().getExceptionTypes().get(index);
     }
 
-    @Override
     protected TypeDescription.Generic describeSuperClass(Class<?> type) {
-        return new TypeDescription.ForLoadedType(type).getSuperClass();
+        return TypeDescription.ForLoadedType.of(type).getSuperClass();
     }
 
-    @Override
     protected TypeDescription.Generic describeInterfaceType(Class<?> type, int index) {
-        return new TypeDescription.ForLoadedType(type).getInterfaces().get(index);
+        return TypeDescription.ForLoadedType.of(type).getInterfaces().get(index);
     }
 
-    @Override
     @Test
-    @Ignore("The Java reflection API suffers a bug that affects parsing of type variable bounds")
+    @Override
+    @JavaVersionRule.Enforce(16)
     public void testTypeVariableU() throws Exception {
         super.testTypeVariableU();
     }
 
-    @Override
     @Test
-    @Ignore("The Java reflection API suffers a bug that affects parsing of type variable bounds")
+    @Override
+    @JavaVersionRule.Enforce(16)
     public void testTypeVariableV() throws Exception {
         super.testTypeVariableV();
     }
 
-    @Override
     @Test
-    @Ignore("The Java reflection API suffers a bug that affects parsing of type variable bounds")
+    @Override
+    @JavaVersionRule.Enforce(16)
     public void testTypeVariableW() throws Exception {
         super.testTypeVariableW();
     }
 
-    @Override
     @Test
-    @Ignore("The Java reflection API suffers a bug that affects parsing of type variable bounds")
+    @Override
+    @JavaVersionRule.Enforce(16)
     public void testTypeVariableX() throws Exception {
         super.testTypeVariableX();
     }
 
-    @Override
     @Test
-    @Ignore("The Java reflection API does not currently support owner types")
+    @Override
+    @JavaVersionRule.Enforce(9)
     public void testTypeAnnotationOwnerType() throws Exception {
         super.testTypeAnnotationOwnerType();
     }
 
-    @Override
     @Test
-    @Ignore("The Java reflection API does not currently support generic receiver types")
+    @Override
+    @JavaVersionRule.Enforce(16)
     public void testGenericTypeAnnotationReceiverTypeOnMethod() throws Exception {
         super.testGenericTypeAnnotationReceiverTypeOnMethod();
     }
 
-    @Override
     @Test
-    @Ignore("The Java reflection API does not currently support generic receiver types")
+    @Override
+    @JavaVersionRule.Enforce(16)
     public void testGenericNestedTypeAnnotationReceiverTypeOnMethod() throws Exception {
         super.testGenericNestedTypeAnnotationReceiverTypeOnMethod();
     }
 
-    @Override
     @Test
-    @Ignore("The Java reflection API does not currently support generic receiver types")
+    @Override
+    @JavaVersionRule.Enforce(9)
     public void testGenericNestedTypeAnnotationReceiverTypeOnConstructor() throws Exception {
         super.testGenericNestedTypeAnnotationReceiverTypeOnConstructor();
     }
 
-    @Override
     @Test
-    @Ignore("The Java reflection API does not currently support generic receiver types")
+    @Override
+    @JavaVersionRule.Enforce(16)
     public void testGenericInnerTypeAnnotationReceiverTypeOnConstructor() throws Exception {
         super.testGenericInnerTypeAnnotationReceiverTypeOnConstructor();
     }
 
-    @Override
     @Test
-    @Ignore("The Java reflection API does not currently support generic receiver types")
+    @Override
+    @JavaVersionRule.Enforce(16)
     public void testGenericInnerTypeAnnotationReceiverTypeOnMethod() throws Exception {
         super.testGenericInnerTypeAnnotationReceiverTypeOnMethod();
     }
 
-    @Override
     @Test
-    @Ignore("The Java reflection API does not currently support nested non-generic types")
+    @Override
+    @JavaVersionRule.Enforce(9)
     public void testTypeAnnotationNonGenericInnerType() throws Exception {
         super.testTypeAnnotationNonGenericInnerType();
     }
@@ -135,8 +132,8 @@ public class TypeDescriptionForLoadedTypeTest extends AbstractTypeDescriptionTes
 
     @Test
     public void testLazyResolution() throws Exception {
-        ClassLoader classLoader = new ByteArrayClassLoader(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassFileExtraction.of(Foo.class));
-        new TypeDescription.ForLoadedType(classLoader.loadClass(Foo.class.getName()));
+        ClassLoader classLoader = new ByteArrayClassLoader(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassFileLocator.ForClassLoader.readToNames(Foo.class));
+        TypeDescription.ForLoadedType.of(classLoader.loadClass(Foo.class.getName()));
     }
 
     public static class Foo {

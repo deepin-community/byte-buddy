@@ -5,7 +5,6 @@ import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.implementation.bind.MethodDelegationBinder;
 import net.bytebuddy.implementation.bytecode.StackManipulation;
 import net.bytebuddy.implementation.bytecode.assign.Assigner;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.Mock;
@@ -23,15 +22,14 @@ public class ThisBinderTest extends AbstractAnnotationBinderTest<This> {
         super(This.class);
     }
 
-    @Override
     @Before
+    @Override
     public void setUp() throws Exception {
         super.setUp();
         when(stackManipulation.isValid()).thenReturn(true);
         when(instrumentedType.asGenericType()).thenReturn(genericInstrumentedType);
     }
 
-    @Override
     protected TargetMethodAnnotationDrivenBinder.ParameterBinder<This> getSimpleBinder() {
         return This.Binder.INSTANCE;
     }
@@ -91,7 +89,7 @@ public class ThisBinderTest extends AbstractAnnotationBinderTest<This> {
         assertThat(parameterBinding.isValid(), is(true));
         verify(annotation).optional();
         verify(source, atLeast(1)).isStatic();
-        verifyZeroInteractions(assigner);
+        verifyNoMoreInteractions(assigner);
     }
 
     @Test
@@ -115,10 +113,5 @@ public class ThisBinderTest extends AbstractAnnotationBinderTest<This> {
         when(parameterType.isArray()).thenReturn(true);
         when(target.getType()).thenReturn(parameterType);
         This.Binder.INSTANCE.bind(annotationDescription, source, target, implementationTarget, assigner, Assigner.Typing.STATIC);
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(This.Binder.class).apply();
     }
 }

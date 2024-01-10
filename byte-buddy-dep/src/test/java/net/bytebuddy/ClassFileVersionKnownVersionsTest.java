@@ -9,7 +9,6 @@ import org.objectweb.asm.Opcodes;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.List;
 
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.notNullValue;
@@ -20,13 +19,15 @@ public class ClassFileVersionKnownVersionsTest {
 
     private final int javaVersion;
 
+    private final int derivedVersion;
+
     private final Collection<String> javaVersionStrings;
 
     private final int minorMajorVersion;
 
-    private final int majorVersion;
+    private final short majorVersion;
 
-    private final int minorVersion;
+    private final short minorVersion;
 
     private final boolean atLeastJava5;
 
@@ -35,14 +36,16 @@ public class ClassFileVersionKnownVersionsTest {
     private final boolean atLeastJava8;
 
     public ClassFileVersionKnownVersionsTest(int javaVersion,
+                                             int derivedVersion,
                                              Collection<String> javaVersionStrings,
                                              int minorMajorVersion,
-                                             int majorVersion,
-                                             int minorVersion,
+                                             short majorVersion,
+                                             short minorVersion,
                                              boolean atLeastJava5,
                                              boolean atLeastJava7,
                                              boolean atLeastJava8) {
         this.javaVersion = javaVersion;
+        this.derivedVersion = derivedVersion;
         this.javaVersionStrings = javaVersionStrings;
         this.minorMajorVersion = minorMajorVersion;
         this.majorVersion = majorVersion;
@@ -55,17 +58,26 @@ public class ClassFileVersionKnownVersionsTest {
     @Parameterized.Parameters
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
-                {1, Collections.singleton("1.1"), Opcodes.V1_1, 45, 3, false, false, false},
-                {2, Collections.singleton("1.2"), Opcodes.V1_2, 46, 0, false, false, false},
-                {3, Collections.singleton("1.3"), Opcodes.V1_3, 47, 0, false, false, false},
-                {4, Collections.singleton("1.4"), Opcodes.V1_4, 48, 0, false, false, false},
-                {5, Arrays.asList("1.5", "5"), Opcodes.V1_5, 49, 0, true, false, false},
-                {6, Arrays.asList("1.6", "6"), Opcodes.V1_6, 50, 0, true, false, false},
-                {7, Arrays.asList("1.7", "7"), Opcodes.V1_7, 51, 0, true, true, false},
-                {8, Arrays.asList("1.8", "8"), Opcodes.V1_8, 52, 0, true, true, true},
-                {9, Arrays.asList("1.9", "9"), Opcodes.V9, 53, 0, true, true, true},
-                {10, Arrays.asList("1.10", "10"), Opcodes.V10, 54, 0, true, true, true},
-                {11, Arrays.asList("1.11", "11"), Opcodes.V10 + 1, 55, 0, true, true, true}
+                {1, 1, Collections.singleton("1.1"), Opcodes.V1_1, (short) 45, (short) 3, false, false, false},
+                {2, 2, Collections.singleton("1.2"), Opcodes.V1_2, (short) 46, (short) 0, false, false, false},
+                {3, 3, Collections.singleton("1.3"), Opcodes.V1_3, (short) 47, (short) 0, false, false, false},
+                {4, 4, Collections.singleton("1.4"), Opcodes.V1_4, (short) 48, (short) 0, false, false, false},
+                {5, 5, Arrays.asList("1.5", "5"), Opcodes.V1_5, (short) 49, (short) 0, true, false, false},
+                {6, 6, Arrays.asList("1.6", "6"), Opcodes.V1_6, (short) 50, (short) 0, true, false, false},
+                {7, 7, Arrays.asList("1.7", "7"), Opcodes.V1_7, (short) 51, (short) 0, true, true, false},
+                {8, 8, Arrays.asList("1.8", "8"), Opcodes.V1_8, (short) 52, (short) 0, true, true, true},
+                {9, 9, Arrays.asList("1.9", "9"), Opcodes.V9, (short) 53, (short) 0, true, true, true},
+                {10, 10, Arrays.asList("1.10", "10"), Opcodes.V10, (short) 54, (short) 0, true, true, true},
+                {11, 11, Arrays.asList("1.11", "11"), Opcodes.V11, (short) 55, (short) 0, true, true, true},
+                {12, 12, Arrays.asList("1.12", "12"), Opcodes.V12, (short) 56, (short) 0, true, true, true},
+                {13, 13, Arrays.asList("1.13", "13"), Opcodes.V13, (short) 57, (short) 0, true, true, true},
+                {14, 14, Arrays.asList("1.14", "14"), Opcodes.V14, (short) 58, (short) 0, true, true, true},
+                {15, 15, Arrays.asList("1.15", "15"), Opcodes.V15, (short) 59, (short) 0, true, true, true},
+                {16, 16, Arrays.asList("1.16", "16"), Opcodes.V16, (short) 60, (short) 0, true, true, true},
+                {17, 17, Arrays.asList("1.17", "17"), Opcodes.V17, (short) 61, (short) 0, true, true, true},
+                {18, 18, Arrays.asList("1.18", "18"), Opcodes.V18, (short) 62, (short) 0, true, true, true},
+                {19, 19, Arrays.asList("1.19", "19"), Opcodes.V19, (short) 63, (short) 0, true, true, true},
+                {20, 20, Arrays.asList("1.20", "20"), Opcodes.V20, (short) 64, (short) 0, true, true, true}
         });
     }
 
@@ -116,13 +128,13 @@ public class ClassFileVersionKnownVersionsTest {
 
     @Test
     public void testJavaVersion() throws Exception {
-        assertThat(ClassFileVersion.ofJavaVersion(javaVersion).getJavaVersion(), is(javaVersion));
+        assertThat(ClassFileVersion.ofJavaVersion(javaVersion).getJavaVersion(), is(derivedVersion));
     }
 
     @Test
     public void testJavaVersionString() throws Exception {
         for (String javaVersionString : javaVersionStrings) {
-            assertThat(ClassFileVersion.ofJavaVersionString(javaVersionString).getJavaVersion(), is(javaVersion));
+            assertThat(ClassFileVersion.ofJavaVersionString(javaVersionString).getJavaVersion(), is(derivedVersion));
         }
     }
 
@@ -137,6 +149,23 @@ public class ClassFileVersionKnownVersionsTest {
                     .getLoaded();
             assertThat(type.getDeclaredConstructor().newInstance(), notNullValue(Object.class));
         }
+    }
+
+    @Test
+    public void testNotPreview() throws Exception {
+        assertThat(ClassFileVersion.ofJavaVersion(javaVersion).isPreviewVersion(), is(false));
+    }
+
+    @Test
+    public void testPreview() throws Exception {
+        ClassFileVersion classFileVersion = ClassFileVersion.ofJavaVersion(javaVersion).asPreviewVersion();
+        assertThat(classFileVersion.getJavaVersion(), is(javaVersion));
+        assertThat(classFileVersion.isPreviewVersion(), is(true));
+    }
+
+    @Test
+    public void testToString() {
+        assertThat(ClassFileVersion.ofJavaVersion(javaVersion).toString(), is("Java " + derivedVersion + " (" + minorMajorVersion + ")"));
     }
 
     public static class Foo {

@@ -3,9 +3,12 @@ net.bytebuddy byte-buddy-agent jar * * *
 net.bytebuddy byte-buddy-android jar * * *
 net.bytebuddy byte-buddy-benchmark jar * * *
 net.bytebuddy byte-buddy-gradle-plugin jar * * *
+codes.rafael.modulemaker modulemaker-maven-plugin * * * *
 com.github.ferstl jitwatch-jarscan-maven-plugin * * * *
 com.google.android android * * * *
 com.jayway.maven.plugins.android.generation2 android-maven-plugin * * * *
+com.mycila license-maven-plugin * * * *
+com.simpligility.maven.plugins android-maven-plugin * * * *
 junit junit * * * *
 org.apache.maven maven-compat * * * *
 org.apache.maven.plugin-testing maven-plugin-testing-harness * * * *
@@ -19,7 +22,9 @@ org.jacoco jacoco-maven-plugin * * * *
 org.mockito mockito-core * * * *
 org.ow2.asm asm-analysis * * * *
 org.ow2.asm asm-util * * * *
+org.ow2.asm asm-deprecated * * * *
 org.pitest pitest-maven * * * *
 org.apache.maven.plugins maven-checkstyle-plugin * * * *
 org.apache.maven.plugins maven-enforcer-plugin * * * *
 org.codehaus.mojo animal-sniffer-maven-plugin * * * *
+org.sonatype.plugins nexus-staging-maven-plugin * * * *

@@ -18,7 +18,7 @@ public class TypePoolDefaultLazyParameterListTest extends AbstractParameterListT
 
     @Before
     public void setUp() throws Exception {
-        typePool = TypePool.Default.ofClassPath();
+        typePool = TypePool.Default.ofSystemLoader();
     }
 
     @After
@@ -26,17 +26,14 @@ public class TypePoolDefaultLazyParameterListTest extends AbstractParameterListT
         typePool.clear();
     }
 
-    @Override
     protected ParameterDescription getFirst() throws Exception {
         return new MethodDescription.ForLoadedMethod(Foo.class.getDeclaredMethod("foo", Void.class)).getParameters().getOnly();
     }
 
-    @Override
     protected ParameterDescription getSecond() throws Exception {
         return new MethodDescription.ForLoadedMethod(Foo.class.getDeclaredMethod("bar", Void.class)).getParameters().getOnly();
     }
 
-    @Override
     protected ParameterList<ParameterDescription.InDefinedShape> asList(List<ParameterDescription> elements) {
         List<ParameterDescription.InDefinedShape> parameterDescriptions = new ArrayList<ParameterDescription.InDefinedShape>(elements.size());
         for (ParameterDescription element : elements) {
@@ -50,7 +47,6 @@ public class TypePoolDefaultLazyParameterListTest extends AbstractParameterListT
         return new ParameterList.Explicit<ParameterDescription.InDefinedShape>(parameterDescriptions);
     }
 
-    @Override
     protected ParameterDescription.InDefinedShape asElement(ParameterDescription element) {
         return element.asDefined();
     }

@@ -1,6 +1,21 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation.bytecode.assign.primitive;
 
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.type.TypeDefinition;
 import net.bytebuddy.implementation.Implementation;
 import net.bytebuddy.implementation.bytecode.StackManipulation;
@@ -17,7 +32,7 @@ public enum PrimitiveWideningDelegate {
     /**
      * The widening delegate for {@code boolean} values.
      */
-    BOOLEAN(StackManipulation.Trivial.INSTANCE,                                                // to boolean
+    BOOLEAN(StackManipulation.Trivial.INSTANCE,                                                     // to boolean
             StackManipulation.Illegal.INSTANCE,                                                     // to byte
             StackManipulation.Illegal.INSTANCE,                                                     // to short
             StackManipulation.Illegal.INSTANCE,                                                     // to character
@@ -30,10 +45,10 @@ public enum PrimitiveWideningDelegate {
      * The widening delegate for {@code byte} values.
      */
     BYTE(StackManipulation.Illegal.INSTANCE,                                                        // to boolean
-            StackManipulation.Trivial.INSTANCE,                                                // to byte
-            StackManipulation.Trivial.INSTANCE,                                                // to short
+            StackManipulation.Trivial.INSTANCE,                                                     // to byte
+            StackManipulation.Trivial.INSTANCE,                                                     // to short
             StackManipulation.Illegal.INSTANCE,                                                     // to character
-            StackManipulation.Trivial.INSTANCE,                                                // to integer
+            StackManipulation.Trivial.INSTANCE,                                                     // to integer
             new WideningStackManipulation(Opcodes.I2L, StackSize.SINGLE.toIncreasingSize()),        // to long
             new WideningStackManipulation(Opcodes.I2F, StackSize.ZERO.toIncreasingSize()),          // to float
             new WideningStackManipulation(Opcodes.I2L, StackSize.SINGLE.toIncreasingSize())),       // to double
@@ -43,9 +58,9 @@ public enum PrimitiveWideningDelegate {
      */
     SHORT(StackManipulation.Illegal.INSTANCE,                                                       // to boolean
             StackManipulation.Illegal.INSTANCE,                                                     // to byte
-            StackManipulation.Trivial.INSTANCE,                                                // to short
+            StackManipulation.Trivial.INSTANCE,                                                     // to short
             StackManipulation.Illegal.INSTANCE,                                                     // to character
-            StackManipulation.Trivial.INSTANCE,                                                // to integer
+            StackManipulation.Trivial.INSTANCE,                                                     // to integer
             new WideningStackManipulation(Opcodes.I2L, StackSize.SINGLE.toIncreasingSize()),        // to long
             new WideningStackManipulation(Opcodes.I2F, StackSize.ZERO.toIncreasingSize()),          // to float
             new WideningStackManipulation(Opcodes.I2D, StackSize.SINGLE.toIncreasingSize())),       // to double
@@ -56,8 +71,8 @@ public enum PrimitiveWideningDelegate {
     CHARACTER(StackManipulation.Illegal.INSTANCE,                                                   // to boolean
             StackManipulation.Illegal.INSTANCE,                                                     // to byte
             StackManipulation.Illegal.INSTANCE,                                                     // to short
-            StackManipulation.Trivial.INSTANCE,                                                // to character
-            StackManipulation.Trivial.INSTANCE,                                                // to integer
+            StackManipulation.Trivial.INSTANCE,                                                     // to character
+            StackManipulation.Trivial.INSTANCE,                                                     // to integer
             new WideningStackManipulation(Opcodes.I2L, StackSize.SINGLE.toIncreasingSize()),        // to long
             new WideningStackManipulation(Opcodes.I2F, StackSize.ZERO.toIncreasingSize()),          // to float
             new WideningStackManipulation(Opcodes.I2D, StackSize.SINGLE.toIncreasingSize())),       // to double
@@ -69,7 +84,7 @@ public enum PrimitiveWideningDelegate {
             StackManipulation.Illegal.INSTANCE,                                                     // to byte
             StackManipulation.Illegal.INSTANCE,                                                     // to short
             StackManipulation.Illegal.INSTANCE,                                                     // to character
-            StackManipulation.Trivial.INSTANCE,                                                // to integer
+            StackManipulation.Trivial.INSTANCE,                                                     // to integer
             new WideningStackManipulation(Opcodes.I2L, StackSize.SINGLE.toIncreasingSize()),        // to long
             new WideningStackManipulation(Opcodes.I2F, StackSize.ZERO.toIncreasingSize()),          // to float
             new WideningStackManipulation(Opcodes.I2D, StackSize.SINGLE.toIncreasingSize())),       // to double
@@ -82,7 +97,7 @@ public enum PrimitiveWideningDelegate {
             StackManipulation.Illegal.INSTANCE,                                                     // to short
             StackManipulation.Illegal.INSTANCE,                                                     // to character
             StackManipulation.Illegal.INSTANCE,                                                     // to integer
-            StackManipulation.Trivial.INSTANCE,                                                // to long
+            StackManipulation.Trivial.INSTANCE,                                                     // to long
             new WideningStackManipulation(Opcodes.L2F, StackSize.SINGLE.toDecreasingSize()),        // to float
             new WideningStackManipulation(Opcodes.L2D, StackSize.ZERO.toIncreasingSize())),         // to double
 
@@ -95,7 +110,7 @@ public enum PrimitiveWideningDelegate {
             StackManipulation.Illegal.INSTANCE,                                                     // to character
             StackManipulation.Illegal.INSTANCE,                                                     // to integer
             StackManipulation.Illegal.INSTANCE,                                                     // to long
-            StackManipulation.Trivial.INSTANCE,                                                // to float
+            StackManipulation.Trivial.INSTANCE,                                                     // to float
             new WideningStackManipulation(Opcodes.F2D, StackSize.SINGLE.toIncreasingSize())),       // to double
 
     /**
@@ -108,7 +123,7 @@ public enum PrimitiveWideningDelegate {
             StackManipulation.Illegal.INSTANCE,                                                     // to integer
             StackManipulation.Illegal.INSTANCE,                                                     // to long
             StackManipulation.Illegal.INSTANCE,                                                     // to float
-            StackManipulation.Trivial.INSTANCE);                                               // to double
+            StackManipulation.Trivial.INSTANCE);                                                    // to double
 
     /**
      * A stack manipulation that widens the type that is represented by this instance to a {@code boolean}.
@@ -247,8 +262,8 @@ public enum PrimitiveWideningDelegate {
     /**
      * A stack manipulation that widens a primitive type into a more general primitive type.
      */
-    @EqualsAndHashCode
-    protected static class WideningStackManipulation implements StackManipulation {
+    @HashCodeAndEqualsPlugin.Enhance
+    protected static class WideningStackManipulation extends StackManipulation.AbstractBase {
 
         /**
          * The opcode for executing the conversion.
@@ -271,12 +286,9 @@ public enum PrimitiveWideningDelegate {
             this.size = size;
         }
 
-        @Override
-        public boolean isValid() {
-            return true;
-        }
-
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext) {
             methodVisitor.visitInsn(conversionOpcode);
             return size;

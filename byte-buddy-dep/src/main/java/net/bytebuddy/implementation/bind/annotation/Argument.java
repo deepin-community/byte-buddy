@@ -1,7 +1,23 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation.bind.annotation;
 
 import net.bytebuddy.description.annotation.AnnotationDescription;
 import net.bytebuddy.description.method.MethodDescription;
+import net.bytebuddy.description.method.MethodList;
 import net.bytebuddy.description.method.ParameterDescription;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.implementation.Implementation;
@@ -13,15 +29,27 @@ import net.bytebuddy.implementation.bytecode.member.MethodVariableAccess;
 
 import java.lang.annotation.*;
 
+import static net.bytebuddy.matcher.ElementMatchers.named;
+
 /**
+ * <p>
  * Parameters that are annotated with this annotation will be assigned the value of the parameter of the source method
  * with the given parameter. For example, if source method {@code foo(String, Integer)} is bound to target method
  * {@code bar(@Argument(1) Integer)}, the second parameter of {@code foo} will be bound to the first argument of
  * {@code bar}.
- * <p>&nbsp;</p>
+ * </p>
+ * <p>
  * If a source method has less parameters than specified by {@link Argument#value()}, the method carrying this parameter
  * annotation is excluded from the list of possible binding candidates to this particular source method. The same happens,
  * if the source method parameter at the specified index is not assignable to the annotated parameter.
+ * </p>
+ * <p>
+ * <b>Important</b>: Don't confuse this annotation with {@link net.bytebuddy.asm.Advice.Argument} annotation. This annotation
+ * should be used only in combination with method delegation
+ * ({@link net.bytebuddy.implementation.MethodDelegation MethodDelegation.to(...)}).
+ * For {@link net.bytebuddy.asm.Advice} ASM visitor use alternative annotation from
+ * <code>net.bytebuddy.asm.Advice</code> package.
+ * </p>
  *
  * @see net.bytebuddy.implementation.MethodDelegation
  * @see net.bytebuddy.implementation.bind.annotation.TargetMethodAnnotationDrivenBinder
@@ -135,30 +163,55 @@ public @interface Argument {
          */
         INSTANCE;
 
-        @Override
+        /**
+         * A description of the {@link Argument#value()} method.
+         */
+        private static final MethodDescription.InDefinedShape VALUE;
+
+        /**
+         * A description of the {@link Argument#bindingMechanic()} method.
+         */
+        private static final MethodDescription.InDefinedShape BINDING_MECHANIC;
+
+        /*
+         * Resolves annotation properties.
+         */
+        static {
+            MethodList<MethodDescription.InDefinedShape> methods = TypeDescription.ForLoadedType.of(Argument.class).getDeclaredMethods();
+            VALUE = methods.filter(named("value")).getOnly();
+            BINDING_MECHANIC = methods.filter(named("bindingMechanic")).getOnly();
+        }
+
+        /**
+         * {@inheritDoc}
+         */
         public Class<Argument> getHandledType() {
             return Argument.class;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public MethodDelegationBinder.ParameterBinding<?> bind(AnnotationDescription.Loadable<Argument> annotation,
                                                                MethodDescription source,
                                                                ParameterDescription target,
                                                                Implementation.Target implementationTarget,
                                                                Assigner assigner,
                                                                Assigner.Typing typing) {
-            Argument argument = annotation.loadSilent();
-            if (argument.value() < 0) {
+            if (annotation.getValue(VALUE).resolve(Integer.class) < 0) {
                 throw new IllegalArgumentException("@Argument annotation on " + target + " specifies negative index");
-            } else if (source.getParameters().size() <= argument.value()) {
+            } else if (source.getParameters().size() <= annotation.getValue(VALUE).resolve(Integer.class)) {
                 return MethodDelegationBinder.ParameterBinding.Illegal.INSTANCE;
             }
-            return argument.bindingMechanic().makeBinding(source.getParameters().get(argument.value()).getType(),
-                    target.getType(),
-                    argument.value(),
-                    assigner,
-                    typing,
-                    source.getParameters().get(argument.value()).getOffset());
+            return annotation.getValue(BINDING_MECHANIC)
+                    .load(Argument.class.getClassLoader())
+                    .resolve(BindingMechanic.class)
+                    .makeBinding(source.getParameters().get(annotation.getValue(VALUE).resolve(Integer.class)).getType(),
+                            target.getType(),
+                            annotation.getValue(VALUE).resolve(Integer.class),
+                            assigner,
+                            typing,
+                            source.getParameters().get(annotation.getValue(VALUE).resolve(Integer.class)).getOffset());
         }
     }
 }

@@ -1,6 +1,5 @@
 package net.bytebuddy.implementation.bind.annotation;
 
-import net.bytebuddy.description.annotation.AnnotationList;
 import net.bytebuddy.description.method.ParameterDescription;
 import net.bytebuddy.description.method.ParameterList;
 import net.bytebuddy.description.type.TypeDescription;
@@ -8,12 +7,10 @@ import net.bytebuddy.implementation.bind.ArgumentTypeResolver;
 import net.bytebuddy.implementation.bind.MethodDelegationBinder;
 import net.bytebuddy.implementation.bytecode.StackSize;
 import net.bytebuddy.implementation.bytecode.assign.Assigner;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.Mock;
 
-import java.lang.annotation.Annotation;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -34,8 +31,8 @@ public class ArgumentBinderTest extends AbstractAnnotationBinderTest<Argument> {
         super(Argument.class);
     }
 
-    @Override
     @Before
+    @Override
     @SuppressWarnings("unchecked")
     public void setUp() throws Exception {
         super.setUp();
@@ -47,7 +44,6 @@ public class ArgumentBinderTest extends AbstractAnnotationBinderTest<Argument> {
         when(genericTargetType.accept(any(TypeDescription.Generic.Visitor.class))).thenReturn(targetType);
     }
 
-    @Override
     protected TargetMethodAnnotationDrivenBinder.ParameterBinder<Argument> getSimpleBinder() {
         return Argument.Binder.INSTANCE;
     }
@@ -118,19 +114,13 @@ public class ArgumentBinderTest extends AbstractAnnotationBinderTest<Argument> {
         assertThat(parameterBinding.isValid(), is(false));
         verify(annotation, atLeast(1)).value();
         verify(source, atLeast(1)).getParameters();
-        verifyZeroInteractions(assigner);
+        verifyNoMoreInteractions(assigner);
     }
 
     @Test(expected = IllegalArgumentException.class)
     public void testNegativeAnnotationValue() throws Exception {
         when(annotation.value()).thenReturn(-1);
         Argument.Binder.INSTANCE.bind(annotationDescription, source, target, implementationTarget, assigner, Assigner.Typing.STATIC);
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(Argument.Binder.class).apply();
-        ObjectPropertyAssertion.of(Argument.BindingMechanic.class).apply();
     }
 
     @SuppressWarnings("unused")

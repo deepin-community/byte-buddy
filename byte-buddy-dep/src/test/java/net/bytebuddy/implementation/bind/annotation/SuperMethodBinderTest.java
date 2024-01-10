@@ -5,7 +5,6 @@ import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.implementation.Implementation;
 import net.bytebuddy.implementation.bind.MethodDelegationBinder;
 import net.bytebuddy.implementation.bytecode.assign.Assigner;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.Mock;
@@ -34,18 +33,18 @@ public class SuperMethodBinderTest extends AbstractAnnotationBinderTest<SuperMet
     @Mock
     private Implementation.SpecialMethodInvocation specialMethodInvocation;
 
-    @Override
     protected TargetMethodAnnotationDrivenBinder.ParameterBinder<SuperMethod> getSimpleBinder() {
         return SuperMethod.Binder.INSTANCE;
     }
 
-    @Override
     @Before
+    @Override
     public void setUp() throws Exception {
         super.setUp();
         when(target.getType()).thenReturn(genericTargetType);
         when(genericTargetType.asErasure()).thenReturn(targetType);
         when(source.asSignatureToken()).thenReturn(token);
+        when(specialMethodInvocation.withCheckedCompatibilityTo(sourceTypeToken)).thenReturn(specialMethodInvocation);
     }
 
     @Test(expected = IllegalStateException.class)
@@ -141,11 +140,5 @@ public class SuperMethodBinderTest extends AbstractAnnotationBinderTest<SuperMet
                 assigner,
                 Assigner.Typing.STATIC);
         assertThat(binding.isValid(), is(true));
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(SuperMethod.Binder.class).apply();
-        ObjectPropertyAssertion.of(SuperMethod.Binder.DelegationMethod.class).apply();
     }
 }

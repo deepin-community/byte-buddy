@@ -1,7 +1,6 @@
 package net.bytebuddy.dynamic.scaffold;
 
 import net.bytebuddy.description.type.TypeDescription;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Test;
 
 import static org.hamcrest.CoreMatchers.is;
@@ -18,16 +17,11 @@ public class FieldLocatorNoOpTest {
 
     @Test
     public void testCannotLocateWithType() throws Exception {
-        assertThat(FieldLocator.NoOp.INSTANCE.locate(FOO, TypeDescription.OBJECT).isResolved(), is(false));
+        assertThat(FieldLocator.NoOp.INSTANCE.locate(FOO, TypeDescription.ForLoadedType.of(Object.class)).isResolved(), is(false));
     }
 
     @Test
     public void testFactory() throws Exception {
-        assertThat(FieldLocator.NoOp.INSTANCE.make(TypeDescription.OBJECT), is((FieldLocator) FieldLocator.NoOp.INSTANCE));
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(FieldLocator.NoOp.class).apply();
+        assertThat(FieldLocator.NoOp.INSTANCE.make(TypeDescription.ForLoadedType.of(Object.class)), is((FieldLocator) FieldLocator.NoOp.INSTANCE));
     }
 }

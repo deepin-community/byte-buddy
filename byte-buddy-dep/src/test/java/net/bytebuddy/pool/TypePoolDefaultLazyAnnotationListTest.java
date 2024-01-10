@@ -17,7 +17,7 @@ public class TypePoolDefaultLazyAnnotationListTest extends AbstractAnnotationLis
 
     @Before
     public void setUp() throws Exception {
-        typePool = TypePool.Default.ofClassPath();
+        typePool = TypePool.Default.ofSystemLoader();
     }
 
     @After
@@ -25,22 +25,18 @@ public class TypePoolDefaultLazyAnnotationListTest extends AbstractAnnotationLis
         typePool.clear();
     }
 
-    @Override
     protected Annotation getFirst() throws Exception {
         return Holder.class.getAnnotation(Foo.class);
     }
 
-    @Override
     protected Annotation getSecond() throws Exception {
         return Holder.class.getAnnotation(Bar.class);
     }
 
-    @Override
     protected AnnotationList asList(List<Annotation> elements) {
-        return typePool.describe(Holder.class.getName()).resolve().getDeclaredAnnotations().filter(anyOf(elements.toArray(new Annotation[elements.size()])));
+        return typePool.describe(Holder.class.getName()).resolve().getDeclaredAnnotations().filter(anyOf(elements.toArray(new Annotation[0])));
     }
 
-    @Override
     protected AnnotationDescription asElement(Annotation element) {
         return AnnotationDescription.ForLoadedAnnotation.of(element);
     }

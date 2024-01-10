@@ -1,10 +1,27 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.matcher;
 
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.type.TypeDefinition;
 import net.bytebuddy.description.type.TypeDescription;
+import net.bytebuddy.utility.QueueFactory;
 
 import java.util.HashSet;
+import java.util.Queue;
 import java.util.Set;
 
 /**
@@ -12,8 +29,8 @@ import java.util.Set;
  *
  * @param <T> The type of the matched entity.
  */
-@EqualsAndHashCode(callSuper = false)
-public class HasSuperTypeMatcher<T extends TypeDescription> extends ElementMatcher.Junction.AbstractBase<T> {
+@HashCodeAndEqualsPlugin.Enhance
+public class HasSuperTypeMatcher<T extends TypeDescription> extends ElementMatcher.Junction.ForNonNullValues<T> {
 
     /**
      * The matcher to apply to any super type of the matched type.
@@ -29,28 +46,27 @@ public class HasSuperTypeMatcher<T extends TypeDescription> extends ElementMatch
         this.matcher = matcher;
     }
 
-    @Override
-    public boolean matches(T target) {
-        Set<TypeDescription> checkedInterfaces = new HashSet<TypeDescription>();
+    /**
+     * {@inheritDoc}
+     */
+    protected boolean doMatch(T target) {
+        Set<TypeDescription> previous = new HashSet<TypeDescription>();
         for (TypeDefinition typeDefinition : target) {
-            if (matcher.matches(typeDefinition.asGenericType()) || hasInterface(typeDefinition, checkedInterfaces)) {
+            if (!previous.add(typeDefinition.asErasure())) { // Main type can be an interface.
+                return false; // Avoids a life-lock when encountering a recursive type-definition.
+            } else if (matcher.matches(typeDefinition.asGenericType())) {
                 return true;
             }
-        }
-        return false;
-    }
-
-    /**
-     * Matches a type's interfaces against the provided matcher.
-     *
-     * @param typeDefinition    The type for which to check all implemented interfaces.
-     * @param checkedInterfaces The interfaces that have already been checked.
-     * @return {@code true} if any interface matches the supplied matcher.
-     */
-    private boolean hasInterface(TypeDefinition typeDefinition, Set<TypeDescription> checkedInterfaces) {
-        for (TypeDefinition interfaceType : typeDefinition.getInterfaces()) {
-            if (checkedInterfaces.add(interfaceType.asErasure()) && (matcher.matches(interfaceType.asGenericType()) || hasInterface(interfaceType, checkedInterfaces))) {
-                return true;
+            Queue<TypeDefinition> interfaceTypes = QueueFactory.<TypeDefinition>make(typeDefinition.getInterfaces());
+            while (!interfaceTypes.isEmpty()) {
+                TypeDefinition interfaceType = interfaceTypes.remove();
+                if (previous.add(interfaceType.asErasure())) {
+                    if (matcher.matches(interfaceType.asGenericType())) {
+                        return true;
+                    } else {
+                        interfaceTypes.addAll(interfaceType.getInterfaces());
+                    }
+                }
             }
         }
         return false;

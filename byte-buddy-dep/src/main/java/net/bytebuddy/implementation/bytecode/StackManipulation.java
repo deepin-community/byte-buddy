@@ -1,6 +1,21 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation.bytecode;
 
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.implementation.Implementation;
 import org.objectweb.asm.MethodVisitor;
 
@@ -39,12 +54,16 @@ public interface StackManipulation {
          */
         INSTANCE;
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public boolean isValid() {
             return false;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext) {
             throw new IllegalStateException("An illegal stack manipulation must not be applied");
         }
@@ -60,12 +79,16 @@ public interface StackManipulation {
          */
         INSTANCE;
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public boolean isValid() {
             return true;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext) {
             return StackSize.ZERO.toIncreasingSize();
         }
@@ -75,8 +98,13 @@ public interface StackManipulation {
      * A description of the size change that is imposed by some
      * {@link StackManipulation}.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class Size {
+
+        /**
+         * A size of zero.
+         */
+        public static final Size ZERO = new Size(0, 0);
 
         /**
          * The impact of any size operation onto the operand stack. This value can be negative if more values
@@ -146,9 +174,22 @@ public interface StackManipulation {
     }
 
     /**
+     * An abstract base implementation of a valid stack manipulation.
+     */
+    abstract class AbstractBase implements StackManipulation {
+
+        /**
+         * {@inheritDoc}
+         */
+        public boolean isValid() {
+            return true;
+        }
+    }
+
+    /**
      * An immutable stack manipulation that aggregates a sequence of other stack manipulations.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class Compound implements StackManipulation {
 
         /**
@@ -181,7 +222,9 @@ public interface StackManipulation {
             }
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public boolean isValid() {
             for (StackManipulation stackManipulation : stackManipulations) {
                 if (!stackManipulation.isValid()) {
@@ -191,13 +234,58 @@ public interface StackManipulation {
             return true;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext) {
-            Size size = new Size(0, 0);
+            Size size = Size.ZERO;
             for (StackManipulation stackManipulation : stackManipulations) {
                 size = size.aggregate(stackManipulation.apply(methodVisitor, implementationContext));
             }
             return size;
+        }
+    }
+
+    /**
+     * An implementation of {@link StackManipulation} that simplifies functional invocations via lambda expressions.
+     */
+    @HashCodeAndEqualsPlugin.Enhance
+    class Simple extends StackManipulation.AbstractBase {
+
+        /**
+         * The dispatcher to use.
+         */
+        private final Dispatcher dispatcher;
+
+        /**
+         * Creates a new stack manipulation for a dispatcher.
+         *
+         * @param dispatcher The dispatcher to use.
+         */
+        public Simple(Dispatcher dispatcher) {
+            this.dispatcher = dispatcher;
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext) {
+            return dispatcher.apply(methodVisitor, implementationContext);
+        }
+
+        /**
+         * A dispatcher for an instance of {@link Simple}.
+         */
+        public interface Dispatcher {
+
+            /**
+             * A valid implementation of {@link StackManipulation#apply(MethodVisitor, Implementation.Context)}.
+             *
+             * @param methodVisitor         The method visitor used to write the method implementation to.
+             * @param implementationContext The context of the current implementation.
+             * @return The changes to the size of the operand stack that are implied by this stack manipulation.
+             */
+            Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext);
         }
     }
 }

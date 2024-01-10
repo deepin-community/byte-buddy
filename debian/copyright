@@ -1,20 +1,23 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: Byte Buddy
-Source: http://bytebuddy.net
+Source: https://bytebuddy.net
 Files-Excluded: .mvn/*
                 byte-buddy-gradle-plugin/gradlew*
                 byte-buddy-gradle-plugin/gradle/*/gradle-wrapper.*
                 byte-buddy-gradle-plugin/gradle/*/gradle-*.zip
-                byte-buddy-dep/src/test/resources/net/bytebuddy/test/precompiled/*.class
+                *.class
+                *.dll
 
 Files: *
 Copyright: 2014-2017 Rafael Winterhalter <rafael.wth@gmail.com>
 License: Apache-2.0
 
 Files: debian/*
-Copyright: 2017 Ying-Chun Liu (PaulLiu) <paulliu@debian.org>
+Copyright: 2017-2022 Ying-Chun Liu (PaulLiu) <paulliu@debian.org>
            2017 DT42.io
-           2017 Felix Natter <fnatter@gmx.net>
+           2017-2022 Felix Natter <fnatter@gmx.net>
+           2017-2022 Emmanuel Bourg <ebourg@apache.org>
+           2022 tony mancill <tmancill@debian.org>
 License: Apache-2.0
 
 License: Apache-2.0

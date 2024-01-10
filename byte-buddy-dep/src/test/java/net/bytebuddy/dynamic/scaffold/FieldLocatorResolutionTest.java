@@ -1,12 +1,11 @@
 package net.bytebuddy.dynamic.scaffold;
 
 import net.bytebuddy.description.field.FieldDescription;
-import net.bytebuddy.test.utility.MockitoRule;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -14,7 +13,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 public class FieldLocatorResolutionTest {
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     @Mock
     private FieldDescription fieldDescription;
@@ -37,11 +36,5 @@ public class FieldLocatorResolutionTest {
     @Test(expected = IllegalStateException.class)
     public void testIllegalResolutionFieldDescription() throws Exception {
         FieldLocator.Resolution.Illegal.INSTANCE.getField();
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(FieldLocator.Resolution.Simple.class).apply();
-        ObjectPropertyAssertion.of(FieldLocator.Resolution.Illegal.class).apply();
     }
 }

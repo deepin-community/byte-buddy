@@ -12,20 +12,18 @@ import net.bytebuddy.implementation.bind.MethodDelegationBinder;
 import net.bytebuddy.implementation.bytecode.StackManipulation;
 import net.bytebuddy.implementation.bytecode.StackSize;
 import net.bytebuddy.implementation.bytecode.assign.Assigner;
-import net.bytebuddy.test.utility.MockitoRule;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 import org.objectweb.asm.MethodVisitor;
 
 import java.lang.annotation.Annotation;
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.List;
 
 import static org.hamcrest.CoreMatchers.*;
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -37,7 +35,7 @@ public class TargetMethodAnnotationDrivenBinderTest {
     private static final String FOO = "foo", BAR = "bar", BAZ = "baz";
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     @Mock
     private TargetMethodAnnotationDrivenBinder.ParameterBinder<?> firstParameterBinder, secondParameterBinder;
@@ -83,7 +81,7 @@ public class TargetMethodAnnotationDrivenBinderTest {
     @Mock
     private ParameterDescription firstParameter, secondParameter;
 
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings({"unchecked", "rawtypes", "cast"})
     private static MethodDelegationBinder.ParameterBinding<?> prepareArgumentBinder(TargetMethodAnnotationDrivenBinder.ParameterBinder<?> parameterBinder,
                                                                                     Class<? extends Annotation> annotationType,
                                                                                     Object identificationToken) {
@@ -128,10 +126,10 @@ public class TargetMethodAnnotationDrivenBinderTest {
         when(targetMethod.getParameters())
                 .thenReturn((ParameterList) new ParameterList.Explicit<ParameterDescription>(firstParameter, secondParameter));
         when(firstPseudoAnnotation.getAnnotationType())
-                .thenReturn(new TypeDescription.ForLoadedType(FirstPseudoAnnotation.class));
+                .thenReturn(TypeDescription.ForLoadedType.of(FirstPseudoAnnotation.class));
         when(firstPseudoAnnotation.prepare(FirstPseudoAnnotation.class)).thenReturn(firstPseudoAnnotation);
         when(secondPseudoAnnotation.getAnnotationType())
-                .thenReturn(new TypeDescription.ForLoadedType(SecondPseudoAnnotation.class));
+                .thenReturn(TypeDescription.ForLoadedType.of(SecondPseudoAnnotation.class));
         when(secondPseudoAnnotation.prepare(SecondPseudoAnnotation.class)).thenReturn(secondPseudoAnnotation);
         when(sourceTypeDescription.getStackSize()).thenReturn(StackSize.ZERO);
         when(targetTypeDescription.getStackSize()).thenReturn(StackSize.ZERO);
@@ -144,7 +142,7 @@ public class TargetMethodAnnotationDrivenBinderTest {
 
     @After
     public void tearDown() throws Exception {
-        verifyZeroInteractions(implementationContext);
+        verifyNoMoreInteractions(implementationContext);
     }
 
     @Test(expected = IllegalArgumentException.class)
@@ -158,7 +156,7 @@ public class TargetMethodAnnotationDrivenBinderTest {
     public void testIgnoreForBindingAnnotation() throws Exception {
         when(targetMethod.isAccessibleTo(instrumentedType)).thenReturn(true);
         AnnotationDescription ignoreForBinding = mock(AnnotationDescription.class);
-        when(ignoreForBinding.getAnnotationType()).thenReturn(new TypeDescription.ForLoadedType(IgnoreForBinding.class));
+        when(ignoreForBinding.getAnnotationType()).thenReturn(TypeDescription.ForLoadedType.of(IgnoreForBinding.class));
         when(targetMethod.getDeclaredAnnotations()).thenReturn(new AnnotationList.Explicit(Collections.singletonList(ignoreForBinding)));
         when(termination.isValid()).thenReturn(true);
         MethodDelegationBinder methodDelegationBinder = TargetMethodAnnotationDrivenBinder.of(Collections.<TargetMethodAnnotationDrivenBinder.ParameterBinder<?>>emptyList());
@@ -167,9 +165,9 @@ public class TargetMethodAnnotationDrivenBinderTest {
                 terminationHandler,
                 methodInvoker,
                 assigner).isValid(), is(false));
-        verifyZeroInteractions(assigner);
-        verifyZeroInteractions(implementationTarget);
-        verifyZeroInteractions(sourceMethod);
+        verifyNoMoreInteractions(assigner);
+        verifyNoMoreInteractions(implementationTarget);
+        verifyNoMoreInteractions(sourceMethod);
     }
 
     @Test
@@ -187,9 +185,9 @@ public class TargetMethodAnnotationDrivenBinderTest {
                 terminationHandler,
                 methodInvoker,
                 assigner).isValid(), is(false));
-        verifyZeroInteractions(terminationHandler);
-        verifyZeroInteractions(assigner);
-        verifyZeroInteractions(methodInvoker);
+        verifyNoMoreInteractions(terminationHandler);
+        verifyNoMoreInteractions(assigner);
+        verifyNoMoreInteractions(methodInvoker);
     }
 
     @Test
@@ -209,8 +207,8 @@ public class TargetMethodAnnotationDrivenBinderTest {
                 assigner).isValid(), is(false));
         verify(terminationHandler).resolve(assigner, typing, sourceMethod, targetMethod);
         verifyNoMoreInteractions(terminationHandler);
-        verifyZeroInteractions(assigner);
-        verifyZeroInteractions(methodInvoker);
+        verifyNoMoreInteractions(assigner);
+        verifyNoMoreInteractions(methodInvoker);
     }
 
     @Test
@@ -243,7 +241,7 @@ public class TargetMethodAnnotationDrivenBinderTest {
     }
 
     @Test
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings({"unchecked", "rawtypes"})
     public void testBindingByDefault() throws Exception {
         when(targetMethod.isAccessibleTo(instrumentedType)).thenReturn(true);
         when(assignmentBinding.isValid()).thenReturn(true);
@@ -252,8 +250,8 @@ public class TargetMethodAnnotationDrivenBinderTest {
         when(targetMethod.getDeclaredAnnotations()).thenReturn(new AnnotationList.Empty());
         when(firstParameter.getDeclaredAnnotations()).thenReturn(new AnnotationList.Empty());
         when(secondParameter.getDeclaredAnnotations()).thenReturn(new AnnotationList.Empty());
-        when(firstParameter.getType()).thenReturn(TypeDescription.Generic.OBJECT);
-        when(secondParameter.getType()).thenReturn(TypeDescription.Generic.OBJECT);
+        when(firstParameter.getType()).thenReturn(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class));
+        when(secondParameter.getType()).thenReturn(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class));
         when(sourceMethod.getParameters()).thenReturn(new ParameterList.Explicit(firstParameter, secondParameter));
         MethodDelegationBinder methodDelegationBinder = TargetMethodAnnotationDrivenBinder.of(Collections.<TargetMethodAnnotationDrivenBinder.ParameterBinder<?>>emptyList());
         MethodDelegationBinder.MethodBinding methodBinding = methodDelegationBinder.compile(targetMethod).bind(implementationTarget,
@@ -308,7 +306,7 @@ public class TargetMethodAnnotationDrivenBinderTest {
         StackManipulation.Size size = methodBinding.apply(methodVisitor, implementationContext);
         assertThat(size.getSizeImpact(), is(0));
         assertThat(size.getMaximalSize(), is(0));
-        verifyZeroInteractions(methodVisitor);
+        verifyNoMoreInteractions(methodVisitor);
         verify(targetMethod, atLeast(1)).getDeclaredAnnotations();
         verify(firstParameter, atLeast(1)).getDeclaredAnnotations();
         verify(secondParameter, atLeast(1)).getDeclaredAnnotations();
@@ -351,33 +349,6 @@ public class TargetMethodAnnotationDrivenBinderTest {
         assertThat(argument, not(new Object()));
     }
 
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(TargetMethodAnnotationDrivenBinder.class).refine(new ObjectPropertyAssertion.Refinement<TargetMethodAnnotationDrivenBinder.ParameterBinder>() {
-            @Override
-            public void apply(TargetMethodAnnotationDrivenBinder.ParameterBinder mock) {
-                when(mock.getHandledType()).thenReturn(Annotation.class);
-            }
-        }).refine(new ObjectPropertyAssertion.Refinement<TypeDescription>() {
-            @Override
-            public void apply(TypeDescription mock) {
-                when(mock.getStackSize()).thenReturn(StackSize.ZERO);
-            }
-        }).create(new ObjectPropertyAssertion.Creator<List<TargetMethodAnnotationDrivenBinder.ParameterBinder<?>>>() {
-            @Override
-            public List<TargetMethodAnnotationDrivenBinder.ParameterBinder<?>> create() {
-                TargetMethodAnnotationDrivenBinder.ParameterBinder<?> parameterBinder = mock(TargetMethodAnnotationDrivenBinder.ParameterBinder.class);
-                doReturn(Annotation.class).when(parameterBinder).getHandledType();
-                return Collections.<TargetMethodAnnotationDrivenBinder.ParameterBinder<?>>singletonList(parameterBinder);
-            }
-        }).apply();
-        ObjectPropertyAssertion.of(TargetMethodAnnotationDrivenBinder.Record.class).apply();
-        ObjectPropertyAssertion.of(TargetMethodAnnotationDrivenBinder.TerminationHandler.class).apply();
-        ObjectPropertyAssertion.of(TargetMethodAnnotationDrivenBinder.DelegationProcessor.class).apply();
-        ObjectPropertyAssertion.of(TargetMethodAnnotationDrivenBinder.DelegationProcessor.Handler.Bound.class).apply();
-        ObjectPropertyAssertion.of(TargetMethodAnnotationDrivenBinder.DelegationProcessor.Handler.Unbound.class).apply();
-    }
-
     private interface Sample {
 
         void foo(@Argument(0) Object foo);
@@ -400,14 +371,14 @@ public class TargetMethodAnnotationDrivenBinderTest {
         }
 
         @Override
-        public boolean equals(Object other) {
-            return this == other || !(other == null || getClass() != other.getClass())
-                    && value.equals(((Key) other).value);
+        public int hashCode() {
+            return value.hashCode();
         }
 
         @Override
-        public int hashCode() {
-            return value.hashCode();
+        public boolean equals(Object other) {
+            return this == other || !(other == null || getClass() != other.getClass())
+                    && value.equals(((Key) other).value);
         }
     }
 }

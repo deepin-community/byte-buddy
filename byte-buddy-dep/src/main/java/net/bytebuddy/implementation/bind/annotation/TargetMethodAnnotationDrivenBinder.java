@@ -1,8 +1,24 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation.bind.annotation;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.annotation.AnnotationDescription;
+import net.bytebuddy.description.enumeration.EnumerationDescription;
 import net.bytebuddy.description.field.FieldDescription;
 import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.method.ParameterDescription;
@@ -13,8 +29,10 @@ import net.bytebuddy.implementation.bind.MethodDelegationBinder;
 import net.bytebuddy.implementation.bytecode.StackManipulation;
 import net.bytebuddy.implementation.bytecode.assign.Assigner;
 import net.bytebuddy.implementation.bytecode.constant.*;
+import net.bytebuddy.implementation.bytecode.member.FieldAccess;
 import net.bytebuddy.utility.JavaConstant;
 import net.bytebuddy.utility.JavaType;
+import net.bytebuddy.utility.nullability.MaybeNull;
 
 import java.lang.annotation.Annotation;
 import java.util.*;
@@ -26,7 +44,7 @@ import static net.bytebuddy.matcher.ElementMatchers.isSetter;
  * This {@link net.bytebuddy.implementation.bind.MethodDelegationBinder} binds
  * method by analyzing annotations found on the <i>target</i> method that is subject to a method binding.
  */
-@EqualsAndHashCode
+@HashCodeAndEqualsPlugin.Enhance
 public class TargetMethodAnnotationDrivenBinder implements MethodDelegationBinder {
 
     /**
@@ -55,7 +73,9 @@ public class TargetMethodAnnotationDrivenBinder implements MethodDelegationBinde
         return new TargetMethodAnnotationDrivenBinder(DelegationProcessor.of(parameterBinders));
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public MethodDelegationBinder.Record compile(MethodDescription candidate) {
         if (IgnoreForBinding.Verifier.check(candidate)) {
             return MethodDelegationBinder.Record.Illegal.INSTANCE;
@@ -70,7 +90,7 @@ public class TargetMethodAnnotationDrivenBinder implements MethodDelegationBinde
     /**
      * A compiled record of a target method annotation-driven binder.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     protected static class Record implements MethodDelegationBinder.Record {
 
         /**
@@ -101,7 +121,9 @@ public class TargetMethodAnnotationDrivenBinder implements MethodDelegationBinde
             this.typing = typing;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public MethodBinding bind(Implementation.Target implementationTarget,
                                   MethodDescription source,
                                   MethodDelegationBinder.TerminationHandler terminationHandler,
@@ -136,7 +158,7 @@ public class TargetMethodAnnotationDrivenBinder implements MethodDelegationBinde
      *
      * @param <T> The {@link java.lang.annotation.Annotation#annotationType()} handled by this parameter binder.
      */
-    @SuppressFBWarnings(value = "IC_SUPERCLASS_USES_SUBCLASS_DURING_INITIALIZATION", justification = "Safe initialization is implied")
+    @SuppressFBWarnings(value = "IC_SUPERCLASS_USES_SUBCLASS_DURING_INITIALIZATION", justification = "Safe initialization is implied.")
     public interface ParameterBinder<T extends Annotation> {
 
         /**
@@ -202,7 +224,9 @@ public class TargetMethodAnnotationDrivenBinder implements MethodDelegationBinde
          */
         abstract class ForFixedValue<S extends Annotation> implements ParameterBinder<S> {
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public ParameterBinding<?> bind(AnnotationDescription.Loadable<S> annotation,
                                             MethodDescription source,
                                             ParameterDescription target,
@@ -217,49 +241,55 @@ public class TargetMethodAnnotationDrivenBinder implements MethodDelegationBinde
                 TypeDescription suppliedType;
                 if (value instanceof Boolean) {
                     stackManipulation = IntegerConstant.forValue((Boolean) value);
-                    suppliedType = new TypeDescription.ForLoadedType(boolean.class);
+                    suppliedType = TypeDescription.ForLoadedType.of(boolean.class);
                 } else if (value instanceof Byte) {
                     stackManipulation = IntegerConstant.forValue((Byte) value);
-                    suppliedType = new TypeDescription.ForLoadedType(byte.class);
+                    suppliedType = TypeDescription.ForLoadedType.of(byte.class);
                 } else if (value instanceof Short) {
                     stackManipulation = IntegerConstant.forValue((Short) value);
-                    suppliedType = new TypeDescription.ForLoadedType(short.class);
+                    suppliedType = TypeDescription.ForLoadedType.of(short.class);
                 } else if (value instanceof Character) {
                     stackManipulation = IntegerConstant.forValue((Character) value);
-                    suppliedType = new TypeDescription.ForLoadedType(char.class);
+                    suppliedType = TypeDescription.ForLoadedType.of(char.class);
                 } else if (value instanceof Integer) {
                     stackManipulation = IntegerConstant.forValue((Integer) value);
-                    suppliedType = new TypeDescription.ForLoadedType(int.class);
+                    suppliedType = TypeDescription.ForLoadedType.of(int.class);
                 } else if (value instanceof Long) {
                     stackManipulation = LongConstant.forValue((Long) value);
-                    suppliedType = new TypeDescription.ForLoadedType(long.class);
+                    suppliedType = TypeDescription.ForLoadedType.of(long.class);
                 } else if (value instanceof Float) {
                     stackManipulation = FloatConstant.forValue((Float) value);
-                    suppliedType = new TypeDescription.ForLoadedType(float.class);
+                    suppliedType = TypeDescription.ForLoadedType.of(float.class);
                 } else if (value instanceof Double) {
                     stackManipulation = DoubleConstant.forValue((Double) value);
-                    suppliedType = new TypeDescription.ForLoadedType(double.class);
+                    suppliedType = TypeDescription.ForLoadedType.of(double.class);
                 } else if (value instanceof String) {
                     stackManipulation = new TextConstant((String) value);
-                    suppliedType = TypeDescription.STRING;
+                    suppliedType = TypeDescription.ForLoadedType.of(String.class);
                 } else if (value instanceof Class) {
-                    stackManipulation = ClassConstant.of(new TypeDescription.ForLoadedType((Class<?>) value));
-                    suppliedType = TypeDescription.CLASS;
+                    stackManipulation = ClassConstant.of(TypeDescription.ForLoadedType.of((Class<?>) value));
+                    suppliedType = TypeDescription.ForLoadedType.of(Class.class);
                 } else if (value instanceof TypeDescription) {
                     stackManipulation = ClassConstant.of((TypeDescription) value);
-                    suppliedType = TypeDescription.CLASS;
-                } else if (JavaType.METHOD_HANDLE.getTypeStub().isInstance(value)) {
-                    stackManipulation = JavaConstant.MethodHandle.ofLoaded(value).asStackManipulation();
+                    suppliedType = TypeDescription.ForLoadedType.of(Class.class);
+                } else if (value instanceof Enum<?>) {
+                    stackManipulation = FieldAccess.forEnumeration(new EnumerationDescription.ForLoadedEnumeration((Enum<?>) value));
+                    suppliedType = TypeDescription.ForLoadedType.of(((Enum<?>) value).getDeclaringClass());
+                } else if (value instanceof EnumerationDescription) {
+                    stackManipulation = FieldAccess.forEnumeration((EnumerationDescription) value);
+                    suppliedType = ((EnumerationDescription) value).getEnumerationType();
+                } else if (JavaType.METHOD_HANDLE.isInstance(value)) {
+                    stackManipulation = new JavaConstantValue(JavaConstant.MethodHandle.ofLoaded(value));
                     suppliedType = JavaType.METHOD_HANDLE.getTypeStub();
                 } else if (value instanceof JavaConstant.MethodHandle) {
                     stackManipulation = new JavaConstantValue((JavaConstant.MethodHandle) value);
                     suppliedType = JavaType.METHOD_HANDLE.getTypeStub();
-                } else if (JavaType.METHOD_TYPE.getTypeStub().isInstance(value)) {
+                } else if (JavaType.METHOD_TYPE.isInstance(value)) {
                     stackManipulation = new JavaConstantValue(JavaConstant.MethodType.ofLoaded(value));
                     suppliedType = JavaType.METHOD_HANDLE.getTypeStub();
-                } else if (value instanceof JavaConstant.MethodType) {
-                    stackManipulation = new JavaConstantValue((JavaConstant.MethodType) value);
-                    suppliedType = JavaType.METHOD_HANDLE.getTypeStub();
+                } else if (value instanceof JavaConstant) {
+                    stackManipulation = new JavaConstantValue((JavaConstant) value);
+                    suppliedType = ((JavaConstant) value).getTypeDescription();
                 } else {
                     throw new IllegalStateException("Not able to save in class's constant pool: " + value);
                 }
@@ -277,6 +307,7 @@ public class TargetMethodAnnotationDrivenBinder implements MethodDelegationBinde
              * @param target     The parameter for which a value is bound.
              * @return The constant pool value that is bound to this parameter or {@code null} for binding this value.
              */
+            @MaybeNull
             protected abstract Object bind(AnnotationDescription.Loadable<S> annotation, MethodDescription source, ParameterDescription target);
 
             /**
@@ -292,7 +323,7 @@ public class TargetMethodAnnotationDrivenBinder implements MethodDelegationBinde
              *
              * @param <U> The bound annotation's type.
              */
-            @EqualsAndHashCode(callSuper = false)
+            @HashCodeAndEqualsPlugin.Enhance
             public static class OfConstant<U extends Annotation> extends ForFixedValue<U> {
 
                 /**
@@ -303,6 +334,8 @@ public class TargetMethodAnnotationDrivenBinder implements MethodDelegationBinde
                 /**
                  * The value that is assigned to any annotated parameter.
                  */
+                @MaybeNull
+                @HashCodeAndEqualsPlugin.ValueHandling(HashCodeAndEqualsPlugin.ValueHandling.Sort.REVERSE_NULLABILITY)
                 private final Object value;
 
                 /**
@@ -311,7 +344,7 @@ public class TargetMethodAnnotationDrivenBinder implements MethodDelegationBinde
                  * @param type  The type of the annotation that is bound by this binder.
                  * @param value The value that is assigned to any annotated parameter.
                  */
-                protected OfConstant(Class<U> type, Object value) {
+                protected OfConstant(Class<U> type, @MaybeNull Object value) {
                     this.type = type;
                     this.value = value;
                 }
@@ -324,15 +357,18 @@ public class TargetMethodAnnotationDrivenBinder implements MethodDelegationBinde
                  * @param <V>   The bound annotation's type.
                  * @return A parameter binder that binds the given annotation to the supplied value.
                  */
-                public static <V extends Annotation> ParameterBinder<V> of(Class<V> type, Object value) {
+                public static <V extends Annotation> ParameterBinder<V> of(Class<V> type, @MaybeNull Object value) {
                     return new OfConstant<V>(type, value);
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public Class<U> getHandledType() {
                     return type;
                 }
 
+                @MaybeNull
                 @Override
                 protected Object bind(AnnotationDescription.Loadable<U> annotation, MethodDescription source, ParameterDescription target) {
                     return value;
@@ -371,7 +407,9 @@ public class TargetMethodAnnotationDrivenBinder implements MethodDelegationBinde
                 return fieldLocator.locate(Character.toLowerCase(fieldName.charAt(0)) + fieldName.substring(1));
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public ParameterBinding<?> bind(AnnotationDescription.Loadable<S> annotation,
                                             MethodDescription source,
                                             ParameterDescription target,
@@ -439,7 +477,7 @@ public class TargetMethodAnnotationDrivenBinder implements MethodDelegationBinde
      * for performing its actual logic. By outsourcing this logic to this helper class, a cleaner implementation
      * can be provided.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     protected static class DelegationProcessor {
 
         /**
@@ -468,7 +506,7 @@ public class TargetMethodAnnotationDrivenBinder implements MethodDelegationBinde
         protected static DelegationProcessor of(List<? extends ParameterBinder<?>> parameterBinders) {
             Map<TypeDescription, ParameterBinder<?>> parameterBinderMap = new HashMap<TypeDescription, ParameterBinder<?>>();
             for (ParameterBinder<?> parameterBinder : parameterBinders) {
-                if (parameterBinderMap.put(new TypeDescription.ForLoadedType(parameterBinder.getHandledType()), parameterBinder) != null) {
+                if (parameterBinderMap.put(TypeDescription.ForLoadedType.of(parameterBinder.getHandledType()), parameterBinder) != null) {
                     throw new IllegalArgumentException("Attempt to bind two handlers to " + parameterBinder.getHandledType());
                 }
             }
@@ -522,7 +560,7 @@ public class TargetMethodAnnotationDrivenBinder implements MethodDelegationBinde
              * An unbound handler is a fallback for returning an illegal binding for parameters for which no parameter
              * binder could be located.
              */
-            @EqualsAndHashCode
+            @HashCodeAndEqualsPlugin.Enhance
             class Unbound implements Handler {
 
                 /**
@@ -546,12 +584,16 @@ public class TargetMethodAnnotationDrivenBinder implements MethodDelegationBinde
                     this.typing = typing;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public boolean isBound() {
                     return false;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public ParameterBinding<?> bind(MethodDescription source, Implementation.Target implementationTarget, Assigner assigner) {
                     return Argument.Binder.INSTANCE.bind(AnnotationDescription.ForLoadedAnnotation.<Argument>of(new DefaultArgument(target.getIndex())),
                             source,
@@ -590,36 +632,41 @@ public class TargetMethodAnnotationDrivenBinder implements MethodDelegationBinde
                         this.parameterIndex = parameterIndex;
                     }
 
-                    @Override
+                    /**
+                     * {@inheritDoc}
+                     */
                     public int value() {
                         return parameterIndex;
                     }
 
-                    @Override
+                    /**
+                     * {@inheritDoc}
+                     */
                     public BindingMechanic bindingMechanic() {
                         return BindingMechanic.UNIQUE;
                     }
 
-                    @Override
+                    /**
+                     * {@inheritDoc}
+                     */
                     public Class<Argument> annotationType() {
                         return Argument.class;
                     }
 
                     @Override
-                    public boolean equals(Object other) {
-                        return this == other || other instanceof Argument && parameterIndex == ((Argument) other).value();
+                    public int hashCode() {
+                        return ((127 * BINDING_MECHANIC.hashCode()) ^ BindingMechanic.UNIQUE.hashCode()) + ((127 * VALUE.hashCode()) ^ parameterIndex);
                     }
 
                     @Override
-                    public int hashCode() {
-                        return ((127 * BINDING_MECHANIC.hashCode()) ^ BindingMechanic.UNIQUE.hashCode())
-                                + ((127 * VALUE.hashCode()) ^ parameterIndex);
+                    public boolean equals(@MaybeNull Object other) {
+                        return this == other || other instanceof Argument && parameterIndex == ((Argument) other).value();
                     }
 
                     @Override
                     public String toString() {
                         return "@" + Argument.class.getName()
-                                + "(bindingMechanic=" + BindingMechanic.UNIQUE.toString()
+                                + "(bindingMechanic=" + BindingMechanic.UNIQUE
                                 + ", value=" + parameterIndex + ")";
                     }
                 }
@@ -631,7 +678,7 @@ public class TargetMethodAnnotationDrivenBinder implements MethodDelegationBinde
              *
              * @param <T> The annotation type of a given handler.
              */
-            @EqualsAndHashCode
+            @HashCodeAndEqualsPlugin.Enhance
             class Bound<T extends Annotation> implements Handler {
 
                 /**
@@ -692,12 +739,16 @@ public class TargetMethodAnnotationDrivenBinder implements MethodDelegationBinde
                             typing);
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public boolean isBound() {
                     return true;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public ParameterBinding<?> bind(MethodDescription source, Implementation.Target implementationTarget, Assigner assigner) {
                     return parameterBinder.bind(annotation,
                             source,

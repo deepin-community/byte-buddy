@@ -1,8 +1,24 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation.attribute;
 
 import net.bytebuddy.description.annotation.AnnotationDescription;
 import net.bytebuddy.description.field.FieldDescription;
 import net.bytebuddy.description.method.MethodDescription;
+import net.bytebuddy.description.type.RecordComponentDescription;
 import net.bytebuddy.description.type.TypeDescription;
 
 /**
@@ -48,6 +64,14 @@ public interface AnnotationValueFilter {
          * @return An annotation value filter to be used when writing annotations onto the given method.
          */
         AnnotationValueFilter on(MethodDescription methodDescription);
+
+        /**
+         * Creates an annotation value filter for writing annotations on a record component.
+         *
+         * @param recordComponentDescription The record component onto which the annotations are written.
+         * @return An annotation value filter to be used when writing annotations onto the given record component.
+         */
+        AnnotationValueFilter on(RecordComponentDescription recordComponentDescription);
     }
 
     /**
@@ -59,7 +83,7 @@ public interface AnnotationValueFilter {
          * An annotation value filter where default values are skipped and not included in the class file.
          */
         SKIP_DEFAULTS {
-            @Override
+            /** {@inheritDoc} */
             public boolean isRelevant(AnnotationDescription annotationDescription, MethodDescription.InDefinedShape methodDescription) {
                 Object defaultValue = methodDescription.getDefaultValue();
                 return defaultValue == null || !defaultValue.equals(annotationDescription.getValue(methodDescription));
@@ -70,24 +94,37 @@ public interface AnnotationValueFilter {
          * An annotation value filter where default values are included in the class file.
          */
         APPEND_DEFAULTS {
-            @Override
+            /** {@inheritDoc} */
             public boolean isRelevant(AnnotationDescription annotationDescription, MethodDescription.InDefinedShape methodDescription) {
                 return true;
             }
         };
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public AnnotationValueFilter on(TypeDescription instrumentedType) {
             return this;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public AnnotationValueFilter on(FieldDescription fieldDescription) {
             return this;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public AnnotationValueFilter on(MethodDescription methodDescription) {
+            return this;
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public AnnotationValueFilter on(RecordComponentDescription recordComponentDescription) {
             return this;
         }
     }

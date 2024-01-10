@@ -5,14 +5,14 @@ import net.bytebuddy.dynamic.scaffold.TypeInitializer;
 import net.bytebuddy.dynamic.scaffold.TypeWriter;
 import net.bytebuddy.implementation.Implementation;
 import net.bytebuddy.implementation.bytecode.ByteCodeAppender;
-import net.bytebuddy.test.utility.MockitoRule;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 import org.objectweb.asm.MethodVisitor;
 
+import static net.bytebuddy.test.utility.FieldByFieldComparison.hasPrototype;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.mockito.Mockito.*;
@@ -20,7 +20,7 @@ import static org.mockito.Mockito.*;
 public class TypeInitializerTest {
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     @Mock
     private TypeWriter.MethodPool.Record record, expanded;
@@ -39,7 +39,7 @@ public class TypeInitializerTest {
 
     @Test
     public void testNoneExpansion() throws Exception {
-        assertThat(TypeInitializer.None.INSTANCE.expandWith(byteCodeAppender), is((TypeInitializer) new TypeInitializer.Simple(byteCodeAppender)));
+        assertThat(TypeInitializer.None.INSTANCE.expandWith(byteCodeAppender), hasPrototype((TypeInitializer) new TypeInitializer.Simple(byteCodeAppender)));
     }
 
     @Test
@@ -52,7 +52,7 @@ public class TypeInitializerTest {
         ByteCodeAppender.Size size = TypeInitializer.None.INSTANCE.apply(methodVisitor, implementationContext, methodDescription);
         assertThat(size.getOperandStackSize(), is(0));
         assertThat(size.getLocalVariableSize(), is(0));
-        verifyZeroInteractions(methodDescription);
+        verifyNoMoreInteractions(methodDescription);
     }
 
     @Test
@@ -63,7 +63,7 @@ public class TypeInitializerTest {
     @Test
     public void testSimpleExpansion() throws Exception {
         assertThat(new TypeInitializer.Simple(byteCodeAppender).expandWith(byteCodeAppender),
-                is((TypeInitializer) new TypeInitializer.Simple(new ByteCodeAppender.Compound(byteCodeAppender, byteCodeAppender))));
+                hasPrototype((TypeInitializer) new TypeInitializer.Simple(new ByteCodeAppender.Compound(byteCodeAppender, byteCodeAppender))));
     }
 
     @Test
@@ -72,19 +72,13 @@ public class TypeInitializerTest {
         assertThat(typeInitializer.isDefined(), is(true));
         typeInitializer.apply(methodVisitor, implementationContext, methodDescription);
         verify(byteCodeAppender).apply(methodVisitor, implementationContext, methodDescription);
-        verifyZeroInteractions(byteCodeAppender);
-        verifyZeroInteractions(implementationContext);
+        verifyNoMoreInteractions(byteCodeAppender);
+        verifyNoMoreInteractions(implementationContext);
     }
 
     @Test
     public void testSimpleWrap() throws Exception {
         when(record.prepend(byteCodeAppender)).thenReturn(expanded);
         assertThat(new TypeInitializer.Simple(byteCodeAppender).wrap(record), is(expanded));
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(TypeInitializer.None.class).apply();
-        ObjectPropertyAssertion.of(TypeInitializer.Simple.class).apply();
     }
 }

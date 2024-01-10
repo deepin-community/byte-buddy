@@ -1,12 +1,33 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.description.annotation;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.ClassFileVersion;
+import net.bytebuddy.build.AccessControllerPlugin;
+import net.bytebuddy.build.CachedReturnPlugin;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.enumeration.EnumerationDescription;
 import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.method.MethodList;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.description.type.TypeList;
+import net.bytebuddy.dynamic.loading.ClassLoadingStrategy;
+import net.bytebuddy.utility.nullability.AlwaysNull;
+import net.bytebuddy.utility.nullability.MaybeNull;
 import net.bytebuddy.utility.privilege.SetAccessibleAction;
 
 import java.lang.annotation.*;
@@ -14,10 +35,10 @@ import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
-import java.security.AccessController;
+import java.security.PrivilegedAction;
 import java.util.*;
 
-import static net.bytebuddy.matcher.ElementMatchers.named;
+import static net.bytebuddy.matcher.ElementMatchers.*;
 
 /**
  * An annotation description describes {@link java.lang.annotation.Annotation} meta data of a class without this class
@@ -38,10 +59,19 @@ public interface AnnotationDescription {
     /**
      * Indicates a nonexistent annotation in a type-safe manner.
      */
+    @AlwaysNull
     AnnotationDescription.Loadable<?> UNDEFINED = null;
 
     /**
-     * Returns the value of this annotation.
+     * Returns a value of this annotation.
+     *
+     * @param property The name of the property being accessed.
+     * @return The value for the supplied property.
+     */
+    AnnotationValue<?, ?> getValue(String property);
+
+    /**
+     * Returns a value of this annotation.
      *
      * @param property The property being accessed.
      * @return The value for the supplied property.
@@ -80,6 +110,22 @@ public interface AnnotationDescription {
     Set<ElementType> getElementTypes();
 
     /**
+     * Checks if this annotation is supported on the supplied element type.
+     *
+     * @param elementType The element type to check.
+     * @return {@code true} if the supplied element type is supported by this annotation.
+     */
+    boolean isSupportedOn(ElementType elementType);
+
+    /**
+     * Checks if this annotation is supported on the supplied element type.
+     *
+     * @param elementType The element type to check.
+     * @return {@code true} if the supplied element type is supported by this annotation.
+     */
+    boolean isSupportedOn(String elementType);
+
+    /**
      * Checks if this annotation is inherited.
      *
      * @return {@code true} if this annotation is inherited.
@@ -109,18 +155,88 @@ public interface AnnotationDescription {
          * is used.
          *
          * @return A loaded version of this annotation description.
-         * @throws java.lang.ClassNotFoundException If any linked classes of the annotation cannot be loaded.
          */
-        S load() throws ClassNotFoundException;
+        S load();
+    }
+
+    /**
+     * A rendering dispatcher is responsible for resolving annotation descriptions to {@link String} representations.
+     */
+    enum RenderingDispatcher {
 
         /**
-         * Loads this annotation description. This causes all classes referenced by the annotation value to be loaded.
-         * Without specifying a class loader, the annotation's class loader which was used to prepare this instance
-         * is used. Any {@link java.lang.ClassNotFoundException} is wrapped in an {@link java.lang.IllegalStateException}.
-         *
-         * @return A loaded version of this annotation description.
+         * A rendering dispatcher for any VM previous to Java 14.
          */
-        S loadSilent();
+        LEGACY_VM,
+
+        /**
+         * A rendering dispatcher for Java 14 until Java 18.
+         */
+        JAVA_14_CAPABLE_VM {
+            @Override
+            public void appendPrefix(StringBuilder toString, String key, int count) {
+                if (count > 1 || !key.equals("value")) {
+                    super.appendPrefix(toString, key, count);
+                }
+            }
+        },
+
+        /**
+         * A rendering dispatcher for Java 19 onward.
+         */
+        JAVA_19_CAPABLE_VM {
+            @Override
+            public void appendPrefix(StringBuilder toString, String key, int count) {
+                if (count > 1 || !key.equals("value")) {
+                    super.appendPrefix(toString, key, count);
+                }
+            }
+
+            @Override
+            public void appendType(StringBuilder toString, TypeDescription typeDescription) {
+                toString.append(typeDescription.getCanonicalName());
+            }
+        };
+
+        /**
+         * The rendering dispatcher for the current VM.
+         */
+        public static final RenderingDispatcher CURRENT;
+
+        /*
+         * Initializes the rendering dispatcher.
+         */
+        static {
+            ClassFileVersion classFileVersion = ClassFileVersion.ofThisVm(ClassFileVersion.JAVA_V5);
+            if (classFileVersion.isAtLeast(ClassFileVersion.JAVA_V19)) {
+                CURRENT = RenderingDispatcher.JAVA_19_CAPABLE_VM;
+            } else if (classFileVersion.isAtLeast(ClassFileVersion.JAVA_V14)) {
+                CURRENT = RenderingDispatcher.JAVA_14_CAPABLE_VM;
+            } else {
+                CURRENT = RenderingDispatcher.LEGACY_VM;
+            }
+        }
+
+        /**
+         * Appends the key property prefix to a string builder representing an annotation's string representation.
+         *
+         * @param toString The string builder that creates the string representation.
+         * @param key      The key's name.
+         * @param count    The property count.
+         */
+        public void appendPrefix(StringBuilder toString, String key, int count) {
+            toString.append(key).append('=');
+        }
+
+        /**
+         * Appends the type name of the annotation being rendered.
+         *
+         * @param toString        The string builder that creates the string representation.
+         * @param typeDescription The annotation type being rendered.
+         */
+        public void appendType(StringBuilder toString, TypeDescription typeDescription) {
+            toString.append(typeDescription.getName());
+        }
     }
 
     /**
@@ -144,6 +260,16 @@ public interface AnnotationDescription {
          * The name of the {@link Object#toString()} method.
          */
         private static final String TO_STRING = "toString";
+
+        /**
+         * The name of the {@link Annotation#annotationType()} method.
+         */
+        private static final String ANNOTATION_TYPE = "annotationType";
+
+        /**
+         * An empty array that can be used to indicate no arguments to avoid an allocation on a reflective call.
+         */
+        private static final Object[] NO_ARGUMENT = new Object[0];
 
         /**
          * The loaded annotation type.
@@ -174,66 +300,30 @@ public interface AnnotationDescription {
          * @param values         The values that the annotation contains.
          * @param <S>            The type of the handled annotation.
          * @return A proxy for the annotation type and values.
-         * @throws ClassNotFoundException If the class of an instance that is contained by this annotation could not be found.
          */
         @SuppressWarnings("unchecked")
-        public static <S extends Annotation> S of(ClassLoader classLoader,
+        public static <S extends Annotation> S of(@MaybeNull ClassLoader classLoader,
                                                   Class<S> annotationType,
-                                                  Map<String, ? extends AnnotationValue<?, ?>> values) throws ClassNotFoundException {
+                                                  Map<String, ? extends AnnotationValue<?, ?>> values) {
             LinkedHashMap<Method, AnnotationValue.Loaded<?>> loadedValues = new LinkedHashMap<Method, AnnotationValue.Loaded<?>>();
             for (Method method : annotationType.getDeclaredMethods()) {
                 AnnotationValue<?, ?> annotationValue = values.get(method.getName());
-                loadedValues.put(method, (annotationValue == null
-                        ? defaultValueOf(method)
-                        : annotationValue).load(classLoader));
+                if (annotationValue == null) {
+                    Object defaultValue = method.getDefaultValue();
+                    loadedValues.put(method, (defaultValue == null
+                            ? new AnnotationValue.ForMissingValue<Void, Void>(new TypeDescription.ForLoadedType(method.getDeclaringClass()), method.getName())
+                            : AnnotationDescription.ForLoadedAnnotation.asValue(defaultValue, method.getReturnType())).load(classLoader));
+                } else {
+                    loadedValues.put(method, annotationValue.filter(new MethodDescription.ForLoadedMethod(method)).load(classLoader));
+                }
             }
             return (S) Proxy.newProxyInstance(classLoader, new Class<?>[]{annotationType}, new AnnotationInvocationHandler<S>(annotationType, loadedValues));
         }
 
         /**
-         * Creates a default value for the given method.
-         *
-         * @param method The method from which to attempt the extraction of a default value.
-         * @return A default value representation.
+         * {@inheritDoc}
          */
-        private static AnnotationValue<?, ?> defaultValueOf(Method method) {
-            Object defaultValue = method.getDefaultValue();
-            return defaultValue == null
-                    ? MissingValue.of(method)
-                    : AnnotationDescription.ForLoadedAnnotation.asValue(defaultValue, method.getReturnType());
-        }
-
-        /**
-         * Resolves any primitive type to its wrapper type.
-         *
-         * @param type The type to resolve.
-         * @return The resolved type.
-         */
-        private static Class<?> asWrapper(Class<?> type) {
-            if (type.isPrimitive()) {
-                if (type == boolean.class) {
-                    return Boolean.class;
-                } else if (type == byte.class) {
-                    return Byte.class;
-                } else if (type == short.class) {
-                    return Short.class;
-                } else if (type == char.class) {
-                    return Character.class;
-                } else if (type == int.class) {
-                    return Integer.class;
-                } else if (type == long.class) {
-                    return Long.class;
-                } else if (type == float.class) {
-                    return Float.class;
-                } else if (type == double.class) {
-                    return Double.class;
-                }
-            }
-            return type;
-        }
-
-        @Override
-        public Object invoke(Object proxy, Method method, Object[] argument) {
+        public Object invoke(Object proxy, Method method, @MaybeNull Object[] argument) {
             if (method.getDeclaringClass() != annotationType) {
                 if (method.getName().equals(HASH_CODE)) {
                     return hashCodeRepresentation();
@@ -241,15 +331,13 @@ public interface AnnotationDescription {
                     return equalsRepresentation(proxy, argument[0]);
                 } else if (method.getName().equals(TO_STRING)) {
                     return toStringRepresentation();
-                } else /* if (method.getName().equals("annotationType")) */ {
+                } else if (method.getName().equals(ANNOTATION_TYPE)) {
                     return annotationType;
+                } else {
+                    throw new IllegalStateException("Unexpected method: " + method);
                 }
             }
-            Object value = values.get(method).resolve();
-            if (!asWrapper(method.getReturnType()).isAssignableFrom(value.getClass())) {
-                throw new AnnotationTypeMismatchException(method, value.getClass().toString());
-            }
-            return value;
+            return values.get(method).resolve();
         }
 
         /**
@@ -260,7 +348,7 @@ public interface AnnotationDescription {
         protected String toStringRepresentation() {
             StringBuilder toString = new StringBuilder();
             toString.append('@');
-            toString.append(annotationType.getName());
+            RenderingDispatcher.CURRENT.appendType(toString, TypeDescription.ForLoadedType.of(annotationType));
             toString.append('(');
             boolean firstMember = true;
             for (Map.Entry<Method, AnnotationValue.Loaded<?>> entry : values.entrySet()) {
@@ -272,9 +360,8 @@ public interface AnnotationDescription {
                 } else {
                     toString.append(", ");
                 }
-                toString.append(entry.getKey().getName())
-                        .append('=')
-                        .append(entry.getValue().toString());
+                RenderingDispatcher.CURRENT.appendPrefix(toString, entry.getKey().getName(), values.entrySet().size());
+                toString.append(entry.getValue().toString());
             }
             toString.append(')');
             return toString.toString();
@@ -317,7 +404,7 @@ public interface AnnotationDescription {
             try {
                 for (Map.Entry<Method, AnnotationValue.Loaded<?>> entry : values.entrySet()) {
                     try {
-                        if (!entry.getValue().represents(entry.getKey().invoke(other))) {
+                        if (!entry.getValue().represents(entry.getKey().invoke(other, NO_ARGUMENT))) {
                             return false;
                         }
                     } catch (RuntimeException exception) {
@@ -333,22 +420,7 @@ public interface AnnotationDescription {
         }
 
         @Override
-        public boolean equals(Object other) {
-            if (this == other) return true;
-            if (!(other instanceof AnnotationInvocationHandler)) return false;
-            AnnotationInvocationHandler that = (AnnotationInvocationHandler) other;
-            if (!annotationType.equals(that.annotationType)) {
-                return false;
-            }
-            for (Map.Entry<Method, AnnotationValue.Loaded<?>> entry : values.entrySet()) {
-                if (!entry.getValue().equals(that.values.get(entry.getKey()))) {
-                    return false;
-                }
-            }
-            return true;
-        }
-
-        @Override
+        @CachedReturnPlugin.Enhance("hashCode")
         public int hashCode() {
             int result = annotationType.hashCode();
             result = 31 * result + values.hashCode();
@@ -358,68 +430,23 @@ public interface AnnotationDescription {
             return result;
         }
 
-        /**
-         * Represents a missing annotation property which is not represented by a default value.
-         */
-        protected static class MissingValue extends AnnotationValue.Loaded.AbstractBase<Void> implements AnnotationValue<Void, Void> {
-
-            /**
-             * The annotation type.
-             */
-            private final Class<? extends Annotation> annotationType;
-
-            /**
-             * The name of the property without an annotation value.
-             */
-            private final String property;
-
-            /**
-             * Creates a new representation for a missing annotation property.
-             *
-             * @param annotationType The annotation type.
-             * @param property       The name of the property without an annotation value.
-             */
-            protected MissingValue(Class<? extends Annotation> annotationType, String property) {
-                this.annotationType = annotationType;
-                this.property = property;
-            }
-
-            /**
-             * Creates a missing value for the supplied annotation property.
-             * @param method A method representing an annotation property.
-             * @return An annotation value for a missing property.
-             */
-            @SuppressWarnings("unchecked")
-            protected static AnnotationValue<?, ?> of(Method method) {
-                return new MissingValue((Class<? extends Annotation>) method.getDeclaringClass(), method.getName());
-            }
-
-            @Override
-            public State getState() {
-                return State.UNDEFINED;
-            }
-
-            @Override
-            public boolean represents(Object value) {
+        @Override
+        public boolean equals(@MaybeNull Object other) {
+            if (this == other) {
+                return true;
+            } else if (!(other instanceof AnnotationInvocationHandler)) {
                 return false;
             }
-
-            @Override
-            public Loaded<Void> load(ClassLoader classLoader) {
-                return this;
+            AnnotationInvocationHandler<?> that = (AnnotationInvocationHandler<?>) other;
+            if (!annotationType.equals(that.annotationType)) {
+                return false;
             }
-
-            @Override
-            public Loaded<Void> loadSilent(ClassLoader classLoader) {
-                return this;
+            for (Map.Entry<Method, AnnotationValue.Loaded<?>> entry : values.entrySet()) {
+                if (!entry.getValue().equals(that.values.get(entry.getKey()))) {
+                    return false;
+                }
             }
-
-            @Override
-            public Void resolve() {
-                throw new IncompleteAnnotationException(annotationType, property);
-            }
-
-            /* does intentionally not implement hashCode, equals and toString */
+            return true;
         }
     }
 
@@ -432,42 +459,133 @@ public interface AnnotationDescription {
          * An array containing all element types that are a legal annotation target when such a target
          * is not specified explicitly.
          */
-        private static final ElementType[] DEFAULT_TARGET = new ElementType[]{ElementType.ANNOTATION_TYPE,
-                ElementType.CONSTRUCTOR, ElementType.FIELD, ElementType.LOCAL_VARIABLE, ElementType.METHOD,
-                ElementType.PACKAGE, ElementType.PARAMETER, ElementType.TYPE};
+        private static final Set<ElementType> DEFAULT_TARGET;
 
-        @Override
+        /**
+         * A description of the {@link Retention#value()} method.
+         */
+        private static final MethodDescription.InDefinedShape RETENTION_VALUE;
+
+        /**
+         * A description of the {@link Target#value()} method.
+         */
+        private static final MethodDescription.InDefinedShape TARGET_VALUE;
+
+        /*
+         * Resolves common annotation properties.
+         */
+        static {
+            DEFAULT_TARGET = new HashSet<ElementType>();
+            for (ElementType elementType : ElementType.values()) {
+                if (!elementType.name().equals("TYPE_PARAMETER")) {
+                    DEFAULT_TARGET.add(elementType);
+                }
+            }
+            RETENTION_VALUE = TypeDescription.ForLoadedType.of(Retention.class)
+                    .getDeclaredMethods()
+                    .filter(named("value"))
+                    .getOnly();
+            TARGET_VALUE = TypeDescription.ForLoadedType.of(Target.class)
+                    .getDeclaredMethods()
+                    .filter(named("value"))
+                    .getOnly();
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public AnnotationValue<?, ?> getValue(String property) {
+            MethodList<MethodDescription.InDefinedShape> candidates = getAnnotationType().getDeclaredMethods().filter(named(property)
+                    .and(takesArguments(0))
+                    .and(isPublic())
+                    .and(not(isStatic())));
+            if (candidates.size() == 1) {
+                return getValue(candidates.getOnly());
+            } else {
+                throw new IllegalArgumentException("Unknown property of " + getAnnotationType() + ": " + property);
+            }
+        }
+
+        /**
+         * {@inheritDoc}
+         */
         public RetentionPolicy getRetention() {
             AnnotationDescription.Loadable<Retention> retention = getAnnotationType().getDeclaredAnnotations().ofType(Retention.class);
             return retention == null
                     ? RetentionPolicy.CLASS
-                    : retention.loadSilent().value();
+                    : retention.getValue(RETENTION_VALUE).load(ClassLoadingStrategy.BOOTSTRAP_LOADER).resolve(RetentionPolicy.class);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Set<ElementType> getElementTypes() {
             AnnotationDescription.Loadable<Target> target = getAnnotationType().getDeclaredAnnotations().ofType(Target.class);
-            return new HashSet<ElementType>(Arrays.asList(target == null
-                    ? DEFAULT_TARGET
-                    : target.loadSilent().value()));
+            return target == null
+                    ? Collections.unmodifiableSet(DEFAULT_TARGET)
+                    : new HashSet<ElementType>(Arrays.asList(target.getValue(TARGET_VALUE).load(ClassLoadingStrategy.BOOTSTRAP_LOADER).resolve(ElementType[].class)));
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
+        public boolean isSupportedOn(ElementType elementType) {
+            return isSupportedOn(elementType.name());
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public boolean isSupportedOn(String elementType) {
+            AnnotationDescription.Loadable<Target> target = getAnnotationType().getDeclaredAnnotations().ofType(Target.class);
+            if (target == null) {
+                if (elementType.equals("TYPE_USE")) {
+                    return true;
+                }
+                for (ElementType candidate : DEFAULT_TARGET) {
+                    if (candidate.name().equals(elementType)) {
+                        return true;
+                    }
+                }
+            } else {
+                for (EnumerationDescription enumerationDescription : target.getValue(TARGET_VALUE).resolve(EnumerationDescription[].class)) {
+                    if (enumerationDescription.getValue().equals(elementType)) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        /**
+         * {@inheritDoc}
+         */
         public boolean isInherited() {
             return getAnnotationType().getDeclaredAnnotations().isAnnotationPresent(Inherited.class);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public boolean isDocumented() {
             return getAnnotationType().getDeclaredAnnotations().isAnnotationPresent(Documented.class);
         }
 
         @Override
-        public boolean equals(Object other) {
-            if (other == this) {
-                return true;
+        @CachedReturnPlugin.Enhance("hashCode")
+        public int hashCode() {
+            int hashCode = 0;
+            for (MethodDescription.InDefinedShape methodDescription : getAnnotationType().getDeclaredMethods()) {
+                hashCode += 31 * getValue(methodDescription).hashCode();
             }
-            if (!(other instanceof AnnotationDescription)) {
+            return hashCode;
+        }
+
+        @Override
+        public boolean equals(@MaybeNull Object other) {
+            if (this == other) {
+                return true;
+            } else if (!(other instanceof AnnotationDescription)) {
                 return false;
             }
             AnnotationDescription annotationDescription = ((AnnotationDescription) other);
@@ -484,45 +602,25 @@ public interface AnnotationDescription {
         }
 
         @Override
-        public int hashCode() {
-            int hashCode = 0;
-            for (MethodDescription.InDefinedShape methodDescription : getAnnotationType().getDeclaredMethods()) {
-                hashCode += 31 * getValue(methodDescription).hashCode();
-            }
-            return hashCode;
-        }
-
-        @Override
         public String toString() {
             TypeDescription annotationType = getAnnotationType();
-            StringBuilder toString = new StringBuilder().append('@').append(annotationType.getName()).append('(');
+            StringBuilder toString = new StringBuilder().append('@');
+            RenderingDispatcher.CURRENT.appendType(toString, annotationType);
+            toString.append('(');
             boolean firstMember = true;
             for (MethodDescription.InDefinedShape methodDescription : annotationType.getDeclaredMethods()) {
-                if (firstMember) {
+                AnnotationValue<?, ?> value = getValue(methodDescription);
+                if (value.getState() == AnnotationValue.State.UNDEFINED) {
+                    continue;
+                } else if (firstMember) {
                     firstMember = false;
                 } else {
                     toString.append(", ");
                 }
-                toString.append(methodDescription.getName()).append('=').append(getValue(methodDescription));
+                RenderingDispatcher.CURRENT.appendPrefix(toString, methodDescription.getName(), annotationType.getDeclaredMethods().size());
+                toString.append(value);
             }
             return toString.append(')').toString();
-        }
-
-        /**
-         * An abstract implementation of a loadable annotation description.
-         *
-         * @param <S> The annotation type this instance was prepared for.
-         */
-        public abstract static class ForPrepared<S extends Annotation> extends AbstractBase implements Loadable<S> {
-
-            @Override
-            public S loadSilent() {
-                try {
-                    return load();
-                } catch (ClassNotFoundException exception) {
-                    throw new IllegalStateException("Could not load annotation type or referenced type", exception);
-                }
-            }
         }
     }
 
@@ -531,7 +629,12 @@ public interface AnnotationDescription {
      *
      * @param <S> The type of the annotation.
      */
-    class ForLoadedAnnotation<S extends Annotation> extends AbstractBase.ForPrepared<S> {
+    class ForLoadedAnnotation<S extends Annotation> extends AbstractBase implements Loadable<S> {
+
+        /**
+         * An empty array that can be used to indicate no arguments to avoid an allocation on a reflective call.
+         */
+        private static final Object[] NO_ARGUMENT = new Object[0];
 
         /**
          * The represented annotation value.
@@ -567,6 +670,18 @@ public interface AnnotationDescription {
         }
 
         /**
+         * A proxy for {@code java.security.AccessController#doPrivileged} that is activated if available.
+         *
+         * @param action The action to execute from a privileged context.
+         * @param <T>    The type of the action's resolved value.
+         * @return The action's resolved value.
+         */
+        @AccessControllerPlugin.Enhance
+        private static <T> T doPrivileged(PrivilegedAction<T> action) {
+            return action.run();
+        }
+
+        /**
          * Creates a description of the given annotation.
          *
          * @param annotation The annotation to be described.
@@ -577,8 +692,10 @@ public interface AnnotationDescription {
             return new ForLoadedAnnotation<U>(annotation);
         }
 
-        @Override
-        public S load() throws ClassNotFoundException {
+        /**
+         * {@inheritDoc}
+         */
+        public S load() {
             return annotationType == annotation.annotationType()
                     ? annotation
                     : AnnotationInvocationHandler.of(annotationType.getClassLoader(), annotationType, asValue(annotation));
@@ -590,13 +707,27 @@ public interface AnnotationDescription {
          * @param annotation The annotation to convert.
          * @return A mapping of property names to their annotation value.
          */
+        @SuppressWarnings("rawtypes")
         private static Map<String, AnnotationValue<?, ?>> asValue(Annotation annotation) {
             Map<String, AnnotationValue<?, ?>> annotationValues = new HashMap<String, AnnotationValue<?, ?>>();
             for (Method property : annotation.annotationType().getDeclaredMethods()) {
                 try {
-                    annotationValues.put(property.getName(), asValue(property.invoke(annotation), property.getReturnType()));
+                    annotationValues.put(property.getName(), asValue(property.invoke(annotation, NO_ARGUMENT), property.getReturnType()));
                 } catch (InvocationTargetException exception) {
-                    throw new IllegalStateException("Cannot read " + property, exception.getCause());
+                    Throwable cause = exception.getTargetException();
+                    if (cause instanceof TypeNotPresentException) {
+                        annotationValues.put(property.getName(), new AnnotationValue.ForMissingType<Void, Void>(((TypeNotPresentException) cause).typeName()));
+                    } else if (cause instanceof EnumConstantNotPresentException) {
+                        annotationValues.put(property.getName(), new AnnotationValue.ForEnumerationDescription.WithUnknownConstant(
+                                new TypeDescription.ForLoadedType(((EnumConstantNotPresentException) cause).enumType()),
+                                ((EnumConstantNotPresentException) cause).constantName()));
+                    } else if (cause instanceof AnnotationTypeMismatchException) {
+                        annotationValues.put(property.getName(), new AnnotationValue.ForMismatchedType<Void, Void>(
+                                new MethodDescription.ForLoadedMethod(((AnnotationTypeMismatchException) cause).element()),
+                                ((AnnotationTypeMismatchException) cause).foundType()));
+                    } else if (!(cause instanceof IncompleteAnnotationException)) {
+                        throw new IllegalStateException("Cannot read " + property, cause);
+                    }
                 } catch (IllegalAccessException exception) {
                     throw new IllegalStateException("Cannot access " + property, exception);
                 }
@@ -611,7 +742,7 @@ public interface AnnotationDescription {
          * @param value The annotations value.
          * @return An annotation value representation.
          */
-        @SuppressWarnings("unchecked")
+        @SuppressWarnings({"unchecked", "rawtypes"})
         public static AnnotationValue<?, ?> asValue(Object value, Class<?> type) {
             // Because enums can implement annotation interfaces, the enum property needs to be checked first.
             if (Enum.class.isAssignableFrom(type)) {
@@ -623,25 +754,25 @@ public interface AnnotationDescription {
                 for (Enum<?> anElement : element) {
                     enumerationDescription[index++] = new EnumerationDescription.ForLoadedEnumeration(anElement);
                 }
-                return AnnotationValue.ForDescriptionArray.<Enum>of(new TypeDescription.ForLoadedType(type.getComponentType()), enumerationDescription);
+                return AnnotationValue.ForDescriptionArray.<Enum>of(TypeDescription.ForLoadedType.of(type.getComponentType()), enumerationDescription);
             } else if (Annotation.class.isAssignableFrom(type)) {
-                return AnnotationValue.ForAnnotationDescription.<Annotation>of(new TypeDescription.ForLoadedType(type), asValue((Annotation) value));
+                return AnnotationValue.ForAnnotationDescription.<Annotation>of(TypeDescription.ForLoadedType.of(type), asValue((Annotation) value));
             } else if (Annotation[].class.isAssignableFrom(type)) {
                 Annotation[] element = (Annotation[]) value;
                 AnnotationDescription[] annotationDescription = new AnnotationDescription[element.length];
                 int index = 0;
                 for (Annotation anElement : element) {
-                    annotationDescription[index++] = new AnnotationDescription.Latent(new TypeDescription.ForLoadedType(type.getComponentType()), asValue(anElement));
+                    annotationDescription[index++] = new AnnotationDescription.Latent(TypeDescription.ForLoadedType.of(type.getComponentType()), asValue(anElement));
                 }
-                return AnnotationValue.ForDescriptionArray.of(new TypeDescription.ForLoadedType(type.getComponentType()), annotationDescription);
+                return AnnotationValue.ForDescriptionArray.of(TypeDescription.ForLoadedType.of(type.getComponentType()), annotationDescription);
             } else if (Class.class.isAssignableFrom(type)) {
-                return AnnotationValue.ForTypeDescription.<Class>of(new TypeDescription.ForLoadedType((Class<?>) value));
+                return AnnotationValue.ForTypeDescription.<Class>of(TypeDescription.ForLoadedType.of((Class<?>) value));
             } else if (Class[].class.isAssignableFrom(type)) {
                 Class<?>[] element = (Class<?>[]) value;
                 TypeDescription[] typeDescription = new TypeDescription[element.length];
                 int index = 0;
                 for (Class<?> anElement : element) {
-                    typeDescription[index++] = new TypeDescription.ForLoadedType(anElement);
+                    typeDescription[index++] = TypeDescription.ForLoadedType.of(anElement);
                 }
                 return AnnotationValue.ForDescriptionArray.of(typeDescription);
             } else {
@@ -649,9 +780,11 @@ public interface AnnotationDescription {
             }
         }
 
-        @Override
-        @SuppressWarnings("deprecation")
-        @SuppressFBWarnings(value = "REC_CATCH_EXCEPTION", justification = "Exception should always be wrapped for clarity")
+        /**
+         * {@inheritDoc}
+         */
+        @SuppressWarnings({"deprecation", "rawtypes"})
+        @SuppressFBWarnings(value = "REC_CATCH_EXCEPTION", justification = "Exception should always be wrapped for clarity.")
         public AnnotationValue<?, ?> getValue(MethodDescription.InDefinedShape property) {
             if (!property.getDeclaringType().represents(annotation.annotationType())) {
                 throw new IllegalArgumentException(property + " does not represent " + annotation.annotationType());
@@ -664,18 +797,37 @@ public interface AnnotationDescription {
                 if (method == null || method.getDeclaringClass() != annotation.annotationType() || (!accessible && !method.isAccessible())) {
                     method = annotation.annotationType().getMethod(property.getName());
                     if (!accessible) {
-                        AccessController.doPrivileged(new SetAccessibleAction<Method>(method));
+                        doPrivileged(new SetAccessibleAction<Method>(method));
                     }
                 }
-                return asValue(method.invoke(annotation), method.getReturnType());
+                return asValue(method.invoke(annotation, NO_ARGUMENT), method.getReturnType()).filter(property);
             } catch (InvocationTargetException exception) {
-                throw new IllegalStateException("Error reading annotation property " + property, exception.getCause());
+                Throwable cause = exception.getTargetException();
+                if (cause instanceof TypeNotPresentException) {
+                    return new AnnotationValue.ForMissingType<Void, Void>(((TypeNotPresentException) cause).typeName());
+                } else if (cause instanceof EnumConstantNotPresentException) {
+                    return new AnnotationValue.ForEnumerationDescription.WithUnknownConstant(
+                            new TypeDescription.ForLoadedType(((EnumConstantNotPresentException) cause).enumType()),
+                            ((EnumConstantNotPresentException) cause).constantName());
+                } else if (cause instanceof AnnotationTypeMismatchException) {
+                    return new AnnotationValue.ForMismatchedType<Void, Void>(
+                            new MethodDescription.ForLoadedMethod(((AnnotationTypeMismatchException) cause).element()),
+                            ((AnnotationTypeMismatchException) cause).foundType());
+                } else if (cause instanceof IncompleteAnnotationException) {
+                    return new AnnotationValue.ForMissingValue<Void, Void>(
+                            new TypeDescription.ForLoadedType(((IncompleteAnnotationException) cause).annotationType()),
+                            ((IncompleteAnnotationException) cause).elementName());
+                } else {
+                    throw new IllegalStateException("Error reading annotation property " + property, cause);
+                }
             } catch (Exception exception) {
                 throw new IllegalStateException("Cannot access annotation property " + property, exception);
             }
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         @SuppressWarnings("unchecked")
         public <T extends Annotation> Loadable<T> prepare(Class<T> annotationType) {
             if (!annotation.annotationType().getName().equals(annotationType.getName())) {
@@ -686,9 +838,11 @@ public interface AnnotationDescription {
                     : new ForLoadedAnnotation<T>((T) annotation, annotationType);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public TypeDescription getAnnotationType() {
-            return new TypeDescription.ForLoadedType(annotation.annotationType());
+            return TypeDescription.ForLoadedType.of(annotation.annotationType());
         }
     }
 
@@ -718,25 +872,33 @@ public interface AnnotationDescription {
             this.annotationValues = annotationValues;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public AnnotationValue<?, ?> getValue(MethodDescription.InDefinedShape property) {
+            if (!property.getDeclaringType().equals(annotationType)) {
+                throw new IllegalArgumentException("Not a property of " + annotationType + ": " + property);
+            }
             AnnotationValue<?, ?> value = annotationValues.get(property.getName());
             if (value != null) {
-                return value;
+                return value.filter(property);
             }
             AnnotationValue<?, ?> defaultValue = property.getDefaultValue();
-            if (defaultValue != null) {
-                return defaultValue;
-            }
-            throw new IllegalArgumentException("No value defined for: " + property);
+            return defaultValue == null
+                    ? new AnnotationValue.ForMissingValue<Void, Void>(annotationType, property.getName())
+                    : defaultValue;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public TypeDescription getAnnotationType() {
             return annotationType;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public <T extends Annotation> Loadable<T> prepare(Class<T> annotationType) {
             if (!this.annotationType.represents(annotationType)) {
                 throw new IllegalArgumentException(annotationType + " does not represent " + this.annotationType);
@@ -749,7 +911,7 @@ public interface AnnotationDescription {
          *
          * @param <S> The annotation type.
          */
-        protected class Loadable<S extends Annotation> extends AbstractBase.ForPrepared<S> {
+        protected class Loadable<S extends Annotation> extends AbstractBase implements AnnotationDescription.Loadable<S> {
 
             /**
              * The annotation type.
@@ -765,22 +927,30 @@ public interface AnnotationDescription {
                 this.annotationType = annotationType;
             }
 
-            @Override
-            public S load() throws ClassNotFoundException {
+            /**
+             * {@inheritDoc}
+             */
+            public S load() {
                 return AnnotationDescription.AnnotationInvocationHandler.of(annotationType.getClassLoader(), annotationType, annotationValues);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public AnnotationValue<?, ?> getValue(MethodDescription.InDefinedShape property) {
                 return Latent.this.getValue(property);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public TypeDescription getAnnotationType() {
-                return new TypeDescription.ForLoadedType(annotationType);
+                return TypeDescription.ForLoadedType.of(annotationType);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public <T extends Annotation> Loadable<T> prepare(Class<T> annotationType) {
                 return Latent.this.prepare(annotationType);
             }
@@ -790,7 +960,7 @@ public interface AnnotationDescription {
     /**
      * A builder for pragmatically creating {@link net.bytebuddy.description.annotation.AnnotationDescription}.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class Builder {
 
         /**
@@ -821,7 +991,7 @@ public interface AnnotationDescription {
          * @return A builder for creating an annotation of the given type.
          */
         public static Builder ofType(Class<? extends Annotation> annotationType) {
-            return ofType(new TypeDescription.ForLoadedType(annotationType));
+            return ofType(TypeDescription.ForLoadedType.of(annotationType));
         }
 
         /**
@@ -845,14 +1015,11 @@ public interface AnnotationDescription {
          * @return A builder with the additional, given property.
          */
         public Builder define(String property, AnnotationValue<?, ?> value) {
-            MethodList<?> methodDescriptions = annotationType.getDeclaredMethods().filter(named(property));
+            MethodList<MethodDescription.InDefinedShape> methodDescriptions = annotationType.getDeclaredMethods().filter(named(property));
             if (methodDescriptions.isEmpty()) {
                 throw new IllegalArgumentException(annotationType + " does not define a property named " + property);
-            } else if (!methodDescriptions.getOnly().getReturnType().asErasure().isAnnotationValue(value.resolve())) {
-                throw new IllegalArgumentException(value + " cannot be assigned to " + property);
             }
-            Map<String, AnnotationValue<?, ?>> annotationValues = new HashMap<String, AnnotationValue<?, ?>>();
-            annotationValues.putAll(this.annotationValues);
+            Map<String, AnnotationValue<?, ?>> annotationValues = new HashMap<String, AnnotationValue<?, ?>>(this.annotationValues);
             if (annotationValues.put(methodDescriptions.getOnly().getName(), value) != null) {
                 throw new IllegalArgumentException("Property already defined: " + property);
             }
@@ -889,7 +1056,7 @@ public interface AnnotationDescription {
          * @param value    A description of the enumeration value to define.
          * @return A builder with the additional enumeration property.
          */
-        @SuppressWarnings("unchecked")
+        @SuppressWarnings({"unchecked", "rawtypes"})
         public Builder define(String property, EnumerationDescription value) {
             return define(property, AnnotationValue.ForEnumerationDescription.<Enum>of(value));
         }
@@ -924,7 +1091,7 @@ public interface AnnotationDescription {
          * @return A builder with the additional class property.
          */
         public Builder define(String property, Class<?> type) {
-            return define(property, new TypeDescription.ForLoadedType(type));
+            return define(property, TypeDescription.ForLoadedType.of(type));
         }
 
         /**
@@ -934,7 +1101,7 @@ public interface AnnotationDescription {
          * @param typeDescription A description of the type to define as a property value.
          * @return A builder with the additional class property.
          */
-        @SuppressWarnings("unchecked")
+        @SuppressWarnings({"unchecked", "rawtypes"})
         public Builder define(String property, TypeDescription typeDescription) {
             return define(property, AnnotationValue.ForTypeDescription.<Class>of(typeDescription));
         }
@@ -955,7 +1122,7 @@ public interface AnnotationDescription {
             for (T aValue : value) {
                 enumerationDescription[index++] = new EnumerationDescription.ForLoadedEnumeration(aValue);
             }
-            return defineEnumerationArray(property, new TypeDescription.ForLoadedType(enumerationType), enumerationDescription);
+            return defineEnumerationArray(property, TypeDescription.ForLoadedType.of(enumerationType), enumerationDescription);
         }
 
         /**
@@ -985,7 +1152,7 @@ public interface AnnotationDescription {
          * @param value           Descriptions of the enumerations to be contained by the array.
          * @return A builder with the additional enumeration property.
          */
-        @SuppressWarnings("unchecked")
+        @SuppressWarnings({"unchecked", "rawtypes"})
         public Builder defineEnumerationArray(String property, TypeDescription enumerationType, EnumerationDescription... value) {
             return define(property, AnnotationValue.ForDescriptionArray.<Enum>of(enumerationType, value));
         }
@@ -1002,8 +1169,8 @@ public interface AnnotationDescription {
         @SuppressWarnings("unchecked")
         public <T extends Annotation> Builder defineAnnotationArray(String property, Class<T> annotationType, T... annotation) {
             return defineAnnotationArray(property,
-                    new TypeDescription.ForLoadedType(annotationType),
-                    new AnnotationList.ForLoadedAnnotations(annotation).toArray(new AnnotationDescription[annotation.length]));
+                    TypeDescription.ForLoadedType.of(annotationType),
+                    new AnnotationList.ForLoadedAnnotations(annotation).toArray(new AnnotationDescription[0]));
         }
 
         /**
@@ -1026,7 +1193,7 @@ public interface AnnotationDescription {
          * @return A builder with the additional type array property.
          */
         public Builder defineTypeArray(String property, Class<?>... type) {
-            return defineTypeArray(property, new TypeList.ForLoadedTypes(type).toArray(new TypeDescription[type.length]));
+            return defineTypeArray(property, new TypeList.ForLoadedTypes(type).toArray(new TypeDescription[0]));
         }
 
         /**
@@ -1036,7 +1203,6 @@ public interface AnnotationDescription {
          * @param typeDescription Descriptions of the types that should be contained by the array.
          * @return A builder with the additional type array property.
          */
-        @SuppressWarnings("unchecked")
         public Builder defineTypeArray(String property, TypeDescription... typeDescription) {
             return define(property, AnnotationValue.ForDescriptionArray.of(typeDescription));
         }
@@ -1240,17 +1406,33 @@ public interface AnnotationDescription {
         }
 
         /**
-         * Creates an annotation description for the values that were defined for this builder.
+         * Creates an annotation description for the values that were defined for this builder. It is validated that all
+         * properties are defined if no default value is set for an annotation property.
          *
          * @return An appropriate annotation description.
          */
         public AnnotationDescription build() {
-            for (MethodDescription methodDescription : annotationType.getDeclaredMethods()) {
-                if (annotationValues.get(methodDescription.getName()) == null && methodDescription.getDefaultValue() == null) {
+            for (MethodDescription.InDefinedShape methodDescription : annotationType.getDeclaredMethods()) {
+                AnnotationValue<?, ?> annotationValue = annotationValues.get(methodDescription.getName());
+                if (annotationValue == null && methodDescription.getDefaultValue() == null) {
                     throw new IllegalStateException("No value or default value defined for " + methodDescription.getName());
+                } else if (annotationValue != null && annotationValue.filter(methodDescription).getState() != AnnotationValue.State.RESOLVED) {
+                    throw new IllegalStateException("Illegal annotation value for " + methodDescription + ": " + annotationValue);
                 }
             }
             return new Latent(annotationType, annotationValues);
+        }
+
+        /**
+         * Creates an annotation description for the values that were defined for this builder.
+         *
+         * @param validated {@code true} if the annotation description should be validated for having included all values.
+         * @return An appropriate annotation description.
+         */
+        public AnnotationDescription build(boolean validated) {
+            return validated
+                    ? build()
+                    : new Latent(annotationType, annotationValues);
         }
     }
 }

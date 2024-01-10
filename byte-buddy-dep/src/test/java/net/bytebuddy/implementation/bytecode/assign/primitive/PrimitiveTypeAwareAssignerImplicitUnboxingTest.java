@@ -3,14 +3,14 @@ package net.bytebuddy.implementation.bytecode.assign.primitive;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.implementation.bytecode.StackManipulation;
 import net.bytebuddy.implementation.bytecode.assign.Assigner;
-import net.bytebuddy.test.utility.MockitoRule;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 
 import java.util.Arrays;
 import java.util.Collection;
@@ -31,7 +31,7 @@ public class PrimitiveTypeAwareAssignerImplicitUnboxingTest {
     private final boolean assignable;
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     @Mock
     private TypeDescription.Generic source, target;
@@ -94,7 +94,7 @@ public class PrimitiveTypeAwareAssignerImplicitUnboxingTest {
         verify(target, atLeast(0)).represents(any(Class.class));
         verify(target, atLeast(1)).isPrimitive();
         verifyNoMoreInteractions(target);
-        verify(chainedAssigner).assign(source, new TypeDescription.Generic.OfNonGenericType.ForLoadedType(wrapperType), Assigner.Typing.DYNAMIC);
+        verify(chainedAssigner).assign(source, TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(wrapperType), Assigner.Typing.DYNAMIC);
         verifyNoMoreInteractions(chainedAssigner);
     }
 }

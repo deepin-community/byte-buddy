@@ -3,9 +3,9 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <artifactId>byte-buddy-parent</artifactId>
         <groupId>net.bytebuddy</groupId>
-        <version>1.8.2</version>
+        <artifactId>byte-buddy-parent</artifactId>
+        <version>1.12.23</version>
     </parent>
 
     <artifactId>byte-buddy-benchmark</artifactId>
@@ -24,17 +24,13 @@
 
     <properties>
         <benchmark.mainClass>net.bytebuddy.benchmark.runner.BenchmarkRunner</benchmark.mainClass>
-        <!-- Newer versions require Java 7. -->
-        <version.jmh>1.16</version.jmh>
-        <version.cglib>3.2.5</version.cglib>
-        <version.javassist>3.22.0-GA</version.javassist>
+        <japicmp.skip>true</japicmp.skip>
     </properties>
 
     <dependencies>
         <dependency>
             <groupId>${project.groupId}</groupId>
             <artifactId>byte-buddy-dep</artifactId>
-            <version>${project.version}</version>
         </dependency>
         <dependency>
             <groupId>cglib</groupId>
@@ -66,6 +62,20 @@
     </dependencies>
 
     <build>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+            </resource>
+            <resource>
+                <directory>..</directory>
+                <targetPath>META-INF</targetPath>
+                <filtering>true</filtering>
+                <includes>
+                    <include>LICENSE</include>
+                    <include>NOTICE</include>
+                </includes>
+            </resource>
+        </resources>
         <plugins>
             <!-- Mutation testing is not adding information on benchmarking quality. -->
             <plugin>
@@ -86,10 +96,35 @@
                 </configuration>
             </plugin>
         </plugins>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-javadoc-plugin</artifactId>
+                    <version>${version.plugin.javadoc}</version>
+                    <configuration>
+                        <offlineLinks>
+                            <link>
+                                <url>https://javadoc.io/doc/net.bytebuddy/byte-buddy/${project.version}</url>
+                                <location>${project.basedir}/../byte-buddy/target/apidocs</location>
+                            </link>
+                            <!-- Use previously downloaded 'package-list' file as substitute for published 'element-list' file. -->
+                            <link>
+                                <url>https://javadoc.io/doc/org.openjdk.jmh/jmh-core/${version.jmh}</url>
+                                <location>${project.basedir}/target/javadoc-lists/jmh-core-${version.jmh}</location>
+                            </link>
+                        </offlineLinks>
+                        <excludePackageNames>
+                            net.bytebuddy.benchmark.generated,
+                            net.bytebuddy.benchmark.jmh_generated
+                        </excludePackageNames>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </pluginManagement>
     </build>
 
     <profiles>
-        <!-- Shade the benchmark artifact. -->
         <profile>
             <id>extras</id>
             <activation>
@@ -97,6 +132,29 @@
             </activation>
             <build>
                 <plugins>
+                    <!-- Download 'element-list' file which is published by newer javadoc versions, store as 'package-list' file. -->
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-antrun-plugin</artifactId>
+                        <version>${version.plugin.antrun}</version>
+                        <executions>
+                            <execution>
+                                <id>download-javadoc-lists</id>
+                                <phase>process-resources</phase>
+                                <goals>
+                                    <goal>run</goal>
+                                </goals>
+                                <configuration>
+                                    <skip>${javadoc.download.skip}</skip>
+                                    <target>
+                                        <mkdir dir="${project.basedir}/target/javadoc-lists/jmh-core-${version.jmh}" />
+                                        <get src="https://javadoc.io/doc/org.openjdk.jmh/jmh-core/${version.jmh}/element-list" dest="${project.basedir}/target/javadoc-lists/jmh-core-${version.jmh}/package-list" skipexisting="true" />
+                                    </target>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <!-- Shade the benchmark artifact. -->
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-shade-plugin</artifactId>
@@ -112,10 +170,43 @@
                                         <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                                             <mainClass>org.openjdk.jmh.Main</mainClass>
                                         </transformer>
+                                        <transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+                                            <resource>META-INF/LICENSE</resource>
+                                        </transformer>
                                     </transformers>
+                                    <filters>
+                                        <filter>
+                                            <artifact>*:*</artifact>
+                                            <excludes>
+                                                <exclude>META-INF/MANIFEST.MF</exclude>
+                                                <exclude>**/module-info.class</exclude>
+                                                <exclude>**/NOTICE</exclude>
+                                            </excludes>
+                                        </filter>
+                                    </filters>
                                 </configuration>
                             </execution>
                         </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <!-- Do not run tests on JDK 11 or later as the benchmark currently requires sun.misc.Unsafe::defineClass. -->
+        <profile>
+            <id>java11-tests</id>
+            <activation>
+                <activeByDefault>false</activeByDefault>
+                <jdk>[11,)</jdk>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <version>${version.plugin.surefire}</version>
+                        <configuration>
+                            <skipTests>true</skipTests>
+                        </configuration>
                     </plugin>
                 </plugins>
             </build>

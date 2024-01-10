@@ -8,13 +8,12 @@ import net.bytebuddy.description.method.MethodList;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.implementation.Implementation;
 import net.bytebuddy.pool.TypePool;
-import net.bytebuddy.test.utility.MockitoRule;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
@@ -32,7 +31,7 @@ public class TypeConstantAdjustmentTest {
     private static final String FOO = "foo", BAR = "bar", QUX = "qux", BAZ = "baz";
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     @Mock
     private ClassVisitor classVisitor;
@@ -71,7 +70,7 @@ public class TypeConstantAdjustmentTest {
         verify(this.classVisitor).visit(ClassFileVersion.JAVA_V5.getMinorMajorVersion(), FOOBAR, FOO, BAR, QUX, new String[]{BAZ});
         verify(this.classVisitor).visitMethod(FOOBAR, FOO, BAR, QUX, new String[]{BAZ});
         verifyNoMoreInteractions(this.classVisitor);
-        verifyZeroInteractions(methodVisitor);
+        verifyNoMoreInteractions(methodVisitor);
     }
 
     @Test
@@ -145,10 +144,5 @@ public class TypeConstantAdjustmentTest {
         verifyNoMoreInteractions(this.classVisitor);
         verify(this.methodVisitor).visitLdcInsn(FOO);
         verifyNoMoreInteractions(this.methodVisitor);
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(TypeConstantAdjustment.class).apply();
     }
 }

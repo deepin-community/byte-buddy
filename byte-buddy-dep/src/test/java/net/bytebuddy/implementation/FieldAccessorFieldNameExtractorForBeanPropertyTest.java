@@ -1,12 +1,11 @@
 package net.bytebuddy.implementation;
 
 import net.bytebuddy.description.method.MethodDescription;
-import net.bytebuddy.test.utility.MockitoRule;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -17,7 +16,7 @@ public class FieldAccessorFieldNameExtractorForBeanPropertyTest {
     private static final String FOO = "foo", FOO_CAPITAL = "Foo";
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     @Mock
     private MethodDescription methodDescription;
@@ -62,10 +61,5 @@ public class FieldAccessorFieldNameExtractorForBeanPropertyTest {
     public void testIllegalName() throws Exception {
         when(methodDescription.getInternalName()).thenReturn(FOO);
         FieldAccessor.FieldNameExtractor.ForBeanProperty.INSTANCE.resolve(methodDescription);
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(FieldAccessor.FieldNameExtractor.ForBeanProperty.class).apply();
     }
 }

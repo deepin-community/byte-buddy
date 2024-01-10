@@ -1,0 +1,18 @@
+plugins {
+    id "java-library"
+}
+
+apply from: "$rootDir/bytebuddy.gradle"
+
+targetCompatibility = JavaVersion.VERSION_1_8
+sourceCompatibility = JavaVersion.VERSION_1_8
+
+repositories {
+    mavenCentral()
+    google()
+}
+
+dependencies {
+    api gradleApi()
+    compileOnly group: 'com.android.tools.build', name: 'gradle', version: '7.3.0'
+}

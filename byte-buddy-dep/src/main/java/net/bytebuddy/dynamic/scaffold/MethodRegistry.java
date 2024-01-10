@@ -1,13 +1,30 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.dynamic.scaffold;
 
-import lombok.EqualsAndHashCode;
 import net.bytebuddy.ClassFileVersion;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.annotation.AnnotationValue;
 import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.method.MethodList;
 import net.bytebuddy.description.modifier.Visibility;
+import net.bytebuddy.description.type.TypeDefinition;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.dynamic.Transformer;
+import net.bytebuddy.dynamic.VisibilityBridgeStrategy;
 import net.bytebuddy.implementation.Implementation;
 import net.bytebuddy.implementation.LoadedTypeInitializer;
 import net.bytebuddy.implementation.attribute.MethodAttributeAppender;
@@ -56,15 +73,17 @@ public interface MethodRegistry {
     /**
      * Prepares this method registry.
      *
-     * @param instrumentedType    The instrumented type that should be created.
-     * @param methodGraphCompiler The method graph compiler to be used for analyzing the fully assembled instrumented type.
-     * @param typeValidation      Determines if a type should be explicitly validated.
-     * @param ignoredMethods      A filter that only matches methods that should be instrumented.
+     * @param instrumentedType         The instrumented type that should be created.
+     * @param methodGraphCompiler      The method graph compiler to be used for analyzing the fully assembled instrumented type.
+     * @param typeValidation           Determines if a type should be explicitly validated.
+     * @param visibilityBridgeStrategy The visibility bridge strategy to apply.
+     * @param ignoredMethods           A filter that only matches methods that should be instrumented.
      * @return A prepared version of this method registry.
      */
     Prepared prepare(InstrumentedType instrumentedType,
                      MethodGraph.Compiler methodGraphCompiler,
                      TypeValidation typeValidation,
+                     VisibilityBridgeStrategy visibilityBridgeStrategy,
                      LatentMatcher<? super MethodDescription> ignoredMethods);
 
     /**
@@ -90,17 +109,23 @@ public interface MethodRegistry {
              */
             INSTANCE;
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public InstrumentedType prepare(InstrumentedType instrumentedType) {
                 return instrumentedType;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Compiled compile(Implementation.Target implementationTarget) {
                 return this;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public TypeWriter.MethodPool.Record assemble(MethodDescription methodDescription, MethodAttributeAppender attributeAppender, Visibility visibility) {
                 return new TypeWriter.MethodPool.Record.ForDefinedMethod.WithoutBody(methodDescription, attributeAppender, visibility);
             }
@@ -116,12 +141,16 @@ public interface MethodRegistry {
              */
             INSTANCE;
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public InstrumentedType prepare(InstrumentedType instrumentedType) {
                 throw new IllegalStateException("A visibility bridge handler must not apply any preparations");
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Compiled compile(Implementation.Target implementationTarget) {
                 return new Compiled(implementationTarget.getInstrumentedType());
             }
@@ -129,7 +158,7 @@ public interface MethodRegistry {
             /**
              * A compiled handler for a visibility bridge handler.
              */
-            @EqualsAndHashCode
+            @HashCodeAndEqualsPlugin.Enhance
             protected static class Compiled implements Handler.Compiled {
 
                 /**
@@ -146,7 +175,9 @@ public interface MethodRegistry {
                     this.instrumentedType = instrumentedType;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public TypeWriter.MethodPool.Record assemble(MethodDescription methodDescription, MethodAttributeAppender attributeAppender, Visibility visibility) {
                     return TypeWriter.MethodPool.Record.ForDefinedMethod.OfVisibilityBridge.of(instrumentedType, methodDescription, attributeAppender);
                 }
@@ -172,7 +203,7 @@ public interface MethodRegistry {
         /**
          * A handler for a method that is implemented as byte code.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class ForImplementation implements Handler {
 
             /**
@@ -189,12 +220,16 @@ public interface MethodRegistry {
                 this.implementation = implementation;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public InstrumentedType prepare(InstrumentedType instrumentedType) {
                 return implementation.prepare(instrumentedType);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Compiled compile(Implementation.Target implementationTarget) {
                 return new Compiled(implementation.appender(implementationTarget));
             }
@@ -202,7 +237,7 @@ public interface MethodRegistry {
             /**
              * A compiled handler for implementing a method.
              */
-            @EqualsAndHashCode
+            @HashCodeAndEqualsPlugin.Enhance
             protected static class Compiled implements Handler.Compiled {
 
                 /**
@@ -219,7 +254,9 @@ public interface MethodRegistry {
                     this.byteCodeAppender = byteCodeAppender;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public TypeWriter.MethodPool.Record assemble(MethodDescription methodDescription, MethodAttributeAppender attributeAppender, Visibility visibility) {
                     return new TypeWriter.MethodPool.Record.ForDefinedMethod.WithBody(methodDescription, byteCodeAppender, attributeAppender, visibility);
                 }
@@ -229,7 +266,7 @@ public interface MethodRegistry {
         /**
          * A handler for defining a default annotation value for a method.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class ForAnnotationValue implements Handler, Compiled {
 
             /**
@@ -246,17 +283,23 @@ public interface MethodRegistry {
                 this.annotationValue = annotationValue;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public InstrumentedType prepare(InstrumentedType instrumentedType) {
                 return instrumentedType;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Compiled compile(Implementation.Target implementationTarget) {
                 return this;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public TypeWriter.MethodPool.Record assemble(MethodDescription methodDescription, MethodAttributeAppender attributeAppender, Visibility visibility) {
                 return new TypeWriter.MethodPool.Record.ForDefinedMethod.WithAnnotationDefaultValue(methodDescription, annotationValue, attributeAppender);
             }
@@ -357,7 +400,7 @@ public interface MethodRegistry {
     /**
      * A default implementation of a method registry.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class Default implements MethodRegistry {
 
         /**
@@ -381,7 +424,9 @@ public interface MethodRegistry {
             this.entries = entries;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public MethodRegistry prepend(LatentMatcher<? super MethodDescription> matcher,
                                       Handler handler,
                                       MethodAttributeAppender.Factory attributeAppenderFactory,
@@ -389,7 +434,9 @@ public interface MethodRegistry {
             return new Default(CompoundList.of(new Entry(matcher, handler, attributeAppenderFactory, transformer), entries));
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public MethodRegistry append(LatentMatcher<? super MethodDescription> matcher,
                                      Handler handler,
                                      MethodAttributeAppender.Factory attributeAppenderFactory,
@@ -397,25 +444,32 @@ public interface MethodRegistry {
             return new Default(CompoundList.of(entries, new Entry(matcher, handler, attributeAppenderFactory, transformer)));
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public MethodRegistry.Prepared prepare(InstrumentedType instrumentedType,
                                                MethodGraph.Compiler methodGraphCompiler,
                                                TypeValidation typeValidation,
+                                               VisibilityBridgeStrategy visibilityBridgeStrategy,
                                                LatentMatcher<? super MethodDescription> ignoredMethods) {
             LinkedHashMap<MethodDescription, Prepared.Entry> implementations = new LinkedHashMap<MethodDescription, Prepared.Entry>();
             Set<Handler> handlers = new HashSet<Handler>();
-            MethodList<?> helperMethods = instrumentedType.getDeclaredMethods();
+            Set<MethodDescription> declaredMethods = new HashSet<MethodDescription>(instrumentedType.getDeclaredMethods());
             for (Entry entry : entries) {
                 if (handlers.add(entry.getHandler())) {
-                    instrumentedType = entry.getHandler().prepare(instrumentedType);
-                    ElementMatcher<? super MethodDescription> handledMethods = noneOf(helperMethods);
-                    helperMethods = instrumentedType.getDeclaredMethods();
-                    for (MethodDescription helperMethod : helperMethods.filter(handledMethods)) {
-                        implementations.put(helperMethod, entry.asSupplementaryEntry(helperMethod));
+                    InstrumentedType typeDescription = entry.getHandler().prepare(instrumentedType);
+                    if (instrumentedType != typeDescription) { // Avoid unnecessary scanning for helper methods if instrumented type was not changed.
+                        for (MethodDescription methodDescription : typeDescription.getDeclaredMethods()) {
+                            if (!declaredMethods.contains(methodDescription)) {
+                                implementations.put(methodDescription, entry.asSupplementaryEntry(methodDescription));
+                                declaredMethods.add(methodDescription);
+                            }
+                        }
+                        instrumentedType = typeDescription;
                     }
                 }
             }
-            MethodGraph.Linked methodGraph = methodGraphCompiler.compile(instrumentedType);
+            MethodGraph.Linked methodGraph = methodGraphCompiler.compile((TypeDefinition) instrumentedType);
             // Casting required for Java 6 compiler.
             ElementMatcher<? super MethodDescription> relevanceMatcher = (ElementMatcher<? super MethodDescription>) not(anyOf(implementations.keySet()))
                     .and(returns(isVisibleTo(instrumentedType)))
@@ -441,7 +495,8 @@ public interface MethodRegistry {
                         && !node.getSort().isMadeVisible()
                         && methodDescription.isPublic()
                         && !(methodDescription.isAbstract() || methodDescription.isFinal())
-                        && methodDescription.getDeclaringType().isPackagePrivate()) {
+                        && methodDescription.getDeclaringType().isPackagePrivate()
+                        && visibilityBridgeStrategy.generateVisibilityBridge(methodDescription)) {
                     // Visibility bridges are required for public classes that inherit a public method from a package-private class.
                     implementations.put(methodDescription, Prepared.Entry.forVisibilityBridge(methodDescription, node.getVisibility()));
                 }
@@ -471,7 +526,7 @@ public interface MethodRegistry {
         /**
          * An entry of a default method registry.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         protected static class Entry implements LatentMatcher<MethodDescription> {
 
             /**
@@ -569,7 +624,9 @@ public interface MethodRegistry {
                 return handler;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public ElementMatcher<? super MethodDescription> resolve(TypeDescription typeDescription) {
                 return matcher.resolve(typeDescription);
             }
@@ -578,7 +635,7 @@ public interface MethodRegistry {
         /**
          * A prepared version of a default method registry.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         protected static class Prepared implements MethodRegistry.Prepared {
 
             /**
@@ -635,32 +692,44 @@ public interface MethodRegistry {
                 this.methods = methods;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public TypeDescription getInstrumentedType() {
                 return instrumentedType;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public LoadedTypeInitializer getLoadedTypeInitializer() {
                 return loadedTypeInitializer;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public TypeInitializer getTypeInitializer() {
                 return typeInitializer;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public MethodList<?> getMethods() {
                 return methods;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public MethodList<?> getInstrumentedMethods() {
                 return new MethodList.Explicit<MethodDescription>(new ArrayList<MethodDescription>(implementations.keySet())).filter(not(isTypeInitializer()));
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public MethodRegistry.Compiled compile(Implementation.Target.Factory implementationTargetFactory, ClassFileVersion classFileVersion) {
                 Map<Handler, Handler.Compiled> compilationCache = new HashMap<Handler, Handler.Compiled>();
                 Map<MethodAttributeAppender.Factory, MethodAttributeAppender> attributeAppenderCache = new HashMap<MethodAttributeAppender.Factory, MethodAttributeAppender>();
@@ -695,7 +764,7 @@ public interface MethodRegistry {
             /**
              * An entry of a prepared method registry.
              */
-            @EqualsAndHashCode
+            @HashCodeAndEqualsPlugin.Enhance
             protected static class Entry {
 
                 /**
@@ -721,7 +790,7 @@ public interface MethodRegistry {
                 /**
                  * The minimum required visibility of this method.
                  */
-                private Visibility visibility;
+                private final Visibility visibility;
 
                 /**
                  * Is {@code true} if this entry represents a bridge method.
@@ -829,7 +898,7 @@ public interface MethodRegistry {
         /**
          * A compiled version of a default method registry.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         protected static class Compiled implements MethodRegistry.Compiled {
 
             /**
@@ -886,32 +955,44 @@ public interface MethodRegistry {
                 this.supportsBridges = supportsBridges;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public TypeDescription getInstrumentedType() {
                 return instrumentedType;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public LoadedTypeInitializer getLoadedTypeInitializer() {
                 return loadedTypeInitializer;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public TypeInitializer getTypeInitializer() {
                 return typeInitializer;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public MethodList<?> getMethods() {
                 return methods;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public MethodList<?> getInstrumentedMethods() {
                 return new MethodList.Explicit<MethodDescription>(new ArrayList<MethodDescription>(implementations.keySet())).filter(not(isTypeInitializer()));
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Record target(MethodDescription methodDescription) {
                 Entry entry = implementations.get(methodDescription);
                 return entry == null
@@ -922,7 +1003,7 @@ public interface MethodRegistry {
             /**
              * An entry of a compiled method registry.
              */
-            @EqualsAndHashCode
+            @HashCodeAndEqualsPlugin.Enhance
             protected static class Entry {
 
                 /**

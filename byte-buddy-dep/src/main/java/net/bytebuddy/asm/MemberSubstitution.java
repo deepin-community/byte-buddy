@@ -1,34 +1,55 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.asm;
 
-import lombok.EqualsAndHashCode;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import net.bytebuddy.ClassFileVersion;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.ByteCodeElement;
 import net.bytebuddy.description.field.FieldDescription;
 import net.bytebuddy.description.field.FieldList;
 import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.method.MethodList;
+import net.bytebuddy.description.type.TypeDefinition;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.description.type.TypeList;
 import net.bytebuddy.dynamic.ClassFileLocator;
 import net.bytebuddy.dynamic.scaffold.MethodGraph;
 import net.bytebuddy.implementation.Implementation;
-import net.bytebuddy.implementation.bytecode.Duplication;
-import net.bytebuddy.implementation.bytecode.Removal;
-import net.bytebuddy.implementation.bytecode.StackManipulation;
-import net.bytebuddy.implementation.bytecode.StackSize;
-import net.bytebuddy.implementation.bytecode.constant.DefaultValue;
+import net.bytebuddy.implementation.bytecode.*;
+import net.bytebuddy.implementation.bytecode.assign.Assigner;
+import net.bytebuddy.implementation.bytecode.constant.*;
 import net.bytebuddy.implementation.bytecode.member.FieldAccess;
 import net.bytebuddy.implementation.bytecode.member.MethodInvocation;
+import net.bytebuddy.implementation.bytecode.member.MethodVariableAccess;
 import net.bytebuddy.matcher.ElementMatcher;
+import net.bytebuddy.matcher.ElementMatchers;
 import net.bytebuddy.pool.TypePool;
 import net.bytebuddy.utility.CompoundList;
+import net.bytebuddy.utility.JavaConstant;
+import net.bytebuddy.utility.JavaType;
+import net.bytebuddy.utility.OpenedClassReader;
+import net.bytebuddy.utility.nullability.MaybeNull;
+import net.bytebuddy.utility.visitor.LocalVariableAwareMethodVisitor;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
+import java.util.*;
 
 import static net.bytebuddy.matcher.ElementMatchers.*;
 
@@ -43,7 +64,7 @@ import static net.bytebuddy.matcher.ElementMatchers.*;
  * necessary to use this component when subclassing a type where methods are only defined explicitly.
  * </p>
  */
-@EqualsAndHashCode(callSuper = false)
+@HashCodeAndEqualsPlugin.Enhance
 public class MemberSubstitution implements AsmVisitorWrapper.ForDeclaredMethods.MethodVisitorWrapper {
 
     /**
@@ -62,9 +83,9 @@ public class MemberSubstitution implements AsmVisitorWrapper.ForDeclaredMethods.
     private final TypePoolResolver typePoolResolver;
 
     /**
-     * The substitution to apply.
+     * The replacement factory to use.
      */
-    private final Substitution substitution;
+    private final Replacement.Factory replacementFactory;
 
     /**
      * Creates a default member substitution.
@@ -72,43 +93,43 @@ public class MemberSubstitution implements AsmVisitorWrapper.ForDeclaredMethods.
      * @param strict {@code true} if the method processing should be strict where an exception is raised if a member cannot be found.
      */
     protected MemberSubstitution(boolean strict) {
-        this(MethodGraph.Compiler.DEFAULT, TypePoolResolver.OfImplicitPool.INSTANCE, strict, Substitution.NoOp.INSTANCE);
+        this(MethodGraph.Compiler.DEFAULT, TypePoolResolver.OfImplicitPool.INSTANCE, strict, Replacement.NoOp.INSTANCE);
     }
 
     /**
-     * Creates a new member substitutor.
+     * Creates a new member substitution.
      *
      * @param methodGraphCompiler The method graph compiler to use.
      * @param typePoolResolver    The type pool resolver to use.
      * @param strict              {@code true} if the method processing should be strict where an exception is raised if a member cannot be found.
-     * @param substitution        The substitution to apply.
+     * @param replacementFactory  The replacement factory to use.
      */
-    private MemberSubstitution(MethodGraph.Compiler methodGraphCompiler,
-                               TypePoolResolver typePoolResolver,
-                               boolean strict,
-                               Substitution substitution) {
+    protected MemberSubstitution(MethodGraph.Compiler methodGraphCompiler,
+                                 TypePoolResolver typePoolResolver,
+                                 boolean strict,
+                                 Replacement.Factory replacementFactory) {
         this.methodGraphCompiler = methodGraphCompiler;
         this.typePoolResolver = typePoolResolver;
         this.strict = strict;
-        this.substitution = substitution;
+        this.replacementFactory = replacementFactory;
     }
 
     /**
-     * Creates a member substitutor that requires the resolution of all fields and methods that are referenced within a method body. Doing so,
+     * Creates a member substitution that requires the resolution of all fields and methods that are referenced within a method body. Doing so,
      * this component raises an exception if any member cannot be resolved what makes this component unusable when facing optional types.
      *
-     * @return A strict member substitutor.
+     * @return A strict member substitution.
      */
     public static MemberSubstitution strict() {
         return new MemberSubstitution(true);
     }
 
     /**
-     * Creates a member substitutor that skips any unresolvable fields or methods that are referenced within a method body. Using a relaxed
-     * member substitutor, methods containing optional types are supported. In the process, it is however possible that misconfigurations
+     * Creates a member substitution that skips any unresolvable fields or methods that are referenced within a method body. Using a relaxed
+     * member substitution, methods containing optional types are supported. In the process, it is however possible that misconfigurations
      * of this component remain undiscovered.
      *
-     * @return A relaxed member substitutor.
+     * @return A relaxed member substitution.
      */
     public static MemberSubstitution relaxed() {
         return new MemberSubstitution(false);
@@ -121,7 +142,7 @@ public class MemberSubstitution implements AsmVisitorWrapper.ForDeclaredMethods.
      * @return A specification that allows to determine how to substitute any interaction with byte code elements that match the supplied matcher.
      */
     public WithoutSpecification element(ElementMatcher<? super ByteCodeElement> matcher) {
-        return new WithoutSpecification.ForMatchedByteCodeElement(methodGraphCompiler, typePoolResolver, strict, substitution, matcher);
+        return new WithoutSpecification.ForMatchedByteCodeElement(methodGraphCompiler, typePoolResolver, strict, replacementFactory, matcher);
     }
 
     /**
@@ -131,7 +152,7 @@ public class MemberSubstitution implements AsmVisitorWrapper.ForDeclaredMethods.
      * @return A specification that allows to determine how to substitute any field access that match the supplied matcher.
      */
     public WithoutSpecification.ForMatchedField field(ElementMatcher<? super FieldDescription.InDefinedShape> matcher) {
-        return new WithoutSpecification.ForMatchedField(methodGraphCompiler, typePoolResolver, strict, substitution, matcher);
+        return new WithoutSpecification.ForMatchedField(methodGraphCompiler, typePoolResolver, strict, replacementFactory, matcher);
     }
 
     /**
@@ -141,7 +162,7 @@ public class MemberSubstitution implements AsmVisitorWrapper.ForDeclaredMethods.
      * @return A specification that allows to determine how to substitute any method invocations that match the supplied matcher.
      */
     public WithoutSpecification.ForMatchedMethod method(ElementMatcher<? super MethodDescription> matcher) {
-        return new WithoutSpecification.ForMatchedMethod(methodGraphCompiler, typePoolResolver, strict, substitution, matcher);
+        return new WithoutSpecification.ForMatchedMethod(methodGraphCompiler, typePoolResolver, strict, replacementFactory, matcher);
     }
 
     /**
@@ -161,7 +182,7 @@ public class MemberSubstitution implements AsmVisitorWrapper.ForDeclaredMethods.
      * @return A specification that allows to determine how to substitute any constructor invocations that match the supplied matcher.
      */
     public WithoutSpecification invokable(ElementMatcher<? super MethodDescription> matcher) {
-        return new WithoutSpecification.ForMatchedMethod(methodGraphCompiler, typePoolResolver, strict, substitution, matcher);
+        return new WithoutSpecification.ForMatchedMethod(methodGraphCompiler, typePoolResolver, strict, replacementFactory, matcher);
     }
 
     /**
@@ -171,7 +192,7 @@ public class MemberSubstitution implements AsmVisitorWrapper.ForDeclaredMethods.
      * @return A new member substitution that is equal to this but uses the specified method graph compiler.
      */
     public MemberSubstitution with(MethodGraph.Compiler methodGraphCompiler) {
-        return new MemberSubstitution(methodGraphCompiler, typePoolResolver, strict, substitution);
+        return new MemberSubstitution(methodGraphCompiler, typePoolResolver, strict, replacementFactory);
     }
 
     /**
@@ -181,20 +202,22 @@ public class MemberSubstitution implements AsmVisitorWrapper.ForDeclaredMethods.
      * @return A new instance of this member substitution that uses the supplied type pool resolver.
      */
     public MemberSubstitution with(TypePoolResolver typePoolResolver) {
-        return new MemberSubstitution(methodGraphCompiler, typePoolResolver, strict, substitution);
+        return new MemberSubstitution(methodGraphCompiler, typePoolResolver, strict, replacementFactory);
     }
 
     /**
-     * Applies this member substitutor to any method that matches the supplied matcher.
+     * Applies this member substitution to any method that matches the supplied matcher.
      *
-     * @param matcher The matcher to determine this substitutors application.
+     * @param matcher The matcher to determine this substitutions application.
      * @return An ASM visitor wrapper that applies all specified substitutions for any matched method.
      */
     public AsmVisitorWrapper.ForDeclaredMethods on(ElementMatcher<? super MethodDescription> matcher) {
-        return new AsmVisitorWrapper.ForDeclaredMethods().method(matcher, this);
+        return new AsmVisitorWrapper.ForDeclaredMethods().invokable(matcher, this);
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public MethodVisitor wrap(TypeDescription instrumentedType,
                               MethodDescription instrumentedMethod,
                               MethodVisitor methodVisitor,
@@ -202,19 +225,22 @@ public class MemberSubstitution implements AsmVisitorWrapper.ForDeclaredMethods.
                               TypePool typePool,
                               int writerFlags,
                               int readerFlags) {
+        typePool = typePoolResolver.resolve(instrumentedType, instrumentedMethod, typePool);
         return new SubstitutingMethodVisitor(methodVisitor,
+                instrumentedType,
+                instrumentedMethod,
                 methodGraphCompiler,
                 strict,
-                substitution,
-                instrumentedType,
+                replacementFactory.make(instrumentedType, instrumentedMethod, typePool),
                 implementationContext,
-                typePoolResolver.resolve(instrumentedType, instrumentedMethod, typePool));
+                typePool,
+                implementationContext.getClassFileVersion().isAtLeast(ClassFileVersion.JAVA_V11));
     }
 
     /**
      * A member substitution that lacks a specification for how to substitute the matched members references within a method body.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     public abstract static class WithoutSpecification {
 
         /**
@@ -233,9 +259,9 @@ public class MemberSubstitution implements AsmVisitorWrapper.ForDeclaredMethods.
         protected final boolean strict;
 
         /**
-         * The substitution to apply.
+         * The replacement factory to use for creating substitutions.
          */
-        protected final Substitution substitution;
+        protected final Replacement.Factory replacementFactory;
 
         /**
          * Creates a new member substitution that requires a specification for how to perform a substitution.
@@ -243,16 +269,16 @@ public class MemberSubstitution implements AsmVisitorWrapper.ForDeclaredMethods.
          * @param methodGraphCompiler The method graph compiler to use.
          * @param typePoolResolver    The type pool resolver to use.
          * @param strict              {@code true} if the method processing should be strict where an exception is raised if a member cannot be found.
-         * @param substitution        The substitution to apply.
+         * @param replacementFactory  The replacement factory to use for creating substitutions.
          */
         protected WithoutSpecification(MethodGraph.Compiler methodGraphCompiler,
                                        TypePoolResolver typePoolResolver,
                                        boolean strict,
-                                       Substitution substitution) {
+                                       Replacement.Factory replacementFactory) {
             this.methodGraphCompiler = methodGraphCompiler;
             this.typePoolResolver = typePoolResolver;
             this.strict = strict;
-            this.substitution = substitution;
+            this.replacementFactory = replacementFactory;
         }
 
         /**
@@ -263,18 +289,51 @@ public class MemberSubstitution implements AsmVisitorWrapper.ForDeclaredMethods.
          * @return A member substitution that stubs any interaction with a matched byte code element.
          */
         public MemberSubstitution stub() {
-            return new MemberSubstitution(methodGraphCompiler,
-                    typePoolResolver,
-                    strict,
-                    new Substitution.Compound(doStub(), substitution));
+            return replaceWith(Substitution.Stubbing.INSTANCE);
         }
 
         /**
-         * Applies the stubbing for this instance.
+         * Replaces any interaction with a matched byte code element with the provided compile-time constant.
          *
-         * @return A suitable substitution.
+         * @param value The compile-time constant to set.
+         * @return A member substitution that replaces any interaction with the supplied compile-time constant.
          */
-        protected abstract Substitution doStub();
+        public MemberSubstitution replaceWithConstant(Object value) {
+            if (value instanceof JavaConstant) {
+                return replaceWith(new Substitution.ForValue(new JavaConstantValue((JavaConstant) value), ((JavaConstant) value).getTypeDescription().asGenericType()));
+            } else if (value instanceof TypeDescription) {
+                return replaceWith(new Substitution.ForValue(ClassConstant.of((TypeDescription) value), TypeDefinition.Sort.describe(Class.class)));
+            } else {
+                Class<?> type = value.getClass();
+                if (type == String.class) {
+                    return replaceWith(new Substitution.ForValue(new TextConstant((String) value), TypeDefinition.Sort.describe(String.class)));
+                } else if (type == Class.class) {
+                    return replaceWith(new Substitution.ForValue(ClassConstant.of(TypeDescription.ForLoadedType.of((Class<?>) value)), TypeDefinition.Sort.describe(Class.class)));
+                } else if (type == Boolean.class) {
+                    return replaceWith(new Substitution.ForValue(IntegerConstant.forValue((Boolean) value), TypeDefinition.Sort.describe(boolean.class)));
+                } else if (type == Byte.class) {
+                    return replaceWith(new Substitution.ForValue(IntegerConstant.forValue((Byte) value), TypeDefinition.Sort.describe(byte.class)));
+                } else if (type == Short.class) {
+                    return replaceWith(new Substitution.ForValue(IntegerConstant.forValue((Short) value), TypeDefinition.Sort.describe(short.class)));
+                } else if (type == Character.class) {
+                    return replaceWith(new Substitution.ForValue(IntegerConstant.forValue((Character) value), TypeDefinition.Sort.describe(char.class)));
+                } else if (type == Integer.class) {
+                    return replaceWith(new Substitution.ForValue(IntegerConstant.forValue((Integer) value), TypeDefinition.Sort.describe(int.class)));
+                } else if (type == Long.class) {
+                    return replaceWith(new Substitution.ForValue(LongConstant.forValue((Long) value), TypeDefinition.Sort.describe(long.class)));
+                } else if (type == Float.class) {
+                    return replaceWith(new Substitution.ForValue(FloatConstant.forValue((Float) value), TypeDefinition.Sort.describe(float.class)));
+                } else if (type == Double.class) {
+                    return replaceWith(new Substitution.ForValue(DoubleConstant.forValue((Double) value), TypeDefinition.Sort.describe(double.class)));
+                } else if (JavaType.METHOD_HANDLE.getTypeStub().isAssignableFrom(type)) {
+                    return replaceWith(new Substitution.ForValue(new JavaConstantValue(JavaConstant.MethodHandle.ofLoaded(value)), TypeDefinition.Sort.describe(type)));
+                } else if (JavaType.METHOD_TYPE.getTypeStub().represents(type)) {
+                    return replaceWith(new Substitution.ForValue(new JavaConstantValue(JavaConstant.MethodType.ofLoaded(value)), TypeDefinition.Sort.describe(type)));
+                } else {
+                    throw new IllegalArgumentException("Not a constant value: " + value);
+                }
+            }
+        }
 
         /**
          * <p>
@@ -309,19 +368,21 @@ public class MemberSubstitution implements AsmVisitorWrapper.ForDeclaredMethods.
          * @return A member substitution that replaces any matched byte code element with an access of the specified field.
          */
         public MemberSubstitution replaceWith(FieldDescription fieldDescription) {
-            return new MemberSubstitution(methodGraphCompiler,
-                    typePoolResolver,
-                    strict,
-                    new Substitution.Compound(doReplaceWith(fieldDescription), substitution));
+            return replaceWith(new Substitution.ForFieldAccess.OfGivenField(fieldDescription));
         }
 
         /**
-         * Creates a substitution for replacing the byte code elements matched by this instance with an access of the specified field.
+         * Replaces any interaction with a matched byte code element with a non-static field access on the first
+         * parameter of the matched element. When matching a non-static field access or method invocation, the
+         * substituted field is located on the same receiver type as the original access. For static access, the
+         * first argument is used as a receiver.
          *
-         * @param fieldDescription The field to access.
-         * @return A suitable substitution.
+         * @param matcher A matcher for locating a field on the original interaction's receiver type.
+         * @return A member substitution that replaces any matched byte code element with an access of the matched field.
          */
-        protected abstract Substitution doReplaceWith(FieldDescription fieldDescription);
+        public MemberSubstitution replaceWithField(ElementMatcher<? super FieldDescription> matcher) {
+            return replaceWith(new Substitution.ForFieldAccess.OfMatchedField(matcher));
+        }
 
         /**
          * <p>
@@ -362,24 +423,81 @@ public class MemberSubstitution implements AsmVisitorWrapper.ForDeclaredMethods.
             if (!methodDescription.isMethod()) {
                 throw new IllegalArgumentException("Cannot use " + methodDescription + " as a replacement");
             }
-            return new MemberSubstitution(methodGraphCompiler,
-                    typePoolResolver,
-                    strict,
-                    new Substitution.Compound(doReplaceWith(methodDescription), substitution));
+            return replaceWith(new Substitution.ForMethodInvocation.OfGivenMethod(methodDescription));
         }
 
         /**
-         * Creates a substitution for replacing the byte code elements matched by this instance with an invocation of the specified method.
+         * Replaces any interaction with a matched byte code element with a non-static method access on the first
+         * parameter of the matched element. When matching a non-static field access or method invocation, the
+         * substituted method is located on the same receiver type as the original access. For static access, the
+         * first argument is used as a receiver.
          *
-         * @param methodDescription The method to invoke.
-         * @return A suitable substitution.
+         * @param matcher A matcher for locating a method on the original interaction's receiver type.
+         * @return A member substitution that replaces any matched byte code element with an access of the matched method.
          */
-        protected abstract Substitution doReplaceWith(MethodDescription methodDescription);
+        public MemberSubstitution replaceWithMethod(ElementMatcher<? super MethodDescription> matcher) {
+            return replaceWithMethod(matcher, methodGraphCompiler);
+        }
+
+        /**
+         * Replaces any interaction with a matched byte code element with a non-static method access on the first
+         * parameter of the matched element. When matching a non-static field access or method invocation, the
+         * substituted method is located on the same receiver type as the original access. For static access, the
+         * first argument is used as a receiver.
+         *
+         * @param matcher             A matcher for locating a method on the original interaction's receiver type.
+         * @param methodGraphCompiler The method graph compiler to use for locating a method.
+         * @return A member substitution that replaces any matched byte code element with an access of the matched method.
+         */
+        public MemberSubstitution replaceWithMethod(ElementMatcher<? super MethodDescription> matcher, MethodGraph.Compiler methodGraphCompiler) {
+            return replaceWith(new Substitution.ForMethodInvocation.OfMatchedMethod(matcher, methodGraphCompiler));
+        }
+
+        /**
+         * Replaces any interaction with a matched byte code element with an invocation of the instrumented
+         * method. This can cause an infinite recursive call if the arguments to the method are not altered.
+         *
+         * @return A member substitution that replaces any matched byte code element with an invocation of the
+         * instrumented method.
+         */
+        public MemberSubstitution replaceWithInstrumentedMethod() {
+            return replaceWith(Substitution.ForMethodInvocation.OfInstrumentedMethod.INSTANCE);
+        }
+
+        /**
+         * Replaces the matched byte code elements with a chain of substitutions that can operate on the same values as the substituted element. This is a
+         * shortcut for creating a substitution chain with a default assigner.
+         *
+         * @param step The steps to apply for a substitution.
+         * @return A member substitution that replaces any matched byte code element with the provided substitution chain.
+         */
+        public MemberSubstitution replaceWithChain(Substitution.Chain.Step.Factory... step) {
+            return replaceWithChain(Arrays.asList(step));
+        }
+
+        /**
+         * Replaces the matched byte code elements with a chain of substitutions that can operate on the same values as the substituted element. This is a
+         * shortcut for creating a substitution chain with a default assigner.
+         *
+         * @param steps The steps to apply for a substitution.
+         * @return A member substitution that replaces any matched byte code element with the provided substitution chain.
+         */
+        public MemberSubstitution replaceWithChain(List<? extends Substitution.Chain.Step.Factory> steps) {
+            return replaceWith(Substitution.Chain.withDefaultAssigner().executing(steps));
+        }
+
+        /**
+         * Replaces any interaction with the supplied substitution.
+         *
+         * @param factory The substitution factory to use for creating the applied substitution.
+         * @return A member substitution that replaces any matched byte code element with the supplied substitution.
+         */
+        public abstract MemberSubstitution replaceWith(Substitution.Factory factory);
 
         /**
          * Describes a member substitution that requires a specification for how to replace a byte code element.
          */
-        @EqualsAndHashCode(callSuper = true)
+        @HashCodeAndEqualsPlugin.Enhance
         protected static class ForMatchedByteCodeElement extends WithoutSpecification {
 
             /**
@@ -393,38 +511,35 @@ public class MemberSubstitution implements AsmVisitorWrapper.ForDeclaredMethods.
              * @param methodGraphCompiler The method graph compiler to use.
              * @param typePoolResolver    The type pool resolver to use.
              * @param strict              {@code true} if the method processing should be strict where an exception is raised if a member cannot be found.
-             * @param substitution        The substitution to apply.
+             * @param replacementFactory  The replacement factory to use.
              * @param matcher             A matcher for any byte code elements that should be substituted.
              */
             protected ForMatchedByteCodeElement(MethodGraph.Compiler methodGraphCompiler,
                                                 TypePoolResolver typePoolResolver,
                                                 boolean strict,
-                                                Substitution substitution,
+                                                Replacement.Factory replacementFactory,
                                                 ElementMatcher<? super ByteCodeElement> matcher) {
-                super(methodGraphCompiler, typePoolResolver, strict, substitution);
+                super(methodGraphCompiler, typePoolResolver, strict, replacementFactory);
                 this.matcher = matcher;
             }
 
-            @Override
-            protected Substitution doStub() {
-                return Substitution.ForElementMatchers.of(matcher, Substitution.Resolver.Stubbing.INSTANCE);
-            }
-
-            @Override
-            protected Substitution doReplaceWith(FieldDescription fieldDescription) {
-                return Substitution.ForElementMatchers.of(matcher, new Substitution.Resolver.FieldAccessing(fieldDescription));
-            }
-
-            @Override
-            protected Substitution doReplaceWith(MethodDescription methodDescription) {
-                return Substitution.ForElementMatchers.of(matcher, new Substitution.Resolver.MethodInvoking(methodDescription));
+            /**
+             * {@inheritDoc}
+             */
+            public MemberSubstitution replaceWith(Substitution.Factory substitutionFactory) {
+                return new MemberSubstitution(methodGraphCompiler,
+                        typePoolResolver,
+                        strict,
+                        new Replacement.Factory.Compound(
+                                this.replacementFactory,
+                                Replacement.ForElementMatchers.Factory.of(matcher, substitutionFactory)));
             }
         }
 
         /**
          * Describes a member substitution that requires a specification for how to replace a field.
          */
-        @EqualsAndHashCode(callSuper = true)
+        @HashCodeAndEqualsPlugin.Enhance
         public static class ForMatchedField extends WithoutSpecification {
 
             /**
@@ -448,15 +563,15 @@ public class MemberSubstitution implements AsmVisitorWrapper.ForDeclaredMethods.
              * @param methodGraphCompiler The method graph compiler to use.
              * @param typePoolResolver    The type pool resolver to use.
              * @param strict              {@code true} if the method processing should be strict where an exception is raised if a member cannot be found.
-             * @param substitution        The substitution to apply.
+             * @param replacementFactory  The replacement factory to use.
              * @param matcher             A matcher for any field that should be substituted.
              */
             protected ForMatchedField(MethodGraph.Compiler methodGraphCompiler,
                                       TypePoolResolver typePoolResolver,
                                       boolean strict,
-                                      Substitution substitution,
+                                      Replacement.Factory replacementFactory,
                                       ElementMatcher<? super FieldDescription.InDefinedShape> matcher) {
-                this(methodGraphCompiler, typePoolResolver, strict, substitution, matcher, true, true);
+                this(methodGraphCompiler, typePoolResolver, strict, replacementFactory, matcher, true, true);
             }
 
             /**
@@ -465,7 +580,7 @@ public class MemberSubstitution implements AsmVisitorWrapper.ForDeclaredMethods.
              * @param methodGraphCompiler The method graph compiler to use.
              * @param typePoolResolver    The type pool resolver to use.
              * @param strict              {@code true} if the method processing should be strict where an exception is raised if a member cannot be found.
-             * @param substitution        The substitution to apply.
+             * @param replacementFactory  The replacement factory to use.
              * @param matcher             A matcher for any field that should be substituted.
              * @param matchRead           {@code true} if read access to a field should be substituted.
              * @param matchWrite          {@code true} if write access to a field should be substituted.
@@ -473,11 +588,11 @@ public class MemberSubstitution implements AsmVisitorWrapper.ForDeclaredMethods.
             protected ForMatchedField(MethodGraph.Compiler methodGraphCompiler,
                                       TypePoolResolver typePoolResolver,
                                       boolean strict,
-                                      Substitution substitution,
+                                      Replacement.Factory replacementFactory,
                                       ElementMatcher<? super FieldDescription.InDefinedShape> matcher,
                                       boolean matchRead,
                                       boolean matchWrite) {
-                super(methodGraphCompiler, typePoolResolver, strict, substitution);
+                super(methodGraphCompiler, typePoolResolver, strict, replacementFactory);
                 this.matcher = matcher;
                 this.matchRead = matchRead;
                 this.matchWrite = matchWrite;
@@ -489,7 +604,7 @@ public class MemberSubstitution implements AsmVisitorWrapper.ForDeclaredMethods.
              * @return This instance with the limitation that only read access to the matched field is substituted.
              */
             public WithoutSpecification onRead() {
-                return new ForMatchedField(methodGraphCompiler, typePoolResolver, strict, substitution, matcher, true, false);
+                return new ForMatchedField(methodGraphCompiler, typePoolResolver, strict, replacementFactory, matcher, true, false);
             }
 
             /**
@@ -498,29 +613,26 @@ public class MemberSubstitution implements AsmVisitorWrapper.ForDeclaredMethods.
              * @return This instance with the limitation that only write access to the matched field is substituted.
              */
             public WithoutSpecification onWrite() {
-                return new ForMatchedField(methodGraphCompiler, typePoolResolver, strict, substitution, matcher, false, true);
+                return new ForMatchedField(methodGraphCompiler, typePoolResolver, strict, replacementFactory, matcher, false, true);
             }
 
-            @Override
-            protected Substitution doStub() {
-                return Substitution.ForElementMatchers.ofField(matcher, matchRead, matchWrite, Substitution.Resolver.Stubbing.INSTANCE);
-            }
-
-            @Override
-            protected Substitution doReplaceWith(FieldDescription fieldDescription) {
-                return Substitution.ForElementMatchers.ofField(matcher, matchRead, matchWrite, new Substitution.Resolver.FieldAccessing(fieldDescription));
-            }
-
-            @Override
-            protected Substitution doReplaceWith(MethodDescription methodDescription) {
-                return Substitution.ForElementMatchers.ofField(matcher, matchRead, matchWrite, new Substitution.Resolver.MethodInvoking(methodDescription));
+            /**
+             * {@inheritDoc}
+             */
+            public MemberSubstitution replaceWith(Substitution.Factory substitutionFactory) {
+                return new MemberSubstitution(methodGraphCompiler,
+                        typePoolResolver,
+                        strict,
+                        new Replacement.Factory.Compound(
+                                this.replacementFactory,
+                                Replacement.ForElementMatchers.Factory.ofField(matcher, matchRead, matchWrite, substitutionFactory)));
             }
         }
 
         /**
          * Describes a member substitution that requires a specification for how to replace a method or constructor.
          */
-        @EqualsAndHashCode(callSuper = true)
+        @HashCodeAndEqualsPlugin.Enhance
         public static class ForMatchedMethod extends WithoutSpecification {
 
             /**
@@ -544,15 +656,15 @@ public class MemberSubstitution implements AsmVisitorWrapper.ForDeclaredMethods.
              * @param methodGraphCompiler The method graph compiler to use.
              * @param typePoolResolver    The type pool resolver to use.
              * @param strict              {@code true} if the method processing should be strict where an exception is raised if a member cannot be found.
-             * @param substitution        The substitution to apply.
+             * @param replacementFactory  The replacement factory to use.
              * @param matcher             A matcher for any method or constructor that should be substituted.
              */
             protected ForMatchedMethod(MethodGraph.Compiler methodGraphCompiler,
                                        TypePoolResolver typePoolResolver,
                                        boolean strict,
-                                       Substitution substitution,
+                                       Replacement.Factory replacementFactory,
                                        ElementMatcher<? super MethodDescription> matcher) {
-                this(methodGraphCompiler, typePoolResolver, strict, substitution, matcher, true, true);
+                this(methodGraphCompiler, typePoolResolver, strict, replacementFactory, matcher, true, true);
             }
 
             /**
@@ -561,7 +673,7 @@ public class MemberSubstitution implements AsmVisitorWrapper.ForDeclaredMethods.
              * @param methodGraphCompiler The method graph compiler to use.
              * @param typePoolResolver    The type pool resolver to use.
              * @param strict              {@code true} if the method processing should be strict where an exception is raised if a member cannot be found.
-             * @param substitution        The substitution to apply.
+             * @param replacementFactory  The replacement factory to use.
              * @param matcher             A matcher for any method or constructor that should be substituted.
              * @param includeVirtualCalls {@code true} if this specification includes virtual invocations.
              * @param includeSuperCalls   {@code true} if this specification includes {@code super} invocations.
@@ -569,11 +681,11 @@ public class MemberSubstitution implements AsmVisitorWrapper.ForDeclaredMethods.
             protected ForMatchedMethod(MethodGraph.Compiler methodGraphCompiler,
                                        TypePoolResolver typePoolResolver,
                                        boolean strict,
-                                       Substitution substitution,
+                                       Replacement.Factory replacementFactory,
                                        ElementMatcher<? super MethodDescription> matcher,
                                        boolean includeVirtualCalls,
                                        boolean includeSuperCalls) {
-                super(methodGraphCompiler, typePoolResolver, strict, substitution);
+                super(methodGraphCompiler, typePoolResolver, strict, replacementFactory);
                 this.matcher = matcher;
                 this.includeVirtualCalls = includeVirtualCalls;
                 this.includeSuperCalls = includeSuperCalls;
@@ -585,7 +697,7 @@ public class MemberSubstitution implements AsmVisitorWrapper.ForDeclaredMethods.
              * @return This specification where only virtual methods are matched if they are not invoked as a virtual call.
              */
             public WithoutSpecification onVirtualCall() {
-                return new ForMatchedMethod(methodGraphCompiler, typePoolResolver, strict, substitution, isVirtual().and(matcher), true, false);
+                return new ForMatchedMethod(methodGraphCompiler, typePoolResolver, strict, replacementFactory, isVirtual().and(matcher), true, false);
             }
 
             /**
@@ -594,28 +706,19 @@ public class MemberSubstitution implements AsmVisitorWrapper.ForDeclaredMethods.
              * @return This specification where only virtual methods are matched if they are not invoked as a super call.
              */
             public WithoutSpecification onSuperCall() {
-                return new ForMatchedMethod(methodGraphCompiler, typePoolResolver, strict, substitution, isVirtual().and(matcher), false, true);
+                return new ForMatchedMethod(methodGraphCompiler, typePoolResolver, strict, replacementFactory, isVirtual().and(matcher), false, true);
             }
 
-            @Override
-            protected Substitution doStub() {
-                return Substitution.ForElementMatchers.ofMethod(matcher, includeVirtualCalls, includeSuperCalls, Substitution.Resolver.Stubbing.INSTANCE);
-            }
-
-            @Override
-            protected Substitution doReplaceWith(FieldDescription fieldDescription) {
-                return Substitution.ForElementMatchers.ofMethod(matcher,
-                        includeVirtualCalls,
-                        includeSuperCalls,
-                        new Substitution.Resolver.FieldAccessing(fieldDescription));
-            }
-
-            @Override
-            protected Substitution doReplaceWith(MethodDescription methodDescription) {
-                return Substitution.ForElementMatchers.ofMethod(matcher,
-                        includeVirtualCalls,
-                        includeSuperCalls,
-                        new Substitution.Resolver.MethodInvoking(methodDescription));
+            /**
+             * {@inheritDoc}
+             */
+            public MemberSubstitution replaceWith(Substitution.Factory substitutionFactory) {
+                return new MemberSubstitution(methodGraphCompiler,
+                        typePoolResolver,
+                        strict,
+                        new Replacement.Factory.Compound(
+                                this.replacementFactory,
+                                Replacement.ForElementMatchers.Factory.ofMethod(matcher, includeVirtualCalls, includeSuperCalls, substitutionFactory)));
             }
         }
     }
@@ -645,7 +748,9 @@ public class MemberSubstitution implements AsmVisitorWrapper.ForDeclaredMethods.
              */
             INSTANCE;
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public TypePool resolve(TypeDescription instrumentedType, MethodDescription instrumentedMethod, TypePool typePool) {
                 return typePool;
             }
@@ -654,7 +759,7 @@ public class MemberSubstitution implements AsmVisitorWrapper.ForDeclaredMethods.
         /**
          * A type pool resolver that returns a specific type pool.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class ForExplicitPool implements TypePoolResolver {
 
             /**
@@ -671,7 +776,9 @@ public class MemberSubstitution implements AsmVisitorWrapper.ForDeclaredMethods.
                 this.typePool = typePool;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public TypePool resolve(TypeDescription instrumentedType, MethodDescription instrumentedMethod, TypePool typePool) {
                 return this.typePool;
             }
@@ -680,7 +787,7 @@ public class MemberSubstitution implements AsmVisitorWrapper.ForDeclaredMethods.
         /**
          * A type pool resolver that resolves the implicit pool but additionally checks another class file locator.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class ForClassFileLocator implements TypePoolResolver {
 
             /**
@@ -719,11 +826,13 @@ public class MemberSubstitution implements AsmVisitorWrapper.ForDeclaredMethods.
              * @param classLoader The class loader to use as a supplement which can be {@code null} to represent the bootstrap loader.
              * @return An appropriate type pool resolver.
              */
-            public static TypePoolResolver of(ClassLoader classLoader) {
+            public static TypePoolResolver of(@MaybeNull ClassLoader classLoader) {
                 return new ForClassFileLocator(ClassFileLocator.ForClassLoader.of(classLoader));
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public TypePool resolve(TypeDescription instrumentedType, MethodDescription instrumentedMethod, TypePool typePool) {
                 return new TypePool.Default(new TypePool.CacheProvider.Simple(), classFileLocator, readerMode, typePool);
             }
@@ -731,244 +840,1786 @@ public class MemberSubstitution implements AsmVisitorWrapper.ForDeclaredMethods.
     }
 
     /**
-     * Resolves an actual substitution.
+     * A substitution replaces or enhances an interaction with a field or method within an instrumented method.
      */
-    protected interface Substitution {
+    public interface Substitution {
 
         /**
-         * Resolves a field access within a method body.
+         * Resolves this substitution into a stack manipulation.
          *
-         * @param fieldDescription The field being accessed.
-         * @param writeAccess      {@code true} if the access is for writing to the field, {@code false} if the field is read.
-         * @return A resolver for the supplied field access.
+         * @param targetType The target type on which a member is accessed.
+         * @param target     The target field, method or constructor that is substituted.
+         * @param parameters All parameters that serve as input to this access.
+         * @param result     The result that is expected from the interaction or {@code void} if no result is expected.
+         * @param freeOffset The first free offset of the local variable array that can be used for storing values.
+         * @return A stack manipulation that represents the access.
          */
-        Resolver resolve(FieldDescription.InDefinedShape fieldDescription, boolean writeAccess);
+        StackManipulation resolve(TypeDescription targetType,
+                                  ByteCodeElement target,
+                                  TypeList.Generic parameters,
+                                  TypeDescription.Generic result,
+                                  int freeOffset);
 
         /**
-         * Resolves a method invocation within a method body.
-         *
-         * @param methodDescription The method being invoked.
-         * @param invocationType    The method's invocation type.
-         * @return A resolver for the supplied method invocation.
+         * A factory for creating a substitution for an instrumented method.
          */
-        Resolver resolve(MethodDescription methodDescription, InvocationType invocationType);
-
-        /**
-         * A resolver supplies an implementation for a substitution.
-         */
-        interface Resolver {
+        interface Factory {
 
             /**
-             * Checks if this resolver was actually resolved, i.e. if a member should be substituted at all.
+             * Creates a substitution for an instrumented method.
              *
-             * @return {@code true} if a found member should be substituted.
+             * @param instrumentedType   The instrumented type.
+             * @param instrumentedMethod The instrumented method.
+             * @param typePool           The type pool being used.
+             * @return The substitution to apply within the instrumented method.
              */
-            boolean isResolved();
+            Substitution make(TypeDescription instrumentedType, MethodDescription instrumentedMethod, TypePool typePool);
+        }
+
+        /**
+         * A substitution that drops any field or method access and returns the expected return type's default value, i.e {@code null} or zero for primitive types.
+         */
+        enum Stubbing implements Substitution, Factory {
 
             /**
-             * Applies this resolver. This is only legal for resolved resolvers.
+             * The singleton instance.
+             */
+            INSTANCE;
+
+            /**
+             * {@inheritDoc}
+             */
+            public Substitution make(TypeDescription instrumentedType, MethodDescription instrumentedMethod, TypePool typePool) {
+                return this;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public StackManipulation resolve(TypeDescription targetType,
+                                             ByteCodeElement target,
+                                             TypeList.Generic parameters,
+                                             TypeDescription.Generic result,
+                                             int freeOffset) {
+                List<StackManipulation> stackManipulations = new ArrayList<StackManipulation>(parameters.size());
+                for (int index = parameters.size() - 1; index >= 0; index--) {
+                    stackManipulations.add(Removal.of(parameters.get(index)));
+                }
+                return new StackManipulation.Compound(CompoundList.of(stackManipulations, DefaultValue.of(result.asErasure())));
+            }
+        }
+
+        /**
+         * A substitution that loads a fixed value.
+         */
+        @HashCodeAndEqualsPlugin.Enhance
+        class ForValue implements Substitution, Factory {
+
+            /**
+             * The stack manipulation to load the value that represents the substitution.
+             */
+            private final StackManipulation stackManipulation;
+
+            /**
+             * The type of the represented stack manipulation.
+             */
+            private final TypeDescription.Generic typeDescription;
+
+            /**
+             * Creates a new substitution for loading a constant value.
+             *
+             * @param stackManipulation The stack manipulation to load the value that represents the substitution.
+             * @param typeDescription   The type of the represented stack manipulation.
+             */
+            public ForValue(StackManipulation stackManipulation, TypeDescription.Generic typeDescription) {
+                this.stackManipulation = stackManipulation;
+                this.typeDescription = typeDescription;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public Substitution make(TypeDescription instrumentedType, MethodDescription instrumentedMethod, TypePool typePool) {
+                return this;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public StackManipulation resolve(TypeDescription targetType,
+                                             ByteCodeElement target,
+                                             TypeList.Generic parameters,
+                                             TypeDescription.Generic result,
+                                             int freeOffset) {
+                List<StackManipulation> stackManipulations = new ArrayList<StackManipulation>(parameters.size());
+                for (int index = parameters.size() - 1; index >= 0; index--) {
+                    stackManipulations.add(Removal.of(parameters.get(index)));
+                }
+                if (!typeDescription.asErasure().isAssignableTo(result.asErasure())) {
+                    throw new IllegalStateException("Cannot assign " + typeDescription + " to " + result);
+                }
+                return new StackManipulation.Compound(CompoundList.of(stackManipulations, stackManipulation));
+            }
+        }
+
+        /**
+         * A substitution with a field access.
+         */
+        @HashCodeAndEqualsPlugin.Enhance
+        class ForFieldAccess implements Substitution {
+
+            /**
+             * The instrumented type.
+             */
+            private final TypeDescription instrumentedType;
+
+            /**
+             * A resolver to locate the field to access.
+             */
+            private final FieldResolver fieldResolver;
+
+            /**
+             * Creates a new substitution with a field access.
              *
              * @param instrumentedType The instrumented type.
-             * @param target           The substituted byte code element.
-             * @param arguments        The factual arguments to the byte code element.
-             * @param result           The expected result type or {@code void} if no result is expected.
-             * @return A stack manipulation that applies the resolved byte code representing the substitution.
+             * @param fieldResolver    A resolver to locate the field to access.
              */
-            StackManipulation apply(TypeDescription instrumentedType,
-                                    ByteCodeElement target,
-                                    TypeList.Generic arguments,
-                                    TypeDescription.Generic result);
-
-            /**
-             * An unresolved resolver that does not apply a substitution.
-             */
-            enum Unresolved implements Resolver {
-
-                /**
-                 * The singleton instance.
-                 */
-                INSTANCE;
-
-                @Override
-                public boolean isResolved() {
-                    return false;
-                }
-
-                @Override
-                public StackManipulation apply(TypeDescription instrumentedType,
-                                               ByteCodeElement target,
-                                               TypeList.Generic arguments,
-                                               TypeDescription.Generic result) {
-                    throw new IllegalStateException("Cannot apply unresolved resolver");
-                }
+            public ForFieldAccess(TypeDescription instrumentedType, FieldResolver fieldResolver) {
+                this.instrumentedType = instrumentedType;
+                this.fieldResolver = fieldResolver;
             }
 
             /**
-             * A resolver that stubs any interaction with a byte code element.
+             * {@inheritDoc}
              */
-            enum Stubbing implements Resolver {
-
-                /**
-                 * The singleton instance.
-                 */
-                INSTANCE;
-
-                @Override
-                public boolean isResolved() {
-                    return true;
-                }
-
-                @Override
-                public StackManipulation apply(TypeDescription instrumentedType,
-                                               ByteCodeElement target,
-                                               TypeList.Generic arguments,
-                                               TypeDescription.Generic result) {
-                    List<StackManipulation> stackManipulations = new ArrayList<StackManipulation>(arguments.size());
-                    for (int index = arguments.size() - 1; index >= 0; index--) {
-                        stackManipulations.add(Removal.of(arguments.get(index)));
+            @SuppressFBWarnings(value = "NP_NULL_ON_SOME_PATH_FROM_RETURN_VALUE", justification = "Assuming declaring type for type member.")
+            public StackManipulation resolve(TypeDescription targetType,
+                                             ByteCodeElement target,
+                                             TypeList.Generic parameters,
+                                             TypeDescription.Generic result,
+                                             int freeOffset) {
+                FieldDescription fieldDescription = fieldResolver.resolve(targetType, target, parameters, result);
+                if (!fieldDescription.isAccessibleTo(instrumentedType)) {
+                    throw new IllegalStateException(instrumentedType + " cannot access " + fieldDescription);
+                } else if (result.represents(void.class)) {
+                    if (parameters.size() != (fieldDescription.isStatic() ? 1 : 2)) {
+                        throw new IllegalStateException("Cannot set " + fieldDescription + " with " + parameters);
+                    } else if (!fieldDescription.isStatic() && !parameters.get(0).asErasure().isAssignableTo(fieldDescription.getDeclaringType().asErasure())) {
+                        throw new IllegalStateException("Cannot set " + fieldDescription + " on " + parameters.get(0));
+                    } else if (!parameters.get(fieldDescription.isStatic() ? 0 : 1).asErasure().isAssignableTo(fieldDescription.getType().asErasure())) {
+                        throw new IllegalStateException("Cannot set " + fieldDescription + " to " + parameters.get(fieldDescription.isStatic() ? 0 : 1));
                     }
-                    return new StackManipulation.Compound(CompoundList.of(stackManipulations, DefaultValue.of(result.asErasure())));
+                    return FieldAccess.forField(fieldDescription).write();
+                } else {
+                    if (parameters.size() != (fieldDescription.isStatic() ? 0 : 1)) {
+                        throw new IllegalStateException("Cannot set " + fieldDescription + " with " + parameters);
+                    } else if (!fieldDescription.isStatic() && !parameters.get(0).asErasure().isAssignableTo(fieldDescription.getDeclaringType().asErasure())) {
+                        throw new IllegalStateException("Cannot get " + fieldDescription + " on " + parameters.get(0));
+                    } else if (!fieldDescription.getType().asErasure().isAssignableTo(result.asErasure())) {
+                        throw new IllegalStateException("Cannot get " + fieldDescription + " as " + result);
+                    }
+                    return FieldAccess.forField(fieldDescription).read();
                 }
             }
 
             /**
-             * A resolver that replaces an interaction with a byte code element with a field access.
+             * A method resolver for locating a field for a substitute.
              */
-            @EqualsAndHashCode
-            class FieldAccessing implements Resolver {
+            public interface FieldResolver {
 
                 /**
-                 * The field that is used for substitution.
+                 * Resolves the field to substitute with.
+                 *
+                 * @param targetType The target type on which a member is accessed.
+                 * @param target     The target field, method or constructor that is substituted,
+                 * @param parameters All parameters that serve as input to this access.
+                 * @param result     The result that is expected from the interaction or {@code void} if no result is expected.
+                 * @return The field to substitute with.
+                 */
+                FieldDescription resolve(TypeDescription targetType, ByteCodeElement target, TypeList.Generic parameters, TypeDescription.Generic result);
+
+                /**
+                 * A simple field resolver that returns a specific field.
+                 */
+                @HashCodeAndEqualsPlugin.Enhance
+                class Simple implements FieldResolver {
+
+                    /**
+                     * The field to access.
+                     */
+                    private final FieldDescription fieldDescription;
+
+                    /**
+                     * Creates a simple field resolver.
+                     *
+                     * @param fieldDescription The field to access.
+                     */
+                    public Simple(FieldDescription fieldDescription) {
+                        this.fieldDescription = fieldDescription;
+                    }
+
+                    /**
+                     * {@inheritDoc}
+                     */
+                    public FieldDescription resolve(TypeDescription targetType, ByteCodeElement target, TypeList.Generic parameters, TypeDescription.Generic result) {
+                        return fieldDescription;
+                    }
+                }
+
+                /**
+                 * A field matcher that resolves a non-static field on the first parameter type of the substituted member usage.
+                 */
+                @HashCodeAndEqualsPlugin.Enhance
+                class ForElementMatcher implements FieldResolver {
+
+                    /**
+                     * The instrumented type.
+                     */
+                    private final TypeDescription instrumentedType;
+
+                    /**
+                     * The matcher to use for locating the field to substitute with.
+                     */
+                    private final ElementMatcher<? super FieldDescription> matcher;
+
+                    /**
+                     * Creates a new field resolver that locates a field on the receiver type using a matcher.
+                     *
+                     * @param instrumentedType The instrumented type.
+                     * @param matcher          The matcher to use for locating the field to substitute with.
+                     */
+                    protected ForElementMatcher(TypeDescription instrumentedType, ElementMatcher<? super FieldDescription> matcher) {
+                        this.instrumentedType = instrumentedType;
+                        this.matcher = matcher;
+                    }
+
+                    /**
+                     * {@inheritDoc}
+                     */
+                    public FieldDescription resolve(TypeDescription targetType, ByteCodeElement target, TypeList.Generic parameters, TypeDescription.Generic result) {
+                        if (parameters.isEmpty()) {
+                            throw new IllegalStateException("Cannot substitute parameterless instruction with " + target);
+                        } else if (parameters.get(0).isPrimitive() || parameters.get(0).isArray()) {
+                            throw new IllegalStateException("Cannot access field on primitive or array type for " + target);
+                        }
+                        TypeDefinition current = parameters.get(0).accept(new TypeDescription.Generic.Visitor.Substitutor.ForReplacement(instrumentedType));
+                        do {
+                            FieldList<?> fields = current.getDeclaredFields().filter(not(isStatic()).<FieldDescription>and(isVisibleTo(instrumentedType)).and(matcher));
+                            if (fields.size() == 1) {
+                                return fields.getOnly();
+                            } else if (fields.size() > 1) {
+                                throw new IllegalStateException("Ambiguous field location of " + fields);
+                            }
+                            current = current.getSuperClass();
+                        } while (current != null);
+                        throw new IllegalStateException("Cannot locate field matching " + matcher + " on " + targetType);
+                    }
+                }
+            }
+
+            /**
+             * A factory for a substitution that substitutes with a given field.
+             */
+            @HashCodeAndEqualsPlugin.Enhance
+            public static class OfGivenField implements Factory {
+
+                /**
+                 * The field to substitute with.
                  */
                 private final FieldDescription fieldDescription;
 
                 /**
-                 * Creates a resolver for a field access.
+                 * Creates a new factory that substitues with a given field.
                  *
-                 * @param fieldDescription The field that is used for substitution.
+                 * @param fieldDescription The field to substitute with.
                  */
-                protected FieldAccessing(FieldDescription fieldDescription) {
+                public OfGivenField(FieldDescription fieldDescription) {
                     this.fieldDescription = fieldDescription;
                 }
 
-                @Override
-                public boolean isResolved() {
-                    return true;
-                }
-
-                @Override
-                public StackManipulation apply(TypeDescription instrumentedType,
-                                               ByteCodeElement target,
-                                               TypeList.Generic arguments,
-                                               TypeDescription.Generic result) {
-                    if (!fieldDescription.isAccessibleTo(instrumentedType)) {
-                        throw new IllegalStateException(instrumentedType + " cannot access " + fieldDescription);
-                    } else if (result.represents(void.class)) {
-                        if (arguments.size() != (fieldDescription.isStatic() ? 1 : 2)) {
-                            throw new IllegalStateException("Cannot set " + fieldDescription + " with " + arguments);
-                        } else if (!fieldDescription.isStatic() && !arguments.get(0).asErasure().isAssignableTo(fieldDescription.getDeclaringType().asErasure())) {
-                            throw new IllegalStateException("Cannot set " + fieldDescription + " on " + arguments.get(0));
-                        } else if (!arguments.get(fieldDescription.isStatic() ? 0 : 1).asErasure().isAssignableTo(fieldDescription.getType().asErasure())) {
-                            throw new IllegalStateException("Cannot set " + fieldDescription + " to " + arguments.get(fieldDescription.isStatic() ? 0 : 1));
-                        }
-                        return FieldAccess.forField(fieldDescription).write();
-                    } else {
-                        if (arguments.size() != (fieldDescription.isStatic() ? 0 : 1)) {
-                            throw new IllegalStateException("Cannot set " + fieldDescription + " with " + arguments);
-                        } else if (!fieldDescription.isStatic() && !arguments.get(0).asErasure().isAssignableTo(fieldDescription.getDeclaringType().asErasure())) {
-                            throw new IllegalStateException("Cannot get " + fieldDescription + " on " + arguments.get(0));
-                        } else if (!fieldDescription.getType().asErasure().isAssignableTo(result.asErasure())) {
-                            throw new IllegalStateException("Cannot get " + fieldDescription + " as " + result);
-                        }
-                        return FieldAccess.forField(fieldDescription).read();
-                    }
+                /**
+                 * {@inheritDoc}
+                 */
+                public Substitution make(TypeDescription instrumentedType, MethodDescription instrumentedMethod, TypePool typePool) {
+                    return new ForFieldAccess(instrumentedType, new FieldResolver.Simple(fieldDescription));
                 }
             }
 
             /**
-             * A resolver that invokes a method.
+             * A factory for a substitution that locates a field on the receiver type using a matcher.
              */
-            @EqualsAndHashCode
-            class MethodInvoking implements Resolver {
+            @HashCodeAndEqualsPlugin.Enhance
+            public static class OfMatchedField implements Factory {
 
                 /**
-                 * Indicates the argument index of the {@code this} reference for a virtual method call.
+                 * The matcher to apply.
                  */
-                private static final int THIS_REFERENCE = 0;
+                private final ElementMatcher<? super FieldDescription> matcher;
 
                 /**
-                 * The method that is used for substitution.
-                 */
-                private final MethodDescription methodDescription;
-
-                /**
-                 * Creates a resolver for a method invocation.
+                 * Creates a new substitution factory that locates a field by applying a matcher on the receiver type.
                  *
-                 * @param methodDescription The method that is used for substitution.
+                 * @param matcher The matcher to apply.
                  */
-                protected MethodInvoking(MethodDescription methodDescription) {
-                    this.methodDescription = methodDescription;
+                public OfMatchedField(ElementMatcher<? super FieldDescription> matcher) {
+                    this.matcher = matcher;
                 }
 
-                @Override
-                public boolean isResolved() {
-                    return true;
-                }
-
-                @Override
-                public StackManipulation apply(TypeDescription instrumentedType,
-                                               ByteCodeElement target,
-                                               TypeList.Generic arguments,
-                                               TypeDescription.Generic result) {
-                    if (!methodDescription.isAccessibleTo(instrumentedType)) {
-                        throw new IllegalStateException(instrumentedType + " cannot access " + methodDescription);
-                    }
-                    TypeList.Generic mapped = methodDescription.isStatic()
-                            ? methodDescription.getParameters().asTypeList()
-                            : new TypeList.Generic.Explicit(CompoundList.of(methodDescription.getDeclaringType(), methodDescription.getParameters().asTypeList()));
-                    if (!methodDescription.getReturnType().asErasure().isAssignableTo(result.asErasure())) {
-                        throw new IllegalStateException("Cannot assign return value of " + methodDescription + " to " + result);
-                    } else if (mapped.size() != arguments.size()) {
-                        throw new IllegalStateException("Cannot invoke " + methodDescription + " on " + arguments);
-                    }
-                    for (int index = 0; index < mapped.size(); index++) {
-                        if (!mapped.get(index).asErasure().isAssignableTo(arguments.get(index).asErasure())) {
-                            throw new IllegalStateException("Cannot invoke " + methodDescription + " on " + arguments);
-                        }
-                    }
-                    return methodDescription.isVirtual()
-                            ? MethodInvocation.invoke(methodDescription).virtual(mapped.get(THIS_REFERENCE).asErasure())
-                            : MethodInvocation.invoke(methodDescription);
+                /**
+                 * {@inheritDoc}
+                 */
+                public Substitution make(TypeDescription instrumentedType, MethodDescription instrumentedMethod, TypePool typePool) {
+                    return new ForFieldAccess(instrumentedType, new FieldResolver.ForElementMatcher(instrumentedType, matcher));
                 }
             }
         }
 
         /**
-         * Determines a method's invocation type.
+         * A substitution with a method invocation.
+         */
+        @HashCodeAndEqualsPlugin.Enhance
+        class ForMethodInvocation implements Substitution {
+
+            /**
+             * The index of the this reference within a non-static method.
+             */
+            private static final int THIS_REFERENCE = 0;
+
+            /**
+             * The instrumented type.
+             */
+            private final TypeDescription instrumentedType;
+
+            /**
+             * The method resolver to use.
+             */
+            private final MethodResolver methodResolver;
+
+            /**
+             * Creates a new method-resolving substitution.
+             *
+             * @param instrumentedType The instrumented type.
+             * @param methodResolver   The method resolver to use.
+             */
+            public ForMethodInvocation(TypeDescription instrumentedType, MethodResolver methodResolver) {
+                this.instrumentedType = instrumentedType;
+                this.methodResolver = methodResolver;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public StackManipulation resolve(TypeDescription targetType,
+                                             ByteCodeElement target,
+                                             TypeList.Generic parameters,
+                                             TypeDescription.Generic result,
+                                             int freeOffset) {
+                MethodDescription methodDescription = methodResolver.resolve(targetType, target, parameters, result);
+                if (!methodDescription.isAccessibleTo(instrumentedType)) {
+                    throw new IllegalStateException(instrumentedType + " cannot access " + methodDescription);
+                }
+                TypeList.Generic mapped = methodDescription.isStatic()
+                        ? methodDescription.getParameters().asTypeList()
+                        : new TypeList.Generic.Explicit(CompoundList.of(methodDescription.getDeclaringType(), methodDescription.getParameters().asTypeList()));
+                if (!methodDescription.getReturnType().asErasure().isAssignableTo(result.asErasure())) {
+                    throw new IllegalStateException("Cannot assign return value of " + methodDescription + " to " + result);
+                } else if (mapped.size() != parameters.size()) {
+                    throw new IllegalStateException("Cannot invoke " + methodDescription + " on " + parameters.size() + " parameters");
+                }
+                for (int index = 0; index < mapped.size(); index++) {
+                    if (!parameters.get(index).asErasure().isAssignableTo(mapped.get(index).asErasure())) {
+                        throw new IllegalStateException("Cannot invoke " + methodDescription + " on parameter " + index + " of type " + parameters.get(index));
+                    }
+                }
+                return methodDescription.isVirtual()
+                        ? MethodInvocation.invoke(methodDescription).virtual(mapped.get(THIS_REFERENCE).asErasure())
+                        : MethodInvocation.invoke(methodDescription);
+            }
+
+            /**
+             * A method resolver for locating a method for a substitute.
+             */
+            public interface MethodResolver {
+
+                /**
+                 * Resolves the method to substitute with.
+                 *
+                 * @param targetType The target type on which a member is accessed.
+                 * @param target     The target field, method or constructor that is substituted,
+                 * @param parameters All parameters that serve as input to this access.
+                 * @param result     The result that is expected from the interaction or {@code void} if no result is expected.
+                 * @return The field to substitute with.
+                 */
+                MethodDescription resolve(TypeDescription targetType, ByteCodeElement target, TypeList.Generic parameters, TypeDescription.Generic result);
+
+                /**
+                 * A simple method resolver that returns a given method.
+                 */
+                @HashCodeAndEqualsPlugin.Enhance
+                class Simple implements MethodResolver {
+
+                    /**
+                     * The method to substitute with.
+                     */
+                    private final MethodDescription methodDescription;
+
+                    /**
+                     * Creates a new simple method resolver.
+                     *
+                     * @param methodDescription The method to substitute with.
+                     */
+                    public Simple(MethodDescription methodDescription) {
+                        this.methodDescription = methodDescription;
+                    }
+
+                    /**
+                     * {@inheritDoc}
+                     */
+                    public MethodDescription resolve(TypeDescription targetType, ByteCodeElement target, TypeList.Generic parameters, TypeDescription.Generic result) {
+                        return methodDescription;
+                    }
+                }
+
+                /**
+                 * A method resolver that locates a non-static method by locating it from the receiver type.
+                 */
+                @HashCodeAndEqualsPlugin.Enhance
+                class Matching implements MethodResolver {
+
+                    /**
+                     * The instrumented type.
+                     */
+                    private final TypeDescription instrumentedType;
+
+                    /**
+                     * The method graph compiler to use.
+                     */
+                    private final MethodGraph.Compiler methodGraphCompiler;
+
+                    /**
+                     * The matcher to use for locating the method to substitute with.
+                     */
+                    private final ElementMatcher<? super MethodDescription> matcher;
+
+                    /**
+                     * Creates a new matching method resolver.
+                     *
+                     * @param instrumentedType    The instrumented type.
+                     * @param methodGraphCompiler The method graph compiler to use.
+                     * @param matcher             The matcher to use for locating the method to substitute with.
+                     */
+                    public Matching(TypeDescription instrumentedType, MethodGraph.Compiler methodGraphCompiler, ElementMatcher<? super MethodDescription> matcher) {
+                        this.instrumentedType = instrumentedType;
+                        this.methodGraphCompiler = methodGraphCompiler;
+                        this.matcher = matcher;
+                    }
+
+                    /**
+                     * {@inheritDoc}
+                     */
+                    public MethodDescription resolve(TypeDescription targetType, ByteCodeElement target, TypeList.Generic parameters, TypeDescription.Generic result) {
+                        if (parameters.isEmpty()) {
+                            throw new IllegalStateException("Cannot substitute parameterless instruction with " + target);
+                        } else if (parameters.get(0).isPrimitive() || parameters.get(0).isArray()) {
+                            throw new IllegalStateException("Cannot invoke method on primitive or array type for " + target);
+                        }
+                        TypeDefinition typeDefinition = parameters.get(0).accept(new TypeDescription.Generic.Visitor.Substitutor.ForReplacement(instrumentedType));
+                        List<MethodDescription> candidates = CompoundList.<MethodDescription>of(methodGraphCompiler.compile(typeDefinition, instrumentedType)
+                                .listNodes()
+                                .asMethodList()
+                                .filter(matcher), typeDefinition.getDeclaredMethods().filter(isPrivate().<MethodDescription>and(isVisibleTo(instrumentedType)).and(matcher)));
+                        if (candidates.size() == 1) {
+                            return candidates.get(0);
+                        } else {
+                            throw new IllegalStateException("Not exactly one method that matches " + matcher + ": " + candidates);
+                        }
+                    }
+                }
+            }
+
+            /**
+             * A factory for a substitution that invokes the instrumented method.
+             */
+            enum OfInstrumentedMethod implements Factory {
+
+                /**
+                 * The singleton instance.
+                 */
+                INSTANCE;
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public Substitution make(TypeDescription instrumentedType, MethodDescription instrumentedMethod, TypePool typePool) {
+                    return new ForMethodInvocation(instrumentedType, new MethodResolver.Simple(instrumentedMethod));
+                }
+            }
+
+            /**
+             * A factory for a substitution that invokes a given method.
+             */
+            @HashCodeAndEqualsPlugin.Enhance
+            public static class OfGivenMethod implements Factory {
+
+                /**
+                 * The method to invoke.
+                 */
+                private final MethodDescription methodDescription;
+
+                /**
+                 * Creates a new factory for a substitution that invokes a given method.
+                 *
+                 * @param methodDescription The method to invoke.
+                 */
+                public OfGivenMethod(MethodDescription methodDescription) {
+                    this.methodDescription = methodDescription;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public Substitution make(TypeDescription instrumentedType, MethodDescription instrumentedMethod, TypePool typePool) {
+                    return new ForMethodInvocation(instrumentedType, new MethodResolver.Simple(methodDescription));
+                }
+            }
+
+            /**
+             * A factory for a substitution that locates a method on the receiver type using a matcher.
+             */
+            @HashCodeAndEqualsPlugin.Enhance
+            public static class OfMatchedMethod implements Factory {
+
+                /**
+                 * The matcher for locating the method to substitute with.
+                 */
+                private final ElementMatcher<? super MethodDescription> matcher;
+
+                /**
+                 * The method graph compiler to use.
+                 */
+                private final MethodGraph.Compiler methodGraphCompiler;
+
+                /**
+                 * Creates a factory for a substitution that locates a method on the receiver type.
+                 *
+                 * @param matcher             The matcher for locating the method to substitute with.
+                 * @param methodGraphCompiler The method graph compiler to use.
+                 */
+                public OfMatchedMethod(ElementMatcher<? super MethodDescription> matcher, MethodGraph.Compiler methodGraphCompiler) {
+                    this.matcher = matcher;
+                    this.methodGraphCompiler = methodGraphCompiler;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public Substitution make(TypeDescription instrumentedType, MethodDescription instrumentedMethod, TypePool typePool) {
+                    return new ForMethodInvocation(instrumentedType, new MethodResolver.Matching(instrumentedType, methodGraphCompiler, matcher));
+                }
+            }
+        }
+
+        /**
+         * A substitution chain allows for chaining multiple substitution steps for a byte code element being replaced.
+         */
+        @HashCodeAndEqualsPlugin.Enhance
+        class Chain implements Substitution {
+
+            /**
+             * The assigner to use.
+             */
+            private final Assigner assigner;
+
+            /**
+             * The typing of the assignment to use.
+             */
+            private final Assigner.Typing typing;
+
+            /**
+             * The substitution steps to apply.
+             */
+            private final List<Step> steps;
+
+            /**
+             * Creates a new substitution chain.
+             *
+             * @param assigner The assigner to use.
+             * @param typing   The typing of the assignment to use.
+             * @param steps    The substitution steps to apply.
+             */
+            protected Chain(Assigner assigner, Assigner.Typing typing, List<Step> steps) {
+                this.assigner = assigner;
+                this.typing = typing;
+                this.steps = steps;
+            }
+
+            /**
+             * Creates a new substitution chain that uses a default assigner and static typing.
+             *
+             * @return A new substitution chain.
+             */
+            public static Chain.Factory withDefaultAssigner() {
+                return with(Assigner.DEFAULT, Assigner.Typing.STATIC);
+            }
+
+            /**
+             * Creates a new substitution chain.
+             *
+             * @param assigner The assigner to use.
+             * @param typing   The typing of the assignment to use.
+             * @return A new substitution chain.
+             */
+            public static Chain.Factory with(Assigner assigner, Assigner.Typing typing) {
+                return new Chain.Factory(assigner, typing, Collections.<Step.Factory>emptyList());
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public StackManipulation resolve(TypeDescription targetType,
+                                             ByteCodeElement target,
+                                             TypeList.Generic parameters,
+                                             TypeDescription.Generic result,
+                                             int freeOffset) {
+                List<StackManipulation> stackManipulations = new ArrayList<StackManipulation>(1
+                        + parameters.size()
+                        + steps.size() * 2
+                        + (result.represents(void.class) ? 0 : 2));
+                Map<Integer, Integer> offsets = new HashMap<Integer, Integer>();
+                for (int index = parameters.size() - 1; index >= 0; index--) {
+                    stackManipulations.add(MethodVariableAccess.of(parameters.get(index)).storeAt(freeOffset));
+                    offsets.put(index, freeOffset);
+                    freeOffset += parameters.get(index).getStackSize().getSize();
+                }
+                stackManipulations.add(DefaultValue.of(result));
+                TypeDescription.Generic current = result;
+                for (Step step : steps) {
+                    Step.Resolution resolution = step.resolve(targetType,
+                            target,
+                            parameters,
+                            current,
+                            offsets,
+                            freeOffset);
+                    stackManipulations.add(resolution.getStackManipulation());
+                    current = resolution.getResultType();
+                }
+                stackManipulations.add(assigner.assign(current, result, typing));
+                return new StackManipulation.Compound(stackManipulations);
+            }
+
+            /**
+             * Represents a step of a substitution chain.
+             */
+            public interface Step {
+
+                /**
+                 * Resolves this step of a substitution chain.
+                 *
+                 * @param targetType The target result type of the substitution.
+                 * @param target     The byte code element that is currently substituted.
+                 * @param parameters The parameters of the substituted element.
+                 * @param current    The current type of the applied substitution that is the top element on the operand stack.
+                 * @param offsets    The arguments of the substituted byte code element mapped to their local variable offsets.
+                 * @param freeOffset The first free offset in the local variable array.
+                 * @return A resolved substitution step for the supplied inputs.
+                 */
+                Resolution resolve(TypeDescription targetType,
+                                   ByteCodeElement target,
+                                   TypeList.Generic parameters,
+                                   TypeDescription.Generic current,
+                                   Map<Integer, Integer> offsets,
+                                   int freeOffset);
+
+                /**
+                 * A resolved substitution step.
+                 */
+                interface Resolution {
+
+                    /**
+                     * Returns the stack manipulation to apply the substitution.
+                     *
+                     * @return The stack manipulation to apply the substitution.
+                     */
+                    StackManipulation getStackManipulation();
+
+                    /**
+                     * Returns the resulting type of the substitution or {@code void} if no resulting value is applied.
+                     *
+                     * @return The resulting type of the substitution or {@code void} if no resulting value is applied.
+                     */
+                    TypeDescription.Generic getResultType();
+                }
+
+                /**
+                 * Resolves a substitution for an instrumented method.
+                 */
+                interface Factory {
+
+                    /**
+                     * Creates a substitution step for an instrumented method.
+                     *
+                     * @param assigner           The assigner to use.
+                     * @param typing             The typing to use.
+                     * @param instrumentedType   The instrumented type.
+                     * @param instrumentedMethod The instrumented method.
+                     * @return The substitution step to apply.
+                     */
+                    Step make(Assigner assigner,
+                              Assigner.Typing typing,
+                              TypeDescription instrumentedType,
+                              MethodDescription instrumentedMethod);
+                }
+
+                /**
+                 * A step that executes the original method invocation or field access.
+                 */
+                enum OfOriginalExpression implements Step, Factory {
+
+                    /**
+                     * The singleton instance.
+                     */
+                    INSTANCE;
+
+                    /**
+                     * {@inheritDoc}
+                     */
+                    public Resolution resolve(TypeDescription targetType,
+                                              ByteCodeElement target,
+                                              TypeList.Generic parameters,
+                                              TypeDescription.Generic current,
+                                              Map<Integer, Integer> offsets,
+                                              int freeOffset) {
+                        List<StackManipulation> stackManipulations = new ArrayList<StackManipulation>(parameters.size() + 2);
+                        stackManipulations.add(Removal.of(current));
+                        for (int index = 0; index < parameters.size(); index++) {
+                            stackManipulations.add(MethodVariableAccess.of(parameters.get(index)).loadFrom(offsets.get(index)));
+                        }
+                        if (target instanceof MethodDescription) {
+                            stackManipulations.add(MethodInvocation.invoke((MethodDescription) target));
+                            return new Simple(new StackManipulation.Compound(stackManipulations), ((MethodDescription) target).getReturnType());
+                        } else if (target instanceof FieldDescription) {
+                            if (((FieldDescription) target).isStatic()) {
+                                if (parameters.isEmpty()) {
+                                    stackManipulations.add(FieldAccess.forField((FieldDescription) target).read());
+                                    return new Simple(new StackManipulation.Compound(stackManipulations), ((FieldDescription) target).getType());
+                                } else /* if (parameters.size() == 1) */ {
+                                    stackManipulations.add(FieldAccess.forField((FieldDescription) target).write());
+                                    return new Simple(new StackManipulation.Compound(stackManipulations), TypeDefinition.Sort.describe(void.class));
+                                }
+                            } else {
+                                if (parameters.size() == 1) {
+                                    stackManipulations.add(FieldAccess.forField((FieldDescription) target).read());
+                                    return new Simple(new StackManipulation.Compound(stackManipulations), ((FieldDescription) target).getType());
+                                } else /* if (parameters.size() == 2) */ {
+                                    stackManipulations.add(FieldAccess.forField((FieldDescription) target).write());
+                                    return new Simple(new StackManipulation.Compound(stackManipulations), TypeDefinition.Sort.describe(void.class));
+                                }
+                            }
+                        } else {
+                            throw new IllegalArgumentException("Unexpected target type: " + target);
+                        }
+                    }
+
+                    @Override
+                    public Step make(Assigner assigner,
+                                     Assigner.Typing typing,
+                                     TypeDescription instrumentedType,
+                                     MethodDescription instrumentedMethod) {
+                        return this;
+                    }
+                }
+
+                /**
+                 * A simple substitution step within a substitution chain.
+                 */
+                @HashCodeAndEqualsPlugin.Enhance
+                class Simple implements Step, Resolution, Factory {
+
+                    /**
+                     * The stack manipulation to apply.
+                     */
+                    private final StackManipulation stackManipulation;
+
+                    /**
+                     * The resulting type of applying the stack manipulation.
+                     */
+                    private final TypeDescription.Generic resultType;
+
+                    /**
+                     * Creates a new simple substitution step.
+                     *
+                     * @param stackManipulation The stack manipulation to apply.
+                     * @param resultType        The resulting type of applying the stack manipulation.
+                     */
+                    public Simple(StackManipulation stackManipulation, TypeDescription.Generic resultType) {
+                        this.stackManipulation = stackManipulation;
+                        this.resultType = resultType;
+                    }
+
+                    /**
+                     * Resolves a compile-time constant as the next step value.
+                     *
+                     * @param value The compile-time constant to resolve.
+                     * @return An appropriate step factory.
+                     */
+                    public static Step.Factory of(Object value) {
+                        if (value instanceof JavaConstant) {
+                            return new Simple(new JavaConstantValue((JavaConstant) value), ((JavaConstant) value).getTypeDescription().asGenericType());
+                        } else if (value instanceof TypeDescription) {
+                            return new Simple(ClassConstant.of((TypeDescription) value), TypeDefinition.Sort.describe(Class.class));
+                        } else {
+                            Class<?> type = value.getClass();
+                            if (type == String.class) {
+                                return new Simple(new TextConstant((String) value), TypeDefinition.Sort.describe(String.class));
+                            } else if (type == Class.class) {
+                                return new Simple(ClassConstant.of(TypeDescription.ForLoadedType.of((Class<?>) value)), TypeDefinition.Sort.describe(Class.class));
+                            } else if (type == Boolean.class) {
+                                return new Simple(IntegerConstant.forValue((Boolean) value), TypeDefinition.Sort.describe(boolean.class));
+                            } else if (type == Byte.class) {
+                                return new Simple(IntegerConstant.forValue((Byte) value), TypeDefinition.Sort.describe(byte.class));
+                            } else if (type == Short.class) {
+                                return new Simple(IntegerConstant.forValue((Short) value), TypeDefinition.Sort.describe(short.class));
+                            } else if (type == Character.class) {
+                                return new Simple(IntegerConstant.forValue((Character) value), TypeDefinition.Sort.describe(char.class));
+                            } else if (type == Integer.class) {
+                                return new Simple(IntegerConstant.forValue((Integer) value), TypeDefinition.Sort.describe(int.class));
+                            } else if (type == Long.class) {
+                                return new Simple(LongConstant.forValue((Long) value), TypeDefinition.Sort.describe(long.class));
+                            } else if (type == Float.class) {
+                                return new Simple(FloatConstant.forValue((Float) value), TypeDefinition.Sort.describe(float.class));
+                            } else if (type == Double.class) {
+                                return new Simple(DoubleConstant.forValue((Double) value), TypeDefinition.Sort.describe(double.class));
+                            } else if (JavaType.METHOD_HANDLE.getTypeStub().isAssignableFrom(type)) {
+                                return new Simple(new JavaConstantValue(JavaConstant.MethodHandle.ofLoaded(value)), TypeDefinition.Sort.describe(type));
+                            } else if (JavaType.METHOD_TYPE.getTypeStub().represents(type)) {
+                                return new Simple(new JavaConstantValue(JavaConstant.MethodType.ofLoaded(value)), TypeDefinition.Sort.describe(type));
+                            } else {
+                                throw new IllegalArgumentException("Not a constant value: " + value);
+                            }
+                        }
+                    }
+
+                    /**
+                     * {@inheritDoc}
+                     */
+                    public Step make(Assigner assigner, Assigner.Typing typing, TypeDescription instrumentedType, MethodDescription instrumentedMethod) {
+                        return this;
+                    }
+
+                    /**
+                     * {@inheritDoc}
+                     */
+                    public Resolution resolve(TypeDescription targetType,
+                                              ByteCodeElement target,
+                                              TypeList.Generic parameters,
+                                              TypeDescription.Generic current,
+                                              Map<Integer, Integer> offsets,
+                                              int freeOffset) {
+                        return targetType.represents(void.class)
+                                ? this
+                                : new Simple(new StackManipulation.Compound(Removal.of(current), stackManipulation), resultType);
+                    }
+
+                    /**
+                     * {@inheritDoc}
+                     */
+                    public StackManipulation getStackManipulation() {
+                        return stackManipulation;
+                    }
+
+                    /**
+                     * {@inheritDoc}
+                     */
+                    public TypeDescription.Generic getResultType() {
+                        return resultType;
+                    }
+                }
+
+                /**
+                 * A step that substitutes an argument of a given index with a compatible type.
+                 */
+                @HashCodeAndEqualsPlugin.Enhance
+                class ForArgumentSubstitution implements Step {
+
+                    /**
+                     * The stack manipulation that loads the substituted argument.
+                     */
+                    private final StackManipulation stackManipulation;
+
+                    /**
+                     * The type of the substituted argument.
+                     */
+                    private final TypeDescription.Generic typeDescription;
+
+                    /**
+                     * The index of the argument to substitute.
+                     */
+                    private final int index;
+
+                    /**
+                     * The assigner to use for assigning the argument.
+                     */
+                    private final Assigner assigner;
+
+                    /**
+                     * The typing to use for the argument assignment.
+                     */
+                    private final Assigner.Typing typing;
+
+                    /**
+                     * Creates an argument substitution step.
+                     *
+                     * @param stackManipulation The stack manipulation that loads the substituted argument.
+                     * @param typeDescription   The type of the substituted argument.
+                     * @param index             The index of the argument to substitute.
+                     * @param assigner          The assigner to use for assigning the argument.
+                     * @param typing            The typing to use for the argument assignment.
+                     */
+                    protected ForArgumentSubstitution(StackManipulation stackManipulation,
+                                                      TypeDescription.Generic typeDescription,
+                                                      int index,
+                                                      Assigner assigner,
+                                                      Assigner.Typing typing) {
+                        this.stackManipulation = stackManipulation;
+                        this.typeDescription = typeDescription;
+                        this.index = index;
+                        this.assigner = assigner;
+                        this.typing = typing;
+                    }
+
+                    /**
+                     * Resolves a step substitution factory for a compile-time constant to replace an argument value at a given index.
+                     *
+                     * @param value The compile-time constant to replace.
+                     * @param index The index of the substituted argument.
+                     * @return An appropriate step factory.
+                     */
+                    public static Step.Factory of(Object value, int index) {
+                        if (index < 0) {
+                            throw new IllegalArgumentException("Index cannot be negative: " + index);
+                        }
+                        if (value instanceof JavaConstant) {
+                            return new Factory(new JavaConstantValue((JavaConstant) value), ((JavaConstant) value).getTypeDescription().asGenericType(), index);
+                        } else if (value instanceof TypeDescription) {
+                            return new Factory(ClassConstant.of((TypeDescription) value), TypeDefinition.Sort.describe(Class.class), index);
+                        } else {
+                            Class<?> type = value.getClass();
+                            if (type == String.class) {
+                                return new Factory(new TextConstant((String) value), TypeDefinition.Sort.describe(String.class), index);
+                            } else if (type == Class.class) {
+                                return new Factory(ClassConstant.of(TypeDescription.ForLoadedType.of((Class<?>) value)), TypeDefinition.Sort.describe(Class.class), index);
+                            } else if (type == Boolean.class) {
+                                return new Factory(IntegerConstant.forValue((Boolean) value), TypeDefinition.Sort.describe(boolean.class), index);
+                            } else if (type == Byte.class) {
+                                return new Factory(IntegerConstant.forValue((Byte) value), TypeDefinition.Sort.describe(byte.class), index);
+                            } else if (type == Short.class) {
+                                return new Factory(IntegerConstant.forValue((Short) value), TypeDefinition.Sort.describe(short.class), index);
+                            } else if (type == Character.class) {
+                                return new Factory(IntegerConstant.forValue((Character) value), TypeDefinition.Sort.describe(char.class), index);
+                            } else if (type == Integer.class) {
+                                return new Factory(IntegerConstant.forValue((Integer) value), TypeDefinition.Sort.describe(int.class), index);
+                            } else if (type == Long.class) {
+                                return new Factory(LongConstant.forValue((Long) value), TypeDefinition.Sort.describe(long.class), index);
+                            } else if (type == Float.class) {
+                                return new Factory(FloatConstant.forValue((Float) value), TypeDefinition.Sort.describe(float.class), index);
+                            } else if (type == Double.class) {
+                                return new Factory(DoubleConstant.forValue((Double) value), TypeDefinition.Sort.describe(double.class), index);
+                            } else if (JavaType.METHOD_HANDLE.getTypeStub().isAssignableFrom(type)) {
+                                return new Factory(new JavaConstantValue(JavaConstant.MethodHandle.ofLoaded(value)), TypeDefinition.Sort.describe(type), index);
+                            } else if (JavaType.METHOD_TYPE.getTypeStub().represents(type)) {
+                                return new Factory(new JavaConstantValue(JavaConstant.MethodType.ofLoaded(value)), TypeDefinition.Sort.describe(type), index);
+                            } else {
+                                throw new IllegalArgumentException("Not a constant value: " + value);
+                            }
+                        }
+                    }
+
+                    /**
+                     * {@inheritDoc}
+                     */
+                    public Resolution resolve(TypeDescription targetType,
+                                              ByteCodeElement target,
+                                              TypeList.Generic parameters,
+                                              TypeDescription.Generic current,
+                                              Map<Integer, Integer> offsets,
+                                              int freeOffset) {
+                        if (index >= parameters.size()) {
+                            throw new IllegalStateException(target + " has not " + index + " arguments");
+                        }
+                        StackManipulation stackManipulation = assigner.assign(typeDescription, parameters.get(index), typing);
+                        if (!stackManipulation.isValid()) {
+                            throw new IllegalStateException("Cannot assign " + typeDescription + " to " + parameters.get(index));
+                        }
+                        return new Simple(new StackManipulation.Compound(this.stackManipulation,
+                                stackManipulation,
+                                MethodVariableAccess.of(parameters.get(index)).storeAt(offsets.get(index))), current);
+                    }
+
+                    /**
+                     * A factory to create an argument substitution step.
+                     */
+                    @HashCodeAndEqualsPlugin.Enhance
+                    public static class Factory implements Step.Factory {
+
+                        /**
+                         * The stack manipulation that loads the substituted argument.
+                         */
+                        private final StackManipulation stackManipulation;
+
+                        /**
+                         * The type of the substituted argument.
+                         */
+                        private final TypeDescription.Generic typeDescription;
+
+                        /**
+                         * The index of the argument to substitute.
+                         */
+                        private final int index;
+
+                        /**
+                         * Creates a factory for an argument substitution step.
+                         *
+                         * @param stackManipulation The stack manipulation that loads the substituted argument.
+                         * @param typeDescription   The type of the substituted argument.
+                         * @param index             The index of the argument to substitute.
+                         */
+                        public Factory(StackManipulation stackManipulation, TypeDescription.Generic typeDescription, int index) {
+                            this.stackManipulation = stackManipulation;
+                            this.typeDescription = typeDescription;
+                            this.index = index;
+                        }
+
+                        /**
+                         * {@inheritDoc}
+                         */
+                        public Step make(Assigner assigner,
+                                         Assigner.Typing typing,
+                                         TypeDescription instrumentedType,
+                                         MethodDescription instrumentedMethod) {
+                            return new ForArgumentSubstitution(stackManipulation, typeDescription, index, assigner, typing);
+                        }
+                    }
+                }
+
+                /**
+                 * A step that loads an argument to a method as the current chain value.
+                 */
+                @HashCodeAndEqualsPlugin.Enhance
+                class ForArgumentLoading implements Step {
+
+                    /**
+                     * The index of the argument to substitute.
+                     */
+                    private final int index;
+
+                    /**
+                     * The assigner to use for assigning the argument.
+                     */
+                    private final Assigner assigner;
+
+                    /**
+                     * The typing to use for the argument assignment.
+                     */
+                    private final Assigner.Typing typing;
+
+                    /**
+                     * Creates an argument loading step.
+                     *
+                     * @param index    The index of the argument to load.
+                     * @param assigner The assigner to use for assigning the argument.
+                     * @param typing   The typing to use for the argument assignment.
+                     */
+                    protected ForArgumentLoading(int index,
+                                                 Assigner assigner,
+                                                 Assigner.Typing typing) {
+                        this.index = index;
+                        this.assigner = assigner;
+                        this.typing = typing;
+                    }
+
+                    /**
+                     * {@inheritDoc}
+                     */
+                    public Resolution resolve(TypeDescription targetType,
+                                              ByteCodeElement target,
+                                              TypeList.Generic parameters,
+                                              TypeDescription.Generic current,
+                                              Map<Integer, Integer> offsets,
+                                              int freeOffset) {
+                        if (index >= parameters.size()) {
+                            throw new IllegalStateException(target + " has not " + index + " arguments");
+                        }
+                        return new Simple(new StackManipulation.Compound(Removal.of(current),
+                                MethodVariableAccess.of(parameters.get(index)).loadFrom(offsets.get(index))), parameters.get(index));
+                    }
+
+
+                    /**
+                     * A factory to create an argument loading step.
+                     */
+                    @HashCodeAndEqualsPlugin.Enhance
+                    public static class Factory implements Step.Factory {
+
+                        /**
+                         * The index of the argument to load.
+                         */
+                        private final int index;
+
+                        public Factory(int index) {
+                            this.index = index;
+                        }
+
+                        /**
+                         * {@inheritDoc}
+                         */
+                        public Step make(Assigner assigner,
+                                         Assigner.Typing typing,
+                                         TypeDescription instrumentedType,
+                                         MethodDescription instrumentedMethod) {
+                            return new ForArgumentLoading(index, assigner, typing);
+                        }
+                    }
+                }
+
+                /**
+                 * Creates a step for a field access.
+                 */
+                @HashCodeAndEqualsPlugin.Enhance
+                abstract class ForField implements Step {
+
+                    /**
+                     * The field description accessed in this step.
+                     */
+                    protected final FieldDescription fieldDescription;
+
+                    /**
+                     * The assigner to use.
+                     */
+                    protected final Assigner assigner;
+
+                    /**
+                     * The typing to use when assigning.
+                     */
+                    protected final Assigner.Typing typing;
+
+                    /**
+                     * Creates a new step for a field access.
+                     *
+                     * @param fieldDescription The field description accessed in this step.
+                     * @param assigner         The assigner to use.
+                     * @param typing           The typing to use when assigning.
+                     */
+                    protected ForField(FieldDescription fieldDescription, Assigner assigner, Assigner.Typing typing) {
+                        this.fieldDescription = fieldDescription;
+                        this.assigner = assigner;
+                        this.typing = typing;
+                    }
+
+                    /**
+                     * {@inheritDoc}
+                     */
+                    @SuppressFBWarnings(value = "NP_NULL_ON_SOME_PATH_FROM_RETURN_VALUE", justification = "Field description always has declaring type.")
+                    public Resolution resolve(TypeDescription targetType,
+                                              ByteCodeElement target,
+                                              TypeList.Generic parameters,
+                                              TypeDescription.Generic current,
+                                              Map<Integer, Integer> offsets,
+                                              int freeOffset) {
+                        List<StackManipulation> stackManipulations = new ArrayList<StackManipulation>(2);
+                        if (fieldDescription.isStatic()) {
+                            stackManipulations.add(Removal.of(current));
+                        } else {
+                            StackManipulation assignment = assigner.assign(current, fieldDescription.getDeclaringType().asGenericType(), typing);
+                            if (!assignment.isValid()) {
+                                throw new IllegalStateException("Cannot assign " + current + " to " + fieldDescription.getDeclaringType());
+                            }
+                            stackManipulations.add(assignment);
+                        }
+                        return doResolve(target, parameters, offsets, new StackManipulation.Compound(stackManipulations));
+                    }
+
+                    /**
+                     * Completes the resolution.
+                     *
+                     * @param target            The byte code element that is currently substituted.
+                     * @param parameters        The parameters of the substituted element.
+                     * @param offsets           The arguments of the substituted byte code element mapped to their local variable offsets.
+                     * @param stackManipulation A stack manipulation to prepare the field access.
+                     * @return A resolved substitution step for the supplied inputs.
+                     */
+                    protected abstract Resolution doResolve(ByteCodeElement target,
+                                                            TypeList.Generic parameters,
+                                                            Map<Integer, Integer> offsets,
+                                                            StackManipulation stackManipulation);
+
+                    /**
+                     * A step for reading a field.
+                     */
+                    @HashCodeAndEqualsPlugin.Enhance
+                    public static class Read extends ForField {
+
+                        /**
+                         * Creates a step for reading a field.
+                         *
+                         * @param fieldDescription A description of the field being read.
+                         * @param assigner         The assigner to use.
+                         * @param typing           The typing to use when assigning.
+                         */
+                        public Read(FieldDescription fieldDescription, Assigner assigner, Assigner.Typing typing) {
+                            super(fieldDescription, assigner, typing);
+                        }
+
+                        /**
+                         * {@inheritDoc}
+                         */
+                        protected Resolution doResolve(ByteCodeElement target,
+                                                       TypeList.Generic parameters,
+                                                       Map<Integer, Integer> offsets,
+                                                       StackManipulation stackManipulation) {
+                            return new Simple(new StackManipulation.Compound(stackManipulation, FieldAccess.forField(fieldDescription).read()), fieldDescription.getType());
+                        }
+
+                        /**
+                         * A factory for creating a field read step in a chain.
+                         */
+                        @HashCodeAndEqualsPlugin.Enhance
+                        public static class Factory implements Step.Factory {
+
+                            /**
+                             * A description of the field being read.
+                             */
+                            private final FieldDescription fieldDescription;
+
+                            /**
+                             * Creates a factory for a step reading a field.
+                             *
+                             * @param fieldDescription A description of the field being read.
+                             */
+                            public Factory(FieldDescription fieldDescription) {
+                                this.fieldDescription = fieldDescription;
+                            }
+
+                            /**
+                             * {@inheritDoc}
+                             */
+                            public Step make(Assigner assigner, Assigner.Typing typing, TypeDescription instrumentedType, MethodDescription instrumentedMethod) {
+                                return new Read(fieldDescription, assigner, typing);
+                            }
+                        }
+                    }
+
+                    /**
+                     * A step for writing to a field.
+                     */
+                    @HashCodeAndEqualsPlugin.Enhance
+                    public static class Write extends ForField {
+
+                        /**
+                         * The index of the parameter being accessed. If the targeted element is a non-static method, is increased by one.
+                         */
+                        private final int index;
+
+                        /**
+                         * Creates a step for writing to a field.
+                         *
+                         * @param fieldDescription A description of the field to write to.
+                         * @param assigner         The assigner to use.
+                         * @param typing           The typing to use when assigning.
+                         * @param index            The index of the parameter being accessed. If the targeted element is a non-static method, is increased by one.
+                         */
+                        public Write(FieldDescription fieldDescription, Assigner assigner, Assigner.Typing typing, int index) {
+                            super(fieldDescription, assigner, typing);
+                            this.index = index;
+                        }
+
+                        /**
+                         * {@inheritDoc}
+                         */
+                        protected Resolution doResolve(ByteCodeElement target,
+                                                       TypeList.Generic parameters,
+                                                       Map<Integer, Integer> offsets,
+                                                       StackManipulation stackManipulation) {
+                            int index = ((target.getModifiers() & Opcodes.ACC_STATIC) == 0) && !(target instanceof MethodDescription && ((MethodDescription) target).isConstructor())
+                                    ? this.index + 1
+                                    : this.index;
+                            if (index >= parameters.size()) {
+                                throw new IllegalStateException(target + " does not define an argument with index " + index);
+                            }
+                            StackManipulation assignment = assigner.assign(parameters.get(index), fieldDescription.getType(), typing);
+                            if (!assignment.isValid()) {
+                                throw new IllegalStateException("Cannot write " + parameters.get(index) + " to " + fieldDescription);
+                            }
+                            return new Simple(new StackManipulation.Compound(stackManipulation,
+                                    MethodVariableAccess.of(parameters.get(index)).loadFrom(offsets.get(index)),
+                                    assignment,
+                                    FieldAccess.forField(fieldDescription).write()), TypeDefinition.Sort.describe(void.class));
+                        }
+
+                        /**
+                         * A factory for creating a step to write to a field.
+                         */
+                        @HashCodeAndEqualsPlugin.Enhance
+                        public static class Factory implements Step.Factory {
+
+                            /**
+                             * A description of the field to write to.
+                             */
+                            private final FieldDescription fieldDescription;
+
+                            /**
+                             * The index of the parameter being accessed. If the targeted element is a non-static method, is increased by one.
+                             */
+                            private final int index;
+
+                            /**
+                             * Creates a factory for writing to a field.
+                             *
+                             * @param fieldDescription A description of the field to write to.
+                             * @param index            The index of the parameter being accessed. If the targeted element is a non-static method, is increased by one.
+                             */
+                            public Factory(FieldDescription fieldDescription, int index) {
+                                this.fieldDescription = fieldDescription;
+                                this.index = index;
+                            }
+
+                            /**
+                             * {@inheritDoc}
+                             */
+                            public Step make(Assigner assigner, Assigner.Typing typing, TypeDescription instrumentedType, MethodDescription instrumentedMethod) {
+                                return new Write(fieldDescription, assigner, typing, index);
+                            }
+                        }
+                    }
+                }
+
+                /**
+                 * A step for invoking a method or constructor. If non-static, a method is invoked upon a the current stack argument of the chain.
+                 * Arguments are loaded from the intercepted byte code element with a possibility of substitution.
+                 */
+                @HashCodeAndEqualsPlugin.Enhance
+                class ForInvocation implements Step {
+
+                    /**
+                     * The invoked method or constructor.
+                     */
+                    private final MethodDescription methodDescription;
+
+                    /**
+                     * A mapping of substituted parameter indices. For targets that are non-static methods, the targeted index is increased by one.
+                     */
+                    private final Map<Integer, Integer> substitutions;
+
+                    /**
+                     * The assigner to use.
+                     */
+                    private final Assigner assigner;
+
+                    /**
+                     * The typing to use when assigning.
+                     */
+                    private final Assigner.Typing typing;
+
+                    /**
+                     * Creates a new step of an invocation.
+                     *
+                     * @param methodDescription The invoked method or constructor.
+                     * @param substitutions     A mapping of substituted parameter indices. For targets that are non-static methods, the targeted index is increased by one.
+                     * @param assigner          The assigner to use.
+                     * @param typing            The typing to use when assigning.
+                     */
+                    public ForInvocation(MethodDescription methodDescription, Map<Integer, Integer> substitutions, Assigner assigner, Assigner.Typing typing) {
+                        this.methodDescription = methodDescription;
+                        this.substitutions = substitutions;
+                        this.assigner = assigner;
+                        this.typing = typing;
+                    }
+
+                    /**
+                     * {@inheritDoc}
+                     */
+                    public Resolution resolve(TypeDescription targetType,
+                                              ByteCodeElement target,
+                                              TypeList.Generic parameters,
+                                              TypeDescription.Generic current,
+                                              Map<Integer, Integer> offsets,
+                                              int freeOffset) {
+                        List<StackManipulation> stackManipulations = new ArrayList<StackManipulation>(3 + parameters.size() * 2);
+                        if (methodDescription.isStatic()) {
+                            stackManipulations.add(Removal.of(current));
+                        } else if (methodDescription.isConstructor()) {
+                            stackManipulations.add(Removal.of(current));
+                            stackManipulations.add(TypeCreation.of(methodDescription.getDeclaringType().asErasure()));
+                        } else {
+                            StackManipulation assignment = assigner.assign(current, methodDescription.getDeclaringType().asGenericType(), typing);
+                            if (!assignment.isValid()) {
+                                throw new IllegalStateException("Cannot assign " + current + " to " + methodDescription.getDeclaringType());
+                            }
+                            stackManipulations.add(assignment);
+                        }
+
+                        boolean shift = ((target.getModifiers() & Opcodes.ACC_STATIC) == 0) && !(target instanceof MethodDescription && ((MethodDescription) target).isConstructor());
+                        for (int index = 0; index < methodDescription.getParameters().size(); index++) {
+                            int substitution = substitutions.containsKey(index + (shift ? 1 : 0))
+                                    ? substitutions.get(index + (shift ? 1 : 0))
+                                    : index + (shift ? 1 : 0);
+                            if (substitution >= parameters.size()) {
+                                throw new IllegalStateException(target + " does not support an index " + substitution);
+                            }
+                            stackManipulations.add(MethodVariableAccess.of(parameters.get(substitution)).loadFrom(offsets.get(substitution)));
+                            StackManipulation assignment = assigner.assign(parameters.get(substitution), methodDescription.getParameters().get(index).getType(), typing);
+                            if (!assignment.isValid()) {
+                                throw new IllegalStateException("Cannot assign parameter with " + index + " of type " + parameters.get(substitution) + " to " + methodDescription);
+                            }
+                            stackManipulations.add(assignment);
+                        }
+                        stackManipulations.add(MethodInvocation.invoke(methodDescription));
+                        return new Simple(new StackManipulation.Compound(stackManipulations), methodDescription.getReturnType());
+                    }
+
+                    /**
+                     * A factory to create a step for a method invocation.
+                     */
+                    @HashCodeAndEqualsPlugin.Enhance
+                    public static class Factory implements Step.Factory {
+
+                        /**
+                         * The invoked method or constructor.
+                         */
+                        private final MethodDescription methodDescription;
+
+                        /**
+                         * A mapping of substituted parameter indices. For targets that are non-static methods, the targeted index is increased by one.
+                         */
+                        private final Map<Integer, Integer> substitutions;
+
+                        /**
+                         * Creates a factory for a method invocation without parameter substitutions.
+                         *
+                         * @param methodDescription The invoked method or constructor.
+                         */
+                        public Factory(MethodDescription methodDescription) {
+                            this(methodDescription, Collections.<Integer, Integer>emptyMap());
+                        }
+
+                        /**
+                         * Creates a factory for a method invocation.
+                         *
+                         * @param methodDescription The invoked method or constructor.
+                         * @param substitutions     A mapping of substituted parameter indices. For targets that are non-static methods,
+                         *                          the targeted index is increased by one.
+                         */
+                        public Factory(MethodDescription methodDescription, Map<Integer, Integer> substitutions) {
+                            this.methodDescription = methodDescription;
+                            this.substitutions = substitutions;
+                        }
+
+                        /**
+                         * {@inheritDoc}
+                         */
+                        public Step make(Assigner assigner,
+                                         Assigner.Typing typing,
+                                         TypeDescription instrumentedType,
+                                         MethodDescription instrumentedMethod) {
+                            return new ForInvocation(methodDescription, substitutions, assigner, typing);
+                        }
+                    }
+                }
+            }
+
+            /**
+             * A factory for creating a substitution chain.
+             */
+            public static class Factory implements Substitution.Factory {
+
+                /**
+                 * The assigner to use.
+                 */
+                private final Assigner assigner;
+
+                /**
+                 * The typing of the assignment to use.
+                 */
+                private final Assigner.Typing typing;
+
+                /**
+                 * The substitution steps to apply.
+                 */
+                private final List<Step.Factory> steps;
+
+                /**
+                 * Creates a new factory for a substitution chain.
+                 *
+                 * @param assigner The assigner to use.
+                 * @param typing   The typing of the assignment to use.
+                 * @param steps    The substitution steps to apply.
+                 */
+                protected Factory(Assigner assigner, Assigner.Typing typing, List<Step.Factory> steps) {
+                    this.assigner = assigner;
+                    this.typing = typing;
+                    this.steps = steps;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public Substitution make(TypeDescription instrumentedType, MethodDescription instrumentedMethod, TypePool typePool) {
+                    if (steps.isEmpty()) {
+                        return Stubbing.INSTANCE;
+                    }
+                    List<Step> steps = new ArrayList<Step>(this.steps.size());
+                    for (Step.Factory step : this.steps) {
+                        steps.add(step.make(assigner, typing, instrumentedType, instrumentedMethod));
+                    }
+                    return new Chain(assigner, typing, steps);
+                }
+
+                /**
+                 * Appends the supplied steps to the substitution chain.
+                 *
+                 * @param step The steps to append.
+                 * @return A new substitution chain that is equal to this substitution chain but with the supplied steps appended.
+                 */
+                public Factory executing(Step.Factory... step) {
+                    return executing(Arrays.asList(step));
+                }
+
+                /**
+                 * Appends the supplied steps to the substitution chain.
+                 *
+                 * @param steps The steps to append.
+                 * @return A new substitution chain that is equal to this substitution chain but with the supplied steps appended.
+                 */
+                public Factory executing(List<? extends Step.Factory> steps) {
+                    return new Factory(assigner, typing, CompoundList.of(this.steps, steps));
+                }
+            }
+        }
+    }
+
+    /**
+     * A replacement combines a {@link Substitution} and a way of choosing if this substitution should be applied for a discovered member.
+     */
+    protected interface Replacement {
+
+        /**
+         * Binds this replacement for a field that was discovered.
+         *
+         * @param instrumentedType   The instrumented type.
+         * @param instrumentedMethod The instrumented method.
+         * @param fieldDescription   The field that was discovered.
+         * @param writeAccess        {@code true} if this field was written to.
+         * @return A binding for the discovered field access.
+         */
+        Binding bind(TypeDescription instrumentedType,
+                     MethodDescription instrumentedMethod,
+                     FieldDescription.InDefinedShape fieldDescription,
+                     boolean writeAccess);
+
+        /**
+         * Binds this replacement for a field that was discovered.
+         *
+         * @param instrumentedType   The instrumented type.
+         * @param instrumentedMethod The instrumented method.
+         * @param typeDescription    The type on which the method was invoked.
+         * @param methodDescription  The method that was discovered.
+         * @param invocationType     The invocation type for this method.
+         * @return A binding for the discovered method invocation.
+         */
+        Binding bind(TypeDescription instrumentedType,
+                     MethodDescription instrumentedMethod,
+                     TypeDescription typeDescription,
+                     MethodDescription methodDescription,
+                     InvocationType invocationType);
+
+        /**
+         * A binding for a replacement of a field or method access within another method.
+         */
+        interface Binding {
+
+            /**
+             * Returns {@code true} if this binding is resolved.
+             *
+             * @return {@code true} if this binding is resolved.
+             */
+            boolean isBound();
+
+            /**
+             * Creates a stack manipulation that represents the substitution. This method can only be called for actually bound bindings.
+             *
+             * @param parameters The parameters that are accessible to the substitution target.
+             * @param result     The result that is expected from the substitution target or {@code void} if none is expected.
+             * @param freeOffset The first offset that can be used for storing local variables.
+             * @return A stack manipulation that represents the replacement.
+             */
+            StackManipulation make(TypeList.Generic parameters, TypeDescription.Generic result, int freeOffset);
+
+            /**
+             * An unresolved binding.
+             */
+            enum Unresolved implements Binding {
+
+                /**
+                 * The singleton instance.
+                 */
+                INSTANCE;
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public boolean isBound() {
+                    return false;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public StackManipulation make(TypeList.Generic parameters, TypeDescription.Generic result, int freeOffset) {
+                    throw new IllegalStateException("Cannot resolve unresolved binding");
+                }
+            }
+
+            /**
+             * A binding that was resolved for an actual substitution.
+             */
+            @HashCodeAndEqualsPlugin.Enhance
+            class Resolved implements Binding {
+
+                /**
+                 * The type on which a field or method was accessed.
+                 */
+                private final TypeDescription targetType;
+
+                /**
+                 * The field or method that was accessed.
+                 */
+                private final ByteCodeElement target;
+
+                /**
+                 * The substitution to apply.
+                 */
+                private final Substitution substitution;
+
+                /**
+                 * Creates a new resolved binding.
+                 *
+                 * @param targetType   The type on which a field or method was accessed.
+                 * @param target       The field or method that was accessed.
+                 * @param substitution The substitution to apply.
+                 */
+                protected Resolved(TypeDescription targetType,
+                                   ByteCodeElement target,
+                                   Substitution substitution) {
+                    this.targetType = targetType;
+                    this.target = target;
+                    this.substitution = substitution;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public boolean isBound() {
+                    return true;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public StackManipulation make(TypeList.Generic parameters, TypeDescription.Generic result, int freeOffset) {
+                    return substitution.resolve(targetType, target, parameters, result, freeOffset);
+                }
+            }
+        }
+
+        /**
+         * A factory for creating a replacement for an instrumented method.
+         */
+        interface Factory {
+
+            /**
+             * Creates a replacement for an instrumented method.
+             *
+             * @param instrumentedType   The instrumented type.
+             * @param instrumentedMethod The instrumented method.
+             * @param typePool           The type pool being used within the member substitution being applied.
+             * @return A replacement to use within the supplied instrumented method.
+             */
+            Replacement make(TypeDescription instrumentedType, MethodDescription instrumentedMethod, TypePool typePool);
+
+            /**
+             * A compound factory.
+             */
+            @HashCodeAndEqualsPlugin.Enhance
+            class Compound implements Factory {
+
+                /**
+                 * A list of represented factories.
+                 */
+                private final List<Factory> factories;
+
+                /**
+                 * Creates a new compound factory.
+                 *
+                 * @param factory A list of represented factories.
+                 */
+                protected Compound(Factory... factory) {
+                    this(Arrays.asList(factory));
+                }
+
+                /**
+                 * Creates a new compound factory.
+                 *
+                 * @param factories A list of represented factories.
+                 */
+                protected Compound(List<? extends Factory> factories) {
+                    this.factories = new ArrayList<Factory>();
+                    for (Factory factory : factories) {
+                        if (factory instanceof Compound) {
+                            this.factories.addAll(((Compound) factory).factories);
+                        } else if (!(factory instanceof NoOp)) {
+                            this.factories.add(factory);
+                        }
+                    }
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public Replacement make(TypeDescription instrumentedType, MethodDescription instrumentedMethod, TypePool typePool) {
+                    List<Replacement> replacements = new ArrayList<Replacement>();
+                    for (Factory factory : factories) {
+                        replacements.add(factory.make(instrumentedType, instrumentedMethod, typePool));
+                    }
+                    return new ForFirstBinding(replacements);
+                }
+            }
+        }
+
+        /**
+         * Describes a method invocation type.
          */
         enum InvocationType {
 
             /**
-             * Indicates that a method is called virtually.
+             * Desribes a virtual method invocation.
              */
             VIRTUAL,
 
             /**
-             * Indicates that a method is called via a super method call.
+             * Describes a super method invocation.
              */
             SUPER,
 
             /**
-             * Indicates that an invoked method is not a virtual method.
+             * Describes any method invocation that is not virtual or a super method invocation.
              */
             OTHER;
 
             /**
-             * Creates an invocation type.
+             * Resolves an invocation type.
              *
-             * @param opcode            The method call's opcode.
-             * @param methodDescription The method being invoked.
-             * @return The method's invocation type.
+             * @param opcode            The opcode that is used for invoking the method.
+             * @param methodDescription The method that is being invoked.
+             * @return The invokation type for the method given that opcode.
              */
             protected static InvocationType of(int opcode, MethodDescription methodDescription) {
                 switch (opcode) {
@@ -985,11 +2636,11 @@ public class MemberSubstitution implements AsmVisitorWrapper.ForDeclaredMethods.
             }
 
             /**
-             * Determines if a method is matched by this invocation type.
+             * Checks if this invokation type matches the specified inputs.
              *
-             * @param includeVirtualCalls {@code true} if virtual calls are included.
-             * @param includeSuperCalls   {@code true} if super method calls are included.
-             * @return {@code true} if this instance matches the given setup.
+             * @param includeVirtualCalls {@code true} if a virtual method should be matched.
+             * @param includeSuperCalls   {@code true} if a super method call should be matched.
+             * @return {@code true} if this invocation type matches the specified parameters.
              */
             protected boolean matches(boolean includeVirtualCalls, boolean includeSuperCalls) {
                 switch (this) {
@@ -1004,120 +2655,95 @@ public class MemberSubstitution implements AsmVisitorWrapper.ForDeclaredMethods.
         }
 
         /**
-         * A substitution that does not substitute any byte code elements.
+         * A non-operational replacement.
          */
-        enum NoOp implements Substitution {
+        enum NoOp implements Replacement, Factory {
 
             /**
-             * The singleton instance.
+             * The singelton instance.
              */
             INSTANCE;
 
-            @Override
-            public Resolver resolve(FieldDescription.InDefinedShape fieldDescription, boolean writeAccess) {
-                return Resolver.Unresolved.INSTANCE;
+            /**
+             * {@inheritDoc}
+             */
+            public Replacement make(TypeDescription instrumentedType, MethodDescription instrumentedMethod, TypePool typePool) {
+                return this;
             }
 
-            @Override
-            public Resolver resolve(MethodDescription methodDescription, InvocationType invocationType) {
-                return Resolver.Unresolved.INSTANCE;
+            /**
+             * {@inheritDoc}
+             */
+            public Binding bind(TypeDescription instrumentedType,
+                                MethodDescription instrumentedMethod,
+                                FieldDescription.InDefinedShape fieldDescription,
+                                boolean writeAccess) {
+                return Binding.Unresolved.INSTANCE;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public Binding bind(TypeDescription instrumentedType,
+                                MethodDescription instrumentedMethod,
+                                TypeDescription typeDescription,
+                                MethodDescription methodDescription,
+                                InvocationType invocationType) {
+                return Binding.Unresolved.INSTANCE;
             }
         }
 
         /**
-         * A substitution that uses element matchers for determining if a byte code element should be substituted.
+         * A replacement that substitutes a member based on a row of element matchers.
          */
-        @EqualsAndHashCode
-        class ForElementMatchers implements Substitution {
+        @HashCodeAndEqualsPlugin.Enhance
+        class ForElementMatchers implements Replacement {
 
             /**
-             * A matcher to determine field substitution.
+             * The field matcher to consider when discovering fields.
              */
             private final ElementMatcher<? super FieldDescription.InDefinedShape> fieldMatcher;
 
             /**
-             * A matcher to determine method substitution.
+             * The method matcher to consider when discovering methods.
              */
             private final ElementMatcher<? super MethodDescription> methodMatcher;
 
             /**
-             * {@code true} if field read access should be substituted.
+             * {@code true} if field reading access should be matched.
              */
             private final boolean matchFieldRead;
 
             /**
-             * {@code true} if field write access should be substituted.
+             * {@code true} if field writing access should be matched.
              */
             private final boolean matchFieldWrite;
 
             /**
-             * {@code true} if virtual method calls should be substituted.
+             * {@code true} if virtual method calls should be matched.
              */
             private final boolean includeVirtualCalls;
 
             /**
-             * {@code true} if super method calls should be substituted.
+             * {@code true} if super method calls should be matched.
              */
             private final boolean includeSuperCalls;
 
             /**
-             * The resolver to apply on elements to substitute.
+             * The substitution to trigger if a member is matched.
              */
-            private final Resolver resolver;
+            private final Substitution substitution;
 
             /**
-             * Creates a substitution for any byte code element that matches the supplied matcher.
+             * Creates a new replacement that triggers a substitution based on a row of matchers.
              *
-             * @param matcher  The matcher to determine the substituted byte code elements.
-             * @param resolver The resolver to apply on elements to substitute.
-             * @return A substitution for all matched byte code elements.
-             */
-            protected static Substitution of(ElementMatcher<? super ByteCodeElement> matcher, Resolver resolver) {
-                return new ForElementMatchers(matcher, matcher, true, true, true, true, resolver);
-            }
-
-            /**
-             * Creates a substitution for any method that matches the supplied matcher.
-             *
-             * @param matcher         The matcher to determine the substituted fields.
-             * @param matchFieldRead  {@code true} if field read access should be substituted.
-             * @param matchFieldWrite {@code true} if field write access should be substituted.
-             * @param resolver        The resolver to apply on fields to substitute.
-             * @return A substitution for all matched fields.
-             */
-            protected static Substitution ofField(ElementMatcher<? super FieldDescription.InDefinedShape> matcher,
-                                                  boolean matchFieldRead,
-                                                  boolean matchFieldWrite,
-                                                  Resolver resolver) {
-                return new ForElementMatchers(matcher, none(), matchFieldRead, matchFieldWrite, false, false, resolver);
-            }
-
-            /**
-             * Creates a substitution for any method that matches the supplied matcher.
-             *
-             * @param matcher             The matcher to determine the substituted fields.
-             * @param includeVirtualCalls {@code true} if virtual method calls should be substituted.
-             * @param includeSuperCalls   {@code true} if super method calls should be substituted.
-             * @param resolver            The resolver to apply on fields to substitute.
-             * @return A substitution for all matched fields.
-             */
-            protected static Substitution ofMethod(ElementMatcher<? super MethodDescription> matcher,
-                                                   boolean includeVirtualCalls,
-                                                   boolean includeSuperCalls,
-                                                   Resolver resolver) {
-                return new ForElementMatchers(none(), matcher, false, false, includeVirtualCalls, includeSuperCalls, resolver);
-            }
-
-            /**
-             * Creates a new substitution that applies element matchers to determine what byte code elements to substitute.
-             *
-             * @param fieldMatcher        The field matcher to determine fields to substitute.
-             * @param methodMatcher       The method matcher to determine methods to substitute.
-             * @param matchFieldRead      {@code true} if field read access should be substituted.
-             * @param matchFieldWrite     {@code true} if field write access should be substituted.
-             * @param includeVirtualCalls {@code true} if virtual method calls should be substituted.
-             * @param includeSuperCalls   {@code true} if super method calls should be substituted.
-             * @param resolver            The resolver to apply on elements to substitute.
+             * @param fieldMatcher        The field matcher to consider when discovering fields.
+             * @param methodMatcher       The method matcher to consider when discovering methods.
+             * @param matchFieldRead      {@code true} if field reading access should be matched.
+             * @param matchFieldWrite     {@code true} if field writing access should be matched.
+             * @param includeVirtualCalls {@code true} if virtual method calls should be matched.
+             * @param includeSuperCalls   {@code true} if super method calls should be matched.
+             * @param substitution        The substitution to trigger if a member is matched.
              */
             protected ForElementMatchers(ElementMatcher<? super FieldDescription.InDefinedShape> fieldMatcher,
                                          ElementMatcher<? super MethodDescription> methodMatcher,
@@ -1125,87 +2751,218 @@ public class MemberSubstitution implements AsmVisitorWrapper.ForDeclaredMethods.
                                          boolean matchFieldWrite,
                                          boolean includeVirtualCalls,
                                          boolean includeSuperCalls,
-                                         Resolver resolver) {
+                                         Substitution substitution) {
                 this.fieldMatcher = fieldMatcher;
                 this.methodMatcher = methodMatcher;
                 this.matchFieldRead = matchFieldRead;
                 this.matchFieldWrite = matchFieldWrite;
                 this.includeVirtualCalls = includeVirtualCalls;
                 this.includeSuperCalls = includeSuperCalls;
-                this.resolver = resolver;
+                this.substitution = substitution;
             }
 
-            @Override
-            public Resolver resolve(FieldDescription.InDefinedShape fieldDescription, boolean writeAccess) {
+            /**
+             * {@inheritDoc}
+             */
+            public Binding bind(TypeDescription instrumentedType,
+                                MethodDescription instrumentedMethod,
+                                FieldDescription.InDefinedShape fieldDescription,
+                                boolean writeAccess) {
                 return (writeAccess ? matchFieldWrite : matchFieldRead) && fieldMatcher.matches(fieldDescription)
-                        ? resolver
-                        : Resolver.Unresolved.INSTANCE;
+                        ? new Binding.Resolved(fieldDescription.getDeclaringType(), fieldDescription, substitution)
+                        : Binding.Unresolved.INSTANCE;
             }
 
-            @Override
-            public Resolver resolve(MethodDescription methodDescription, InvocationType invocationType) {
+            /**
+             * {@inheritDoc}
+             */
+            public Binding bind(TypeDescription instrumentedType,
+                                MethodDescription instrumentedMethod,
+                                TypeDescription typeDescription,
+                                MethodDescription methodDescription,
+                                InvocationType invocationType) {
                 return invocationType.matches(includeVirtualCalls, includeSuperCalls) && methodMatcher.matches(methodDescription)
-                        ? resolver
-                        : Resolver.Unresolved.INSTANCE;
+                        ? new Binding.Resolved(typeDescription, methodDescription, substitution)
+                        : Binding.Unresolved.INSTANCE;
+            }
+
+            /**
+             * A factory for creating a replacement that chooses members based on a row of element matchers.
+             */
+            @HashCodeAndEqualsPlugin.Enhance
+            protected static class Factory implements Replacement.Factory {
+
+                /**
+                 * The field matcher to consider when discovering fields.
+                 */
+                private final ElementMatcher<? super FieldDescription.InDefinedShape> fieldMatcher;
+
+                /**
+                 * The method matcher to consider when discovering methods.
+                 */
+                private final ElementMatcher<? super MethodDescription> methodMatcher;
+
+                /**
+                 * {@code true} if field reading access should be matched.
+                 */
+                private final boolean matchFieldRead;
+
+                /**
+                 * {@code true} if field writing access should be matched.
+                 */
+                private final boolean matchFieldWrite;
+
+                /**
+                 * {@code true} if virtual method calls should be matched.
+                 */
+                private final boolean includeVirtualCalls;
+
+                /**
+                 * {@code true} if super method calls should be matched.
+                 */
+                private final boolean includeSuperCalls;
+
+                /**
+                 * The substitution factory to create a substitution from.
+                 */
+                private final Substitution.Factory substitutionFactory;
+
+                /**
+                 * Creates a new replacement that triggers a substitution based on a row of matchers.
+                 *
+                 * @param fieldMatcher        The field matcher to consider when discovering fields.
+                 * @param methodMatcher       The method matcher to consider when discovering methods.
+                 * @param matchFieldRead      {@code true} if field reading access should be matched.
+                 * @param matchFieldWrite     {@code true} if field writing access should be matched.
+                 * @param includeVirtualCalls {@code true} if virtual method calls should be matched.
+                 * @param includeSuperCalls   {@code true} if super method calls should be matched.
+                 * @param substitutionFactory The substitution factory to create a substitution from.
+                 */
+                protected Factory(ElementMatcher<? super FieldDescription.InDefinedShape> fieldMatcher,
+                                  ElementMatcher<? super MethodDescription> methodMatcher,
+                                  boolean matchFieldRead,
+                                  boolean matchFieldWrite,
+                                  boolean includeVirtualCalls,
+                                  boolean includeSuperCalls,
+                                  Substitution.Factory substitutionFactory) {
+                    this.fieldMatcher = fieldMatcher;
+                    this.methodMatcher = methodMatcher;
+                    this.matchFieldRead = matchFieldRead;
+                    this.matchFieldWrite = matchFieldWrite;
+                    this.includeVirtualCalls = includeVirtualCalls;
+                    this.includeSuperCalls = includeSuperCalls;
+                    this.substitutionFactory = substitutionFactory;
+                }
+
+                /**
+                 * Creates a factory for applying a substitution on all matched byte code elements for all access types.
+                 *
+                 * @param matcher The matcher to apply.
+                 * @param factory The substitution factory to create a substitution from.
+                 * @return An appropriate replacement factory for the supplied matcher and substitution factory.
+                 */
+                protected static Replacement.Factory of(ElementMatcher<? super ByteCodeElement> matcher, Substitution.Factory factory) {
+                    return new Factory(matcher, matcher, true, true, true, true, factory);
+                }
+
+                /**
+                 * Creates a factory that only matches field access for given access types.
+                 *
+                 * @param matcher         The matcher to identify fields for substitution.
+                 * @param matchFieldRead  {@code true} if field read access should be matched.
+                 * @param matchFieldWrite {@code true} if field write access should be matched.
+                 * @param factory         The substitution factory to apply for fields that match the specified criteria.
+                 * @return An appropriate replacement factory.
+                 */
+                protected static Replacement.Factory ofField(ElementMatcher<? super FieldDescription.InDefinedShape> matcher,
+                                                             boolean matchFieldRead,
+                                                             boolean matchFieldWrite,
+                                                             Substitution.Factory factory) {
+                    return new Factory(matcher, none(), matchFieldRead, matchFieldWrite, false, false, factory);
+                }
+
+                /**
+                 * Creates a factory that only matches method and constructor invocations for given invocation types.
+                 *
+                 * @param matcher             The matcher to identify methods and constructors for substitution.
+                 * @param includeVirtualCalls {@code true} if virtual method calls should be matched.
+                 * @param includeSuperCalls   {@code true} if super method calls should be matched.
+                 * @param factory             The substitution factory to apply for methods and constructors that match the specified criteria.
+                 * @return An appropriate replacement factory.
+                 */
+                protected static Replacement.Factory ofMethod(ElementMatcher<? super MethodDescription> matcher,
+                                                              boolean includeVirtualCalls,
+                                                              boolean includeSuperCalls,
+                                                              Substitution.Factory factory) {
+                    return new Factory(none(), matcher, false, false, includeVirtualCalls, includeSuperCalls, factory);
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public Replacement make(TypeDescription instrumentedType, MethodDescription instrumentedMethod, TypePool typePool) {
+                    return new ForElementMatchers(fieldMatcher,
+                            methodMatcher,
+                            matchFieldRead,
+                            matchFieldWrite,
+                            includeVirtualCalls,
+                            includeSuperCalls,
+                            substitutionFactory.make(instrumentedType, instrumentedMethod, typePool));
+                }
             }
         }
 
         /**
-         * A compound substitution.
+         * A replacement that only resolves the first matching replacement of a list of replacements.
          */
-        @EqualsAndHashCode
-        class Compound implements Substitution {
+        @HashCodeAndEqualsPlugin.Enhance
+        class ForFirstBinding implements Replacement {
 
             /**
-             * The substitutions to apply in their application order.
+             * The list of replacements to consider.
              */
-            private final List<Substitution> substitutions;
+            private final List<? extends Replacement> replacements;
 
             /**
-             * Creates a new compound substitution.
+             * Creates a new replacement that triggers the first matching replacement, if any.
              *
-             * @param substitution The substitutions to apply in their application order.
+             * @param replacements The list of replacements to consider.
              */
-            protected Compound(Substitution... substitution) {
-                this(Arrays.asList(substitution));
+            protected ForFirstBinding(List<? extends Replacement> replacements) {
+                this.replacements = replacements;
             }
 
             /**
-             * Creates a new compound substitution.
-             *
-             * @param substitutions The substitutions to apply in their application order.
+             * {@inheritDoc}
              */
-            protected Compound(List<? extends Substitution> substitutions) {
-                this.substitutions = new ArrayList<Substitution>(substitutions.size());
-                for (Substitution substitution : substitutions) {
-                    if (substitution instanceof Compound) {
-                        this.substitutions.addAll(((Compound) substitution).substitutions);
-                    } else if (!(substitution instanceof NoOp)) {
-                        this.substitutions.add(substitution);
+            public Binding bind(TypeDescription instrumentedType,
+                                MethodDescription instrumentedMethod,
+                                FieldDescription.InDefinedShape fieldDescription,
+                                boolean writeAccess) {
+                for (Replacement replacement : replacements) {
+                    Binding binding = replacement.bind(instrumentedType, instrumentedMethod, fieldDescription, writeAccess);
+                    if (binding.isBound()) {
+                        return binding;
                     }
                 }
+                return Binding.Unresolved.INSTANCE;
             }
 
-            @Override
-            public Resolver resolve(FieldDescription.InDefinedShape fieldDescription, boolean writeAccess) {
-                for (Substitution substitution : substitutions) {
-                    Resolver resolver = substitution.resolve(fieldDescription, writeAccess);
-                    if (resolver.isResolved()) {
-                        return resolver;
+            /**
+             * {@inheritDoc}
+             */
+            public Binding bind(TypeDescription instrumentedType,
+                                MethodDescription instrumentedMethod,
+                                TypeDescription typeDescription,
+                                MethodDescription methodDescription,
+                                InvocationType invocationType) {
+                for (Replacement replacement : replacements) {
+                    Binding binding = replacement.bind(instrumentedType, instrumentedMethod, typeDescription, methodDescription, invocationType);
+                    if (binding.isBound()) {
+                        return binding;
                     }
                 }
-                return Resolver.Unresolved.INSTANCE;
-            }
-
-            @Override
-            public Resolver resolve(MethodDescription methodDescription, InvocationType invocationType) {
-                for (Substitution substitution : substitutions) {
-                    Resolver resolver = substitution.resolve(methodDescription, invocationType);
-                    if (resolver.isResolved()) {
-                        return resolver;
-                    }
-                }
-                return Resolver.Unresolved.INSTANCE;
+                return Binding.Unresolved.INSTANCE;
             }
         }
     }
@@ -1213,7 +2970,17 @@ public class MemberSubstitution implements AsmVisitorWrapper.ForDeclaredMethods.
     /**
      * A method visitor that applies a substitution for matched methods.
      */
-    protected static class SubstitutingMethodVisitor extends MethodVisitor {
+    protected static class SubstitutingMethodVisitor extends LocalVariableAwareMethodVisitor {
+
+        /**
+         * The instrumented type.
+         */
+        private final TypeDescription instrumentedType;
+
+        /**
+         * The instrumented method.
+         */
+        private final MethodDescription instrumentedMethod;
 
         /**
          * The method graph compiler to use.
@@ -1226,14 +2993,9 @@ public class MemberSubstitution implements AsmVisitorWrapper.ForDeclaredMethods.
         private final boolean strict;
 
         /**
-         * The substitution to apply.
+         * The replacement to use for creating substitutions.
          */
-        private final Substitution substitution;
-
-        /**
-         * The instrumented type.
-         */
-        private final TypeDescription instrumentedType;
+        private final Replacement replacement;
 
         /**
          * The implementation context to use.
@@ -1246,71 +3008,93 @@ public class MemberSubstitution implements AsmVisitorWrapper.ForDeclaredMethods.
         private final TypePool typePool;
 
         /**
+         * If {@code true}, virtual method calls might target private methods in accordance to the nest mate specification.
+         */
+        private final boolean virtualPrivateCalls;
+
+        /**
          * An additional buffer for the operand stack that is required.
          */
         private int stackSizeBuffer;
 
         /**
+         * The minimum amount of local variable array slots that are required to apply substitutions.
+         */
+        private int localVariableExtension;
+
+        /**
          * Creates a new substituting method visitor.
          *
          * @param methodVisitor         The method visitor to delegate to.
+         * @param instrumentedType      The instrumented type.
+         * @param instrumentedMethod    The instrumented method.
          * @param methodGraphCompiler   The method graph compiler to use.
          * @param strict                {@code true} if the method processing should be strict where an exception is raised if a member cannot be found.
-         * @param substitution          The substitution to apply.
-         * @param instrumentedType      The instrumented type.
+         * @param replacement           The replacement to use for creating substitutions.
          * @param implementationContext The implementation context to use.
          * @param typePool              The type pool to use.
+         * @param virtualPrivateCalls   {@code true}, virtual method calls might target private methods in accordance to the nest mate specification.
          */
         protected SubstitutingMethodVisitor(MethodVisitor methodVisitor,
+                                            TypeDescription instrumentedType,
+                                            MethodDescription instrumentedMethod,
                                             MethodGraph.Compiler methodGraphCompiler,
                                             boolean strict,
-                                            Substitution substitution,
-                                            TypeDescription instrumentedType,
+                                            Replacement replacement,
                                             Implementation.Context implementationContext,
-                                            TypePool typePool) {
-            super(Opcodes.ASM6, methodVisitor);
+                                            TypePool typePool,
+                                            boolean virtualPrivateCalls) {
+            super(methodVisitor, instrumentedMethod);
+            this.instrumentedType = instrumentedType;
+            this.instrumentedMethod = instrumentedMethod;
             this.methodGraphCompiler = methodGraphCompiler;
             this.strict = strict;
-            this.substitution = substitution;
-            this.instrumentedType = instrumentedType;
+            this.replacement = replacement;
             this.implementationContext = implementationContext;
             this.typePool = typePool;
+            this.virtualPrivateCalls = virtualPrivateCalls;
             stackSizeBuffer = 0;
+            localVariableExtension = 0;
         }
 
         @Override
         public void visitFieldInsn(int opcode, String owner, String internalName, String descriptor) {
             TypePool.Resolution resolution = typePool.describe(owner.replace('/', '.'));
             if (resolution.isResolved()) {
-                FieldList<FieldDescription.InDefinedShape> candidates = resolution.resolve()
-                        .getDeclaredFields()
-                        .filter(named(internalName).and(hasDescriptor(descriptor)));
+                FieldList<FieldDescription.InDefinedShape> candidates = resolution.resolve().getDeclaredFields().filter(strict
+                        ? ElementMatchers.<FieldDescription>named(internalName).and(hasDescriptor(descriptor))
+                        : ElementMatchers.<FieldDescription>failSafe(named(internalName).and(hasDescriptor(descriptor))));
                 if (!candidates.isEmpty()) {
-                    Substitution.Resolver resolver = substitution.resolve(candidates.getOnly(), opcode == Opcodes.PUTFIELD || opcode == Opcodes.PUTSTATIC);
-                    if (resolver.isResolved()) {
-                        TypeList.Generic arguments;
+                    Replacement.Binding binding = replacement.bind(instrumentedType,
+                            instrumentedMethod,
+                            candidates.getOnly(),
+                            opcode == Opcodes.PUTFIELD || opcode == Opcodes.PUTSTATIC);
+                    if (binding.isBound()) {
+                        TypeList.Generic parameters;
                         TypeDescription.Generic result;
                         switch (opcode) {
                             case Opcodes.PUTFIELD:
-                                arguments = new TypeList.Generic.Explicit(candidates.getOnly().getDeclaringType(), candidates.getOnly().getType());
-                                result = TypeDescription.Generic.VOID;
+                                parameters = new TypeList.Generic.Explicit(candidates.getOnly().getDeclaringType(), candidates.getOnly().getType());
+                                result = TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(void.class);
                                 break;
                             case Opcodes.PUTSTATIC:
-                                arguments = new TypeList.Generic.Explicit(candidates.getOnly().getType());
-                                result = TypeDescription.Generic.VOID;
+                                parameters = new TypeList.Generic.Explicit(candidates.getOnly().getType());
+                                result = TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(void.class);
                                 break;
                             case Opcodes.GETFIELD:
-                                arguments = new TypeList.Generic.Explicit(candidates.getOnly().getDeclaringType());
+                                parameters = new TypeList.Generic.Explicit(candidates.getOnly().getDeclaringType());
                                 result = candidates.getOnly().getType();
                                 break;
                             case Opcodes.GETSTATIC:
-                                arguments = new TypeList.Generic.Empty();
+                                parameters = new TypeList.Generic.Empty();
                                 result = candidates.getOnly().getType();
                                 break;
                             default:
-                                throw new AssertionError();
+                                throw new IllegalStateException("Unexpected opcode: " + opcode);
                         }
-                        resolver.apply(instrumentedType, candidates.getOnly(), arguments, result).apply(mv, implementationContext);
+                        stackSizeBuffer = Math.max(stackSizeBuffer, binding.make(parameters, result, getFreeOffset())
+                                .apply(new LocalVariableTracingMethodVisitor(mv), implementationContext)
+                                .getMaximalSize() - result.getStackSize().getSize());
                         return;
                     }
                 } else if (strict) {
@@ -1329,39 +3113,54 @@ public class MemberSubstitution implements AsmVisitorWrapper.ForDeclaredMethods.
             if (resolution.isResolved()) {
                 MethodList<?> candidates;
                 if (opcode == Opcodes.INVOKESPECIAL && internalName.equals(MethodDescription.CONSTRUCTOR_INTERNAL_NAME)) {
-                    candidates = resolution.resolve()
-                            .getDeclaredMethods()
-                            .filter(isConstructor().and(hasDescriptor(descriptor)));
+                    candidates = resolution.resolve().getDeclaredMethods().filter(strict
+                            ? ElementMatchers.<MethodDescription>isConstructor().and(hasDescriptor(descriptor))
+                            : ElementMatchers.<MethodDescription>failSafe(isConstructor().and(hasDescriptor(descriptor))));
                 } else if (opcode == Opcodes.INVOKESTATIC || opcode == Opcodes.INVOKESPECIAL) {
-                    candidates = resolution.resolve()
-                            .getDeclaredMethods()
-                            .filter(named(internalName).and(hasDescriptor(descriptor)));
+                    candidates = resolution.resolve().getDeclaredMethods().filter(strict
+                            ? ElementMatchers.<MethodDescription>named(internalName).and(hasDescriptor(descriptor))
+                            : ElementMatchers.<MethodDescription>failSafe(named(internalName).and(hasDescriptor(descriptor))));
+                } else if (virtualPrivateCalls) {
+                    candidates = resolution.resolve().getDeclaredMethods().filter(strict
+                            ? ElementMatchers.<MethodDescription>isPrivate().and(not(isStatic())).and(named(internalName).and(hasDescriptor(descriptor)))
+                            : ElementMatchers.<MethodDescription>failSafe(isPrivate().<MethodDescription>and(not(isStatic())).and(named(internalName).and(hasDescriptor(descriptor)))));
+                    if (candidates.isEmpty()) {
+                        candidates = methodGraphCompiler.compile((TypeDefinition) resolution.resolve(), instrumentedType).listNodes().asMethodList().filter(strict
+                                ? ElementMatchers.<MethodDescription>named(internalName).and(hasDescriptor(descriptor))
+                                : ElementMatchers.<MethodDescription>failSafe(named(internalName).and(hasDescriptor(descriptor))));
+                    }
                 } else {
-                    candidates = methodGraphCompiler.compile(resolution.resolve())
-                            .listNodes()
-                            .asMethodList()
-                            .filter(named(internalName).and(hasDescriptor(descriptor)));
+                    candidates = methodGraphCompiler.compile((TypeDefinition) resolution.resolve(), instrumentedType).listNodes().asMethodList().filter(strict
+                            ? ElementMatchers.<MethodDescription>named(internalName).and(hasDescriptor(descriptor))
+                            : ElementMatchers.<MethodDescription>failSafe(named(internalName).and(hasDescriptor(descriptor))));
                 }
                 if (!candidates.isEmpty()) {
-                    Substitution.Resolver resolver = substitution.resolve(candidates.getOnly(), Substitution.InvocationType.of(opcode, candidates.getOnly()));
-                    if (resolver.isResolved()) {
-                        resolver.apply(instrumentedType,
-                                candidates.getOnly(),
-                                candidates.getOnly().isStatic() || candidates.getOnly().isConstructor()
-                                        ? candidates.getOnly().getParameters().asTypeList()
-                                        : new TypeList.Generic.Explicit(CompoundList.of(candidates.getOnly().getDeclaringType(), candidates.getOnly().getParameters().asTypeList())),
-                                candidates.getOnly().isConstructor()
-                                        ? candidates.getOnly().getDeclaringType().asGenericType()
-                                        : candidates.getOnly().getReturnType()).apply(mv, implementationContext);
+                    Replacement.Binding binding = replacement.bind(instrumentedType,
+                            instrumentedMethod,
+                            resolution.resolve(),
+                            candidates.getOnly(),
+                            Replacement.InvocationType.of(opcode, candidates.getOnly()));
+                    if (binding.isBound()) {
+                        stackSizeBuffer = Math.max(stackSizeBuffer, binding.make(
+                                        candidates.getOnly().isStatic() || candidates.getOnly().isConstructor()
+                                                ? candidates.getOnly().getParameters().asTypeList()
+                                                : new TypeList.Generic.Explicit(CompoundList.of(resolution.resolve(), candidates.getOnly().getParameters().asTypeList())),
+                                        candidates.getOnly().isConstructor()
+                                                ? candidates.getOnly().getDeclaringType().asGenericType()
+                                                : candidates.getOnly().getReturnType(),
+                                        getFreeOffset())
+                                .apply(new LocalVariableTracingMethodVisitor(mv), implementationContext).getMaximalSize() - (candidates.getOnly().isConstructor()
+                                ? StackSize.SINGLE
+                                : candidates.getOnly().getReturnType().getStackSize()).getSize());
                         if (candidates.getOnly().isConstructor()) {
-                            stackSizeBuffer = new StackManipulation.Compound(
-                                    Duplication.SINGLE.flipOver(TypeDescription.OBJECT),
+                            stackSizeBuffer = Math.max(stackSizeBuffer, new StackManipulation.Compound(
+                                    Duplication.SINGLE.flipOver(TypeDescription.ForLoadedType.of(Object.class)),
                                     Removal.SINGLE,
                                     Removal.SINGLE,
-                                    Duplication.SINGLE.flipOver(TypeDescription.OBJECT),
+                                    Duplication.SINGLE.flipOver(TypeDescription.ForLoadedType.of(Object.class)),
                                     Removal.SINGLE,
                                     Removal.SINGLE
-                            ).apply(mv, implementationContext).getMaximalSize() + StackSize.SINGLE.getSize();
+                            ).apply(mv, implementationContext).getMaximalSize() + StackSize.SINGLE.getSize());
                         }
                         return;
                     }
@@ -1376,8 +3175,40 @@ public class MemberSubstitution implements AsmVisitorWrapper.ForDeclaredMethods.
         }
 
         @Override
-        public void visitMaxs(int maxStack, int maxLocals) {
-            super.visitMaxs(maxStack + stackSizeBuffer, maxLocals);
+        public void visitMaxs(int stackSize, int localVariableLength) {
+            super.visitMaxs(stackSize + stackSizeBuffer, Math.max(localVariableExtension, localVariableLength));
+        }
+
+        /**
+         * A method visitor that traces offsets of the local variable array being used.
+         */
+        private class LocalVariableTracingMethodVisitor extends MethodVisitor {
+
+            /**
+             * Creates a new local variable tracing method visitor.
+             *
+             * @param methodVisitor The method visitor to delegate to.
+             */
+            private LocalVariableTracingMethodVisitor(MethodVisitor methodVisitor) {
+                super(OpenedClassReader.ASM_API, methodVisitor);
+            }
+
+            @Override
+            @SuppressFBWarnings(value = "SF_SWITCH_NO_DEFAULT", justification = "No action required on default option.")
+            public void visitVarInsn(int opcode, int offset) {
+                switch (opcode) {
+                    case Opcodes.ISTORE:
+                    case Opcodes.FSTORE:
+                    case Opcodes.ASTORE:
+                        localVariableExtension = Math.max(localVariableExtension, offset + 1);
+                        break;
+                    case Opcodes.LSTORE:
+                    case Opcodes.DSTORE:
+                        localVariableExtension = Math.max(localVariableExtension, offset + 2);
+                        break;
+                }
+                super.visitVarInsn(opcode, offset);
+            }
         }
     }
 }

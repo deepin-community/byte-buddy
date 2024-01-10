@@ -10,7 +10,6 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 import java.lang.instrument.Instrumentation;
-import java.security.AccessController;
 import java.util.logging.Logger;
 
 /**
@@ -25,7 +24,6 @@ public class AgentAttachmentRule implements MethodRule {
         available = ByteBuddyAgent.AttachmentProvider.DEFAULT.attempt().isAvailable();
     }
 
-    @Override
     public Statement apply(Statement base, FrameworkMethod method, Object target) {
         Enforce enforce = method.getAnnotation(Enforce.class);
         if (enforce != null) {
@@ -59,13 +57,12 @@ public class AgentAttachmentRule implements MethodRule {
 
         private final String reason;
 
-        public NoOpStatement(String reason) {
+        private NoOpStatement(String reason) {
             this.reason = reason;
         }
 
-        @Override
-        public void evaluate() throws Throwable {
-            Logger.getLogger("net.bytebuddy").warning("Ignoring test case: " + reason);
+        public void evaluate() {
+            Logger.getLogger("net.bytebuddy").info("Omitting test case: " + reason);
         }
     }
 }

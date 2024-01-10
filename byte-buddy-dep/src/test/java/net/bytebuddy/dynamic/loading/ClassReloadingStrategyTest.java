@@ -6,9 +6,7 @@ import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.dynamic.ClassFileLocator;
 import net.bytebuddy.implementation.FixedValue;
 import net.bytebuddy.test.utility.AgentAttachmentRule;
-import net.bytebuddy.test.utility.ClassFileExtraction;
 import net.bytebuddy.test.utility.JavaVersionRule;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import net.bytebuddy.utility.RandomString;
 import org.junit.Rule;
 import org.junit.Test;
@@ -31,7 +29,7 @@ public class ClassReloadingStrategyTest {
 
     private static final String FOO = "foo", BAR = "bar";
 
-    private static final String LAMBDA_SAMPLE_FACTORY = "net.bytebuddy.test.precompiled.LambdaSampleFactory";
+    private static final String LAMBDA_SAMPLE_FACTORY = "net.bytebuddy.test.precompiled.v8.LambdaSampleFactory";
 
     @Rule
     public MethodRule agentAttachmentRule = new AgentAttachmentRule();
@@ -69,6 +67,7 @@ public class ClassReloadingStrategyTest {
 
     @Test
     @AgentAttachmentRule.Enforce(retransformsClasses = true)
+    @JavaVersionRule.Enforce(atMost = 10) // Wait for mechanism in sun.misc.Unsafe to define class.
     public void testFromAgentClassWithAuxiliaryReloadingStrategy() throws Exception {
         assertThat(ByteBuddyAgent.install(), instanceOf(Instrumentation.class));
         Foo foo = new Foo();
@@ -159,7 +158,7 @@ public class ClassReloadingStrategyTest {
         when(instrumentation.getInitiatedClasses(classLoader)).thenReturn(new Class<?>[0]);
         ClassReloadingStrategy classReloadingStrategy = ClassReloadingStrategy.of(instrumentation).preregistered(Object.class);
         ArgumentCaptor<ClassDefinition> classDefinition = ArgumentCaptor.forClass(ClassDefinition.class);
-        classReloadingStrategy.load(classLoader, Collections.singletonMap(TypeDescription.OBJECT, new byte[]{1, 2, 3}));
+        classReloadingStrategy.load(classLoader, Collections.singletonMap(TypeDescription.ForLoadedType.of(Object.class), new byte[]{1, 2, 3}));
         verify(instrumentation).redefineClasses(classDefinition.capture());
         assertEquals(Object.class, classDefinition.getValue().getDefinitionClass());
         assertThat(classDefinition.getValue().getDefinitionClassFile(), is(new byte[]{1, 2, 3}));
@@ -201,11 +200,11 @@ public class ClassReloadingStrategyTest {
     }
 
     @Test
-    @JavaVersionRule.Enforce(value = 8, atMost = 8)
+    @JavaVersionRule.Enforce(value = 8, atMost = 8, j9 = false)
     @AgentAttachmentRule.Enforce(retransformsClasses = true)
     public void testAnonymousType() throws Exception {
         ClassLoader classLoader = new ByteArrayClassLoader(ClassLoadingStrategy.BOOTSTRAP_LOADER,
-                ClassFileExtraction.of(Class.forName(LAMBDA_SAMPLE_FACTORY)),
+                ClassFileLocator.ForClassLoader.readToNames(Class.forName(LAMBDA_SAMPLE_FACTORY)),
                 ByteArrayClassLoader.PersistenceHandler.MANIFEST);
         Instrumentation instrumentation = ByteBuddyAgent.install();
         Class<?> factory = classLoader.loadClass(LAMBDA_SAMPLE_FACTORY);
@@ -214,7 +213,7 @@ public class ClassReloadingStrategyTest {
         // Anonymous types can only be reset to their original format, if a retransformation is applied.
         ClassReloadingStrategy classReloadingStrategy = new ClassReloadingStrategy(instrumentation,
                 ClassReloadingStrategy.Strategy.RETRANSFORMATION).preregistered(instance.getClass());
-        ClassFileLocator classFileLocator = ClassFileLocator.AgentBased.of(instrumentation, instance.getClass());
+        ClassFileLocator classFileLocator = ClassFileLocator.ForInstrumentation.of(instrumentation, instance.getClass());
         try {
             assertThat(instance.call(), is(FOO));
             new ByteBuddy()
@@ -247,7 +246,7 @@ public class ClassReloadingStrategyTest {
         ClassReloadingStrategy.of(instrumentation).reset(classFileLocator);
         verify(instrumentation, times(2)).isRetransformClassesSupported();
         verifyNoMoreInteractions(instrumentation);
-        verifyZeroInteractions(classFileLocator);
+        verifyNoMoreInteractions(classFileLocator);
     }
 
     @Test
@@ -257,22 +256,6 @@ public class ClassReloadingStrategyTest {
                 Object.class,
                 mock(ProtectionDomain.class),
                 new byte[0]), nullValue(byte[].class));
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(ClassReloadingStrategy.class).refine(new ObjectPropertyAssertion.Refinement<Instrumentation>() {
-            @Override
-            public void apply(Instrumentation mock) {
-                when(mock.isRedefineClassesSupported()).thenReturn(true);
-                when(mock.isRetransformClassesSupported()).thenReturn(true);
-            }
-        }).apply();
-        ObjectPropertyAssertion.of(ClassReloadingStrategy.BootstrapInjection.Enabled.class).apply();
-        ObjectPropertyAssertion.of(ClassReloadingStrategy.Strategy.class).apply();
-        ObjectPropertyAssertion.of(ClassReloadingStrategy.Strategy.ClassResettingTransformer.class).apply();
-        ObjectPropertyAssertion.of(ClassReloadingStrategy.BootstrapInjection.Enabled.class).apply();
-        ObjectPropertyAssertion.of(ClassReloadingStrategy.BootstrapInjection.Disabled.class).apply();
     }
 
     @SuppressWarnings("unused")

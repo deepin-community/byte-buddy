@@ -1,19 +1,32 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy;
 
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.AccessControllerPlugin;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
+import net.bytebuddy.description.annotation.AnnotationDescription;
+import net.bytebuddy.description.annotation.AnnotationValue;
 import net.bytebuddy.description.field.FieldDescription;
 import net.bytebuddy.description.method.MethodDescription;
+import net.bytebuddy.description.method.ParameterDescription;
 import net.bytebuddy.description.modifier.*;
-import net.bytebuddy.description.type.PackageDescription;
-import net.bytebuddy.description.type.TypeDefinition;
-import net.bytebuddy.description.type.TypeDescription;
-import net.bytebuddy.description.type.TypeList;
-import net.bytebuddy.dynamic.ClassFileLocator;
-import net.bytebuddy.dynamic.DynamicType;
-import net.bytebuddy.dynamic.TargetType;
-import net.bytebuddy.dynamic.scaffold.InstrumentedType;
-import net.bytebuddy.dynamic.scaffold.MethodGraph;
-import net.bytebuddy.dynamic.scaffold.TypeValidation;
+import net.bytebuddy.description.type.*;
+import net.bytebuddy.dynamic.*;
+import net.bytebuddy.dynamic.scaffold.*;
+import net.bytebuddy.dynamic.scaffold.inline.DecoratingDynamicTypeBuilder;
 import net.bytebuddy.dynamic.scaffold.inline.MethodNameTransformer;
 import net.bytebuddy.dynamic.scaffold.inline.RebaseDynamicTypeBuilder;
 import net.bytebuddy.dynamic.scaffold.inline.RedefinitionDynamicTypeBuilder;
@@ -24,6 +37,7 @@ import net.bytebuddy.implementation.MethodCall;
 import net.bytebuddy.implementation.SuperMethodCall;
 import net.bytebuddy.implementation.attribute.AnnotationRetention;
 import net.bytebuddy.implementation.attribute.AnnotationValueFilter;
+import net.bytebuddy.implementation.attribute.MethodAttributeAppender;
 import net.bytebuddy.implementation.auxiliary.AuxiliaryType;
 import net.bytebuddy.implementation.bytecode.ByteCodeAppender;
 import net.bytebuddy.implementation.bytecode.Duplication;
@@ -37,13 +51,19 @@ import net.bytebuddy.implementation.bytecode.constant.TextConstant;
 import net.bytebuddy.implementation.bytecode.member.FieldAccess;
 import net.bytebuddy.implementation.bytecode.member.MethodInvocation;
 import net.bytebuddy.implementation.bytecode.member.MethodReturn;
+import net.bytebuddy.implementation.bytecode.member.MethodVariableAccess;
 import net.bytebuddy.matcher.ElementMatcher;
 import net.bytebuddy.matcher.LatentMatcher;
+import net.bytebuddy.utility.*;
+import net.bytebuddy.utility.nullability.MaybeNull;
+import net.bytebuddy.utility.privilege.GetSystemPropertyAction;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 
 import java.lang.annotation.Annotation;
+import java.lang.annotation.ElementType;
 import java.lang.reflect.Type;
+import java.security.PrivilegedAction;
 import java.util.*;
 
 import static net.bytebuddy.matcher.ElementMatchers.*;
@@ -81,8 +101,17 @@ import static net.bytebuddy.matcher.ElementMatchers.*;
  *
  * @see net.bytebuddy.agent.builder.AgentBuilder
  */
-@EqualsAndHashCode
+@HashCodeAndEqualsPlugin.Enhance
 public class ByteBuddy {
+
+    /**
+     * A property that controls the default naming strategy. If not set, Byte Buddy is generating
+     * random names for types that are not named explicitly. If set to {@code fixed}, Byte Buddy is
+     * setting names deterministically without any random element, or to {@code caller}, if a name
+     * should be fixed but contain the name of the caller class and method. If set to a numeric
+     * value, Byte Buddy is generating random names, using the number as a seed.
+     */
+    public static final String DEFAULT_NAMING_PROPERTY = "net.bytebuddy.naming";
 
     /**
      * The default prefix for the default {@link net.bytebuddy.NamingStrategy}.
@@ -93,6 +122,93 @@ public class ByteBuddy {
      * The default suffix when defining a {@link AuxiliaryType.NamingStrategy}.
      */
     private static final String BYTE_BUDDY_DEFAULT_SUFFIX = "auxiliary";
+
+    /**
+     * The default name of a fixed context name for synthetic fields and methods.
+     */
+    private static final String BYTE_BUDDY_DEFAULT_CONTEXT_NAME = "synthetic";
+
+    /**
+     * The default naming strategy or {@code null} if no such strategy is set.
+     */
+    @MaybeNull
+    private static final NamingStrategy DEFAULT_NAMING_STRATEGY;
+
+    /**
+     * The default auxiliary naming strategy or {@code null} if no such strategy is set.
+     */
+    @MaybeNull
+    private static final AuxiliaryType.NamingStrategy DEFAULT_AUXILIARY_NAMING_STRATEGY;
+
+    /**
+     * The default implementation context factory or {@code null} if no such factory is set.
+     */
+    @MaybeNull
+    private static final Implementation.Context.Factory DEFAULT_IMPLEMENTATION_CONTEXT_FACTORY;
+
+    /*
+     * Resolves the default naming strategy.
+     */
+    static {
+        String value = doPrivileged(new GetSystemPropertyAction(DEFAULT_NAMING_PROPERTY));
+        NamingStrategy namingStrategy;
+        AuxiliaryType.NamingStrategy auxiliaryNamingStrategy;
+        Implementation.Context.Factory implementationContextFactory;
+        if (value == null) {
+            if (GraalImageCode.getCurrent().isDefined()) {
+                namingStrategy = new NamingStrategy.Suffixing(BYTE_BUDDY_DEFAULT_PREFIX,
+                        new NamingStrategy.Suffixing.BaseNameResolver.WithCallerSuffix(NamingStrategy.Suffixing.BaseNameResolver.ForUnnamedType.INSTANCE),
+                        NamingStrategy.BYTE_BUDDY_RENAME_PACKAGE);
+                auxiliaryNamingStrategy = new AuxiliaryType.NamingStrategy.Suffixing(BYTE_BUDDY_DEFAULT_SUFFIX);
+                implementationContextFactory = new Implementation.Context.Default.Factory.WithFixedSuffix(BYTE_BUDDY_DEFAULT_CONTEXT_NAME);
+            } else {
+                namingStrategy = null;
+                auxiliaryNamingStrategy = null;
+                implementationContextFactory = null;
+            }
+        } else if (value.equalsIgnoreCase("fixed")) {
+            namingStrategy = new NamingStrategy.Suffixing(BYTE_BUDDY_DEFAULT_PREFIX,
+                    NamingStrategy.Suffixing.BaseNameResolver.ForUnnamedType.INSTANCE,
+                    NamingStrategy.BYTE_BUDDY_RENAME_PACKAGE);
+            auxiliaryNamingStrategy = new AuxiliaryType.NamingStrategy.Suffixing(BYTE_BUDDY_DEFAULT_SUFFIX);
+            implementationContextFactory = new Implementation.Context.Default.Factory.WithFixedSuffix(BYTE_BUDDY_DEFAULT_CONTEXT_NAME);
+        } else if (value.equalsIgnoreCase("caller")) {
+            namingStrategy = new NamingStrategy.Suffixing(BYTE_BUDDY_DEFAULT_PREFIX,
+                    new NamingStrategy.Suffixing.BaseNameResolver.WithCallerSuffix(NamingStrategy.Suffixing.BaseNameResolver.ForUnnamedType.INSTANCE),
+                    NamingStrategy.BYTE_BUDDY_RENAME_PACKAGE);
+            auxiliaryNamingStrategy = new AuxiliaryType.NamingStrategy.Suffixing(BYTE_BUDDY_DEFAULT_SUFFIX);
+            implementationContextFactory = new Implementation.Context.Default.Factory.WithFixedSuffix(BYTE_BUDDY_DEFAULT_CONTEXT_NAME);
+        } else {
+            long seed;
+            try {
+                seed = Long.parseLong(value);
+            } catch (Exception ignored) {
+                throw new IllegalStateException("'net.bytebuddy.naming' is set to an unknown, non-numeric value: " + value);
+            }
+            namingStrategy = new NamingStrategy.SuffixingRandom(BYTE_BUDDY_DEFAULT_PREFIX,
+                    NamingStrategy.Suffixing.BaseNameResolver.ForUnnamedType.INSTANCE,
+                    NamingStrategy.BYTE_BUDDY_RENAME_PACKAGE,
+                    new RandomString(RandomString.DEFAULT_LENGTH, new Random(seed)));
+            auxiliaryNamingStrategy = new AuxiliaryType.NamingStrategy.Suffixing(BYTE_BUDDY_DEFAULT_SUFFIX);
+            implementationContextFactory = new Implementation.Context.Default.Factory.WithFixedSuffix(BYTE_BUDDY_DEFAULT_CONTEXT_NAME);
+        }
+        DEFAULT_NAMING_STRATEGY = namingStrategy;
+        DEFAULT_AUXILIARY_NAMING_STRATEGY = auxiliaryNamingStrategy;
+        DEFAULT_IMPLEMENTATION_CONTEXT_FACTORY = implementationContextFactory;
+    }
+
+    /**
+     * A proxy for {@code java.security.AccessController#doPrivileged} that is activated if available.
+     *
+     * @param action The action to execute from a privileged context.
+     * @param <T>    The type of the action's resolved value.
+     * @return The action's resolved value.
+     */
+    @MaybeNull
+    @AccessControllerPlugin.Enhance
+    private static <T> T doPrivileged(PrivilegedAction<T> action) {
+        return action.run();
+    }
 
     /**
      * The class file version to use for types that are not based on an existing class file.
@@ -145,6 +261,16 @@ public class ByteBuddy {
     protected final TypeValidation typeValidation;
 
     /**
+     * The visibility bridge strategy to apply.
+     */
+    protected final VisibilityBridgeStrategy visibilityBridgeStrategy;
+
+    /**
+     * The class writer strategy to use.
+     */
+    protected final ClassWriterStrategy classWriterStrategy;
+
+    /**
      * <p>
      * Creates a new Byte Buddy instance with a default configuration that is suitable for most use cases.
      * </p>
@@ -156,7 +282,7 @@ public class ByteBuddy {
      * @see ClassFileVersion#ofThisVm(ClassFileVersion)
      */
     public ByteBuddy() {
-        this(ClassFileVersion.ofThisVm(ClassFileVersion.JAVA_V6));
+        this(ClassFileVersion.ofThisVm(ClassFileVersion.JAVA_V5));
     }
 
     /**
@@ -166,14 +292,22 @@ public class ByteBuddy {
      */
     public ByteBuddy(ClassFileVersion classFileVersion) {
         this(classFileVersion,
-                new NamingStrategy.SuffixingRandom(BYTE_BUDDY_DEFAULT_PREFIX),
-                new AuxiliaryType.NamingStrategy.SuffixingRandom(BYTE_BUDDY_DEFAULT_SUFFIX),
+                DEFAULT_NAMING_STRATEGY == null
+                        ? new NamingStrategy.SuffixingRandom(BYTE_BUDDY_DEFAULT_PREFIX)
+                        : DEFAULT_NAMING_STRATEGY,
+                DEFAULT_AUXILIARY_NAMING_STRATEGY == null
+                        ? new AuxiliaryType.NamingStrategy.SuffixingRandom(BYTE_BUDDY_DEFAULT_SUFFIX)
+                        : DEFAULT_AUXILIARY_NAMING_STRATEGY,
                 AnnotationValueFilter.Default.APPEND_DEFAULTS,
                 AnnotationRetention.ENABLED,
-                Implementation.Context.Default.Factory.INSTANCE,
+                DEFAULT_IMPLEMENTATION_CONTEXT_FACTORY == null
+                        ? Implementation.Context.Default.Factory.INSTANCE
+                        : DEFAULT_IMPLEMENTATION_CONTEXT_FACTORY,
                 MethodGraph.Compiler.DEFAULT,
                 InstrumentedType.Factory.Default.MODIFIABLE,
                 TypeValidation.ENABLED,
+                VisibilityBridgeStrategy.Default.ALWAYS,
+                ClassWriterStrategy.Default.CONSTANT_POOL_RETAINING,
                 new LatentMatcher.Resolved<MethodDescription>(isSynthetic().or(isDefaultFinalizer())));
     }
 
@@ -189,6 +323,8 @@ public class ByteBuddy {
      * @param methodGraphCompiler          The method graph compiler to use.
      * @param instrumentedTypeFactory      The instrumented type factory to use.
      * @param typeValidation               Determines if a type should be explicitly validated.
+     * @param visibilityBridgeStrategy     The visibility bridge strategy to apply.
+     * @param classWriterStrategy          The class writer strategy to use.
      * @param ignoredMethods               A matcher for identifying methods that should be excluded from instrumentation.
      */
     protected ByteBuddy(ClassFileVersion classFileVersion,
@@ -200,6 +336,8 @@ public class ByteBuddy {
                         MethodGraph.Compiler methodGraphCompiler,
                         InstrumentedType.Factory instrumentedTypeFactory,
                         TypeValidation typeValidation,
+                        VisibilityBridgeStrategy visibilityBridgeStrategy,
+                        ClassWriterStrategy classWriterStrategy,
                         LatentMatcher<? super MethodDescription> ignoredMethods) {
         this.classFileVersion = classFileVersion;
         this.namingStrategy = namingStrategy;
@@ -209,8 +347,10 @@ public class ByteBuddy {
         this.implementationContextFactory = implementationContextFactory;
         this.methodGraphCompiler = methodGraphCompiler;
         this.instrumentedTypeFactory = instrumentedTypeFactory;
-        this.ignoredMethods = ignoredMethods;
         this.typeValidation = typeValidation;
+        this.visibilityBridgeStrategy = visibilityBridgeStrategy;
+        this.classWriterStrategy = classWriterStrategy;
+        this.ignoredMethods = ignoredMethods;
     }
 
     /**
@@ -237,7 +377,7 @@ public class ByteBuddy {
      */
     @SuppressWarnings("unchecked")
     public <T> DynamicType.Builder<T> subclass(Class<T> superType) {
-        return (DynamicType.Builder<T>) subclass(new TypeDescription.ForLoadedType(superType));
+        return (DynamicType.Builder<T>) subclass(TypeDescription.ForLoadedType.of(superType));
     }
 
     /**
@@ -260,7 +400,7 @@ public class ByteBuddy {
      */
     @SuppressWarnings("unchecked")
     public <T> DynamicType.Builder<T> subclass(Class<T> superType, ConstructorStrategy constructorStrategy) {
-        return (DynamicType.Builder<T>) subclass(new TypeDescription.ForLoadedType(superType), constructorStrategy);
+        return (DynamicType.Builder<T>) subclass(TypeDescription.ForLoadedType.of(superType), constructorStrategy);
     }
 
     /**
@@ -369,7 +509,7 @@ public class ByteBuddy {
         if (superType.isPrimitive() || superType.isArray() || superType.isFinal()) {
             throw new IllegalArgumentException("Cannot subclass primitive, array or final types: " + superType);
         } else if (superType.isInterface()) {
-            actualSuperType = TypeDescription.Generic.OBJECT;
+            actualSuperType = TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class);
             interfaceTypes = new TypeList.Generic.Explicit(superType);
         } else {
             actualSuperType = superType.asGenericType();
@@ -385,6 +525,8 @@ public class ByteBuddy {
                 implementationContextFactory,
                 methodGraphCompiler,
                 typeValidation,
+                visibilityBridgeStrategy,
+                classWriterStrategy,
                 ignoredMethods,
                 constructorStrategy);
     }
@@ -530,7 +672,7 @@ public class ByteBuddy {
     public DynamicType.Builder<?> makePackage(String name) {
         return new SubclassDynamicTypeBuilder<Object>(instrumentedTypeFactory.subclass(name + "." + PackageDescription.PACKAGE_CLASS_NAME,
                 PackageDescription.PACKAGE_MODIFIERS,
-                TypeDescription.Generic.OBJECT),
+                TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class)),
                 classFileVersion,
                 auxiliaryTypeNamingStrategy,
                 annotationValueFilterFactory,
@@ -538,8 +680,47 @@ public class ByteBuddy {
                 implementationContextFactory,
                 methodGraphCompiler,
                 typeValidation,
+                visibilityBridgeStrategy,
+                classWriterStrategy,
                 ignoredMethods,
                 ConstructorStrategy.Default.NO_CONSTRUCTORS);
+    }
+
+    /**
+     * Creates a new Java record. This builder automatically defines fields for record members, standard accessors and a record constructor for any
+     * defined record component.
+     *
+     * @return A dynamic type builder that creates a record.
+     */
+    public DynamicType.Builder<?> makeRecord() {
+        TypeDescription.Generic record = InstrumentedType.Default.of(JavaType.RECORD.getTypeStub().getName(), TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class), Visibility.PUBLIC)
+                .withMethod(new MethodDescription.Token(Opcodes.ACC_PROTECTED))
+                .withMethod(new MethodDescription.Token("hashCode",
+                        Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT,
+                        TypeDescription.ForLoadedType.of(int.class).asGenericType()))
+                .withMethod(new MethodDescription.Token("equals",
+                        Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT,
+                        TypeDescription.ForLoadedType.of(boolean.class).asGenericType(),
+                        Collections.singletonList(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class))))
+                .withMethod(new MethodDescription.Token("toString",
+                        Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT,
+                        TypeDescription.ForLoadedType.of(String.class).asGenericType()))
+                .asGenericType();
+        return new SubclassDynamicTypeBuilder<Object>(instrumentedTypeFactory.subclass(namingStrategy.subclass(record), Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL, record).withRecord(true),
+                classFileVersion,
+                auxiliaryTypeNamingStrategy,
+                annotationValueFilterFactory,
+                annotationRetention,
+                implementationContextFactory,
+                methodGraphCompiler,
+                typeValidation,
+                visibilityBridgeStrategy,
+                classWriterStrategy,
+                ignoredMethods,
+                RecordConstructorStrategy.INSTANCE)
+                .method(isHashCode()).intercept(RecordObjectMethod.HASH_CODE)
+                .method(isEquals()).intercept(RecordObjectMethod.EQUALS)
+                .method(isToString()).intercept(RecordObjectMethod.TO_STRING);
     }
 
     /**
@@ -555,9 +736,9 @@ public class ByteBuddy {
      * @return A type builder that creates a new {@link Annotation} type.
      */
     public DynamicType.Builder<? extends Annotation> makeAnnotation() {
-        return new SubclassDynamicTypeBuilder<Annotation>(instrumentedTypeFactory.subclass(namingStrategy.subclass(TypeDescription.Generic.ANNOTATION),
+        return new SubclassDynamicTypeBuilder<Annotation>(instrumentedTypeFactory.subclass(namingStrategy.subclass(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Annotation.class)),
                 ModifierContributor.Resolver.of(Visibility.PUBLIC, TypeManifestation.ANNOTATION).resolve(),
-                TypeDescription.Generic.OBJECT).withInterfaces(new TypeList.Generic.Explicit(TypeDescription.Generic.ANNOTATION)),
+                TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class)).withInterfaces(new TypeList.Generic.Explicit(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Annotation.class))),
                 classFileVersion,
                 auxiliaryTypeNamingStrategy,
                 annotationValueFilterFactory,
@@ -565,6 +746,8 @@ public class ByteBuddy {
                 implementationContextFactory,
                 methodGraphCompiler,
                 typeValidation,
+                visibilityBridgeStrategy,
+                classWriterStrategy,
                 ignoredMethods,
                 ConstructorStrategy.Default.NO_CONSTRUCTORS);
     }
@@ -612,6 +795,8 @@ public class ByteBuddy {
                 implementationContextFactory,
                 methodGraphCompiler,
                 typeValidation,
+                visibilityBridgeStrategy,
+                classWriterStrategy,
                 ignoredMethods,
                 ConstructorStrategy.Default.NO_CONSTRUCTORS)
                 .defineConstructor(Visibility.PRIVATE).withParameters(String.class, int.class)
@@ -620,7 +805,7 @@ public class ByteBuddy {
                         TargetType.class,
                         Visibility.PUBLIC, Ownership.STATIC).withParameters(String.class)
                 .intercept(MethodCall.invoke(enumType.getDeclaredMethods()
-                        .filter(named(EnumerationImplementation.ENUM_VALUE_OF_METHOD_NAME).and(takesArguments(Class.class, String.class))).getOnly())
+                                .filter(named(EnumerationImplementation.ENUM_VALUE_OF_METHOD_NAME).and(takesArguments(Class.class, String.class))).getOnly())
                         .withOwnType().withArgument(0)
                         .withAssigner(Assigner.DEFAULT, Assigner.Typing.DYNAMIC))
                 .defineMethod(EnumerationImplementation.ENUM_VALUES_METHOD_NAME,
@@ -673,7 +858,7 @@ public class ByteBuddy {
      * @return A type builder for redefining the provided type.
      */
     public <T> DynamicType.Builder<T> redefine(Class<T> type, ClassFileLocator classFileLocator) {
-        return redefine(new TypeDescription.ForLoadedType(type), classFileLocator);
+        return redefine(TypeDescription.ForLoadedType.of(type), classFileLocator);
     }
 
     /**
@@ -695,6 +880,9 @@ public class ByteBuddy {
      * @return A type builder for redefining the provided type.
      */
     public <T> DynamicType.Builder<T> redefine(TypeDescription type, ClassFileLocator classFileLocator) {
+        if (type.isArray() || type.isPrimitive()) {
+            throw new IllegalArgumentException("Cannot redefine array or primitive type: " + type);
+        }
         return new RedefinitionDynamicTypeBuilder<T>(instrumentedTypeFactory.represent(type),
                 classFileVersion,
                 auxiliaryTypeNamingStrategy,
@@ -703,6 +891,8 @@ public class ByteBuddy {
                 implementationContextFactory,
                 methodGraphCompiler,
                 typeValidation,
+                visibilityBridgeStrategy,
+                classWriterStrategy,
                 ignoredMethods,
                 type,
                 classFileLocator);
@@ -745,7 +935,7 @@ public class ByteBuddy {
      * @return A type builder for rebasing the provided type.
      */
     public <T> DynamicType.Builder<T> rebase(Class<T> type, ClassFileLocator classFileLocator) {
-        return rebase(new TypeDescription.ForLoadedType(type), classFileLocator);
+        return rebase(TypeDescription.ForLoadedType.of(type), classFileLocator);
     }
 
     /**
@@ -760,7 +950,7 @@ public class ByteBuddy {
      * @return A type builder for rebasing the provided type.
      */
     public <T> DynamicType.Builder<T> rebase(Class<T> type, ClassFileLocator classFileLocator, MethodNameTransformer methodNameTransformer) {
-        return rebase(new TypeDescription.ForLoadedType(type), classFileLocator, methodNameTransformer);
+        return rebase(TypeDescription.ForLoadedType.of(type), classFileLocator, methodNameTransformer);
     }
 
     /**
@@ -796,6 +986,9 @@ public class ByteBuddy {
      * @return A type builder for rebasing the provided type.
      */
     public <T> DynamicType.Builder<T> rebase(TypeDescription type, ClassFileLocator classFileLocator, MethodNameTransformer methodNameTransformer) {
+        if (type.isArray() || type.isPrimitive()) {
+            throw new IllegalArgumentException("Cannot rebase array or primitive type: " + type);
+        }
         return new RebaseDynamicTypeBuilder<T>(instrumentedTypeFactory.represent(type),
                 classFileVersion,
                 auxiliaryTypeNamingStrategy,
@@ -804,6 +997,8 @@ public class ByteBuddy {
                 implementationContextFactory,
                 methodGraphCompiler,
                 typeValidation,
+                visibilityBridgeStrategy,
+                classWriterStrategy,
                 ignoredMethods,
                 type,
                 classFileLocator,
@@ -837,6 +1032,81 @@ public class ByteBuddy {
     }
 
     /**
+     * <p>
+     * Decorates a type with {@link net.bytebuddy.asm.AsmVisitorWrapper} and allows adding attributes and annotations. A decoration does
+     * not allow for any standard transformations but can be used as a performance optimization compared to a redefinition, especially
+     * when implementing a Java agent that only applies ASM-based code changes.
+     * </p>
+     * <p>
+     * <b>Important</b>: Only use this mode to improve performance in a narrowly defined transformation. Using other features as those mentioned
+     * might result in an unexpected outcome of the transformation or error. Using decoration also requires the configuration of an
+     * {@link Implementation.Context.Factory} that does not attempt any type transformation.
+     * </p>
+     *
+     * @param type The type to decorate.
+     * @param <T>  The loaded type of the decorated type.
+     * @return A type builder for decorating the provided type.
+     */
+    public <T> DynamicType.Builder<T> decorate(Class<T> type) {
+        return decorate(type, ClassFileLocator.ForClassLoader.of(type.getClassLoader()));
+    }
+
+    /**
+     * <p>
+     * Decorates a type with {@link net.bytebuddy.asm.AsmVisitorWrapper} and allows adding attributes and annotations. A decoration does
+     * not allow for any standard transformations but can be used as a performance optimization compared to a redefinition, especially
+     * when implementing a Java agent that only applies ASM-based code changes.
+     * </p>
+     * <p>
+     * <b>Important</b>: Only use this mode to improve performance in a narrowly defined transformation. Using other features as those mentioned
+     * might result in an unexpected outcome of the transformation or error. Using decoration also requires the configuration of an
+     * {@link Implementation.Context.Factory} that does not attempt any type transformation.
+     * </p>
+     *
+     * @param type             The type to decorate.
+     * @param classFileLocator The class file locator to use.
+     * @param <T>              The loaded type of the decorated type.
+     * @return A type builder for decorating the provided type.
+     */
+    public <T> DynamicType.Builder<T> decorate(Class<T> type, ClassFileLocator classFileLocator) {
+        return decorate(TypeDescription.ForLoadedType.of(type), classFileLocator);
+    }
+
+    /**
+     * <p>
+     * Decorates a type with {@link net.bytebuddy.asm.AsmVisitorWrapper} and allows adding attributes and annotations. A decoration does
+     * not allow for any standard transformations but can be used as a performance optimization compared to a redefinition, especially
+     * when implementing a Java agent that only applies ASM-based code changes.
+     * </p>
+     * <p>
+     * <b>Important</b>: Only use this mode to improve performance in a narrowly defined transformation. Using other features as those mentioned
+     * might result in an unexpected outcome of the transformation or error. Using decoration also requires the configuration of an
+     * {@link Implementation.Context.Factory} that does not attempt any type transformation.
+     * </p>
+     *
+     * @param type             The type to decorate.
+     * @param classFileLocator The class file locator to use.
+     * @param <T>              The loaded type of the decorated type.
+     * @return A type builder for decorating the provided type.
+     */
+    public <T> DynamicType.Builder<T> decorate(TypeDescription type, ClassFileLocator classFileLocator) {
+        if (type.isArray() || type.isPrimitive()) {
+            throw new IllegalArgumentException("Cannot decorate array or primitive type: " + type);
+        }
+        return new DecoratingDynamicTypeBuilder<T>(type,
+                classFileVersion,
+                auxiliaryTypeNamingStrategy,
+                annotationValueFilterFactory,
+                annotationRetention,
+                implementationContextFactory,
+                methodGraphCompiler,
+                typeValidation,
+                classWriterStrategy,
+                ignoredMethods,
+                classFileLocator);
+    }
+
+    /**
      * Creates a new configuration where all class files that are not based on an existing class file are created
      * using the supplied class file version. When creating a Byte Buddy instance by {@link ByteBuddy#ByteBuddy()}, the class
      * file version is detected automatically. If the class file version is known before creating a Byte Buddy instance, the
@@ -855,6 +1125,8 @@ public class ByteBuddy {
                 methodGraphCompiler,
                 instrumentedTypeFactory,
                 typeValidation,
+                visibilityBridgeStrategy,
+                classWriterStrategy,
                 ignoredMethods);
     }
 
@@ -877,6 +1149,8 @@ public class ByteBuddy {
                 methodGraphCompiler,
                 instrumentedTypeFactory,
                 typeValidation,
+                visibilityBridgeStrategy,
+                classWriterStrategy,
                 ignoredMethods);
     }
 
@@ -898,6 +1172,8 @@ public class ByteBuddy {
                 methodGraphCompiler,
                 instrumentedTypeFactory,
                 typeValidation,
+                visibilityBridgeStrategy,
+                classWriterStrategy,
                 ignoredMethods);
     }
 
@@ -920,6 +1196,8 @@ public class ByteBuddy {
                 methodGraphCompiler,
                 instrumentedTypeFactory,
                 typeValidation,
+                visibilityBridgeStrategy,
+                classWriterStrategy,
                 ignoredMethods);
     }
 
@@ -949,6 +1227,8 @@ public class ByteBuddy {
                 methodGraphCompiler,
                 instrumentedTypeFactory,
                 typeValidation,
+                visibilityBridgeStrategy,
+                classWriterStrategy,
                 ignoredMethods);
     }
 
@@ -973,6 +1253,8 @@ public class ByteBuddy {
                 methodGraphCompiler,
                 instrumentedTypeFactory,
                 typeValidation,
+                visibilityBridgeStrategy,
+                classWriterStrategy,
                 ignoredMethods);
     }
 
@@ -997,6 +1279,8 @@ public class ByteBuddy {
                 methodGraphCompiler,
                 instrumentedTypeFactory,
                 typeValidation,
+                visibilityBridgeStrategy,
+                classWriterStrategy,
                 ignoredMethods);
     }
 
@@ -1017,6 +1301,8 @@ public class ByteBuddy {
                 methodGraphCompiler,
                 instrumentedTypeFactory,
                 typeValidation,
+                visibilityBridgeStrategy,
+                classWriterStrategy,
                 ignoredMethods);
     }
 
@@ -1039,6 +1325,52 @@ public class ByteBuddy {
                 methodGraphCompiler,
                 instrumentedTypeFactory,
                 typeValidation,
+                visibilityBridgeStrategy,
+                classWriterStrategy,
+                ignoredMethods);
+    }
+
+    /**
+     * Creates a new configuration that applies the supplied visibility bridge strategy. By default, visibility bridges
+     * are create for all methods for which a visibility bridge is normally necessary.
+     *
+     * @param visibilityBridgeStrategy The visibility bridge strategy to apply.
+     * @return A new Byte Buddy instance that applies the supplied visibility bridge strategy.
+     */
+    public ByteBuddy with(VisibilityBridgeStrategy visibilityBridgeStrategy) {
+        return new ByteBuddy(classFileVersion,
+                namingStrategy,
+                auxiliaryTypeNamingStrategy,
+                annotationValueFilterFactory,
+                annotationRetention,
+                implementationContextFactory,
+                methodGraphCompiler,
+                instrumentedTypeFactory,
+                typeValidation,
+                visibilityBridgeStrategy,
+                classWriterStrategy,
+                ignoredMethods);
+    }
+
+    /**
+     * Creates a new configuration that applies the supplied class writer strategy. By default, the constant pool of redefined and retransformed
+     * classes is retained as most changes are additive and this retention improves performance.
+     *
+     * @param classWriterStrategy The class writer strategy to apply during type creation.
+     * @return A new Byte Buddy instance that applies the supplied class writer strategy.
+     */
+    public ByteBuddy with(ClassWriterStrategy classWriterStrategy) {
+        return new ByteBuddy(classFileVersion,
+                namingStrategy,
+                auxiliaryTypeNamingStrategy,
+                annotationValueFilterFactory,
+                annotationRetention,
+                implementationContextFactory,
+                methodGraphCompiler,
+                instrumentedTypeFactory,
+                typeValidation,
+                visibilityBridgeStrategy,
+                classWriterStrategy,
                 ignoredMethods);
     }
 
@@ -1050,6 +1382,7 @@ public class ByteBuddy {
      * @param ignoredMethods A matcher for identifying methods to be excluded from instrumentation.
      * @return A new Byte Buddy instance that excludes any method from instrumentation if it is matched by the supplied matcher.
      */
+    @SuppressWarnings("overloads")
     public ByteBuddy ignore(ElementMatcher<? super MethodDescription> ignoredMethods) {
         return ignore(new LatentMatcher.Resolved<MethodDescription>(ignoredMethods));
     }
@@ -1065,6 +1398,7 @@ public class ByteBuddy {
      * @param ignoredMethods A matcher for identifying methods to be excluded from instrumentation.
      * @return A new Byte Buddy instance that excludes any method from instrumentation if it is matched by the supplied matcher.
      */
+    @SuppressWarnings("overloads")
     public ByteBuddy ignore(LatentMatcher<? super MethodDescription> ignoredMethods) {
         return new ByteBuddy(classFileVersion,
                 namingStrategy,
@@ -1075,13 +1409,15 @@ public class ByteBuddy {
                 methodGraphCompiler,
                 instrumentedTypeFactory,
                 typeValidation,
+                visibilityBridgeStrategy,
+                classWriterStrategy,
                 ignoredMethods);
     }
 
     /**
      * An implementation fo the {@code values} method of an enumeration type.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     protected static class EnumerationImplementation implements Implementation {
 
         /**
@@ -1123,7 +1459,9 @@ public class ByteBuddy {
             this.values = values;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public InstrumentedType prepare(InstrumentedType instrumentedType) {
             for (String value : values) {
                 instrumentedType = instrumentedType.withField(new FieldDescription.Token(value,
@@ -1137,7 +1475,9 @@ public class ByteBuddy {
                     .withInitializer(new InitializationAppender(values));
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public ByteCodeAppender appender(Target implementationTarget) {
             return new ValuesMethodAppender(implementationTarget.getInstrumentedType());
         }
@@ -1145,7 +1485,7 @@ public class ByteBuddy {
         /**
          * A byte code appender for the {@code values} method of any enumeration type.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         protected static class ValuesMethodAppender implements ByteCodeAppender {
 
             /**
@@ -1162,10 +1502,12 @@ public class ByteBuddy {
                 this.instrumentedType = instrumentedType;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext, MethodDescription instrumentedMethod) {
                 FieldDescription valuesField = instrumentedType.getDeclaredFields().filter(named(ENUM_VALUES)).getOnly();
-                MethodDescription cloneMethod = TypeDescription.Generic.OBJECT.getDeclaredMethods().filter(named(CLONE_METHOD_NAME)).getOnly();
+                MethodDescription cloneMethod = TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class).getDeclaredMethods().filter(named(CLONE_METHOD_NAME)).getOnly();
                 return new Size(new StackManipulation.Compound(
                         FieldAccess.forField(valuesField).read(),
                         MethodInvocation.invoke(cloneMethod).virtual(valuesField.getType().asErasure()),
@@ -1178,7 +1520,7 @@ public class ByteBuddy {
         /**
          * A byte code appender for the type initializer of any enumeration type.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         protected static class InitializationAppender implements ByteCodeAppender {
 
             /**
@@ -1195,7 +1537,9 @@ public class ByteBuddy {
                 this.values = values;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext, MethodDescription instrumentedMethod) {
                 TypeDescription instrumentedType = instrumentedMethod.getDeclaringType().asErasure();
                 MethodDescription enumConstructor = instrumentedType.getDeclaredMethods()
@@ -1226,6 +1570,225 @@ public class ByteBuddy {
                 );
                 return new Size(stackManipulation.apply(methodVisitor, implementationContext).getMaximalSize(), instrumentedMethod.getStackSize());
             }
+        }
+    }
+
+    /**
+     * A constructor strategy for implementing a Java record.
+     */
+    @HashCodeAndEqualsPlugin.Enhance
+    protected enum RecordConstructorStrategy implements ConstructorStrategy, Implementation {
+
+        /**
+         * The singleton instance.
+         */
+        INSTANCE;
+
+        /**
+         * {@inheritDoc}
+         */
+        public List<MethodDescription.Token> extractConstructors(TypeDescription instrumentedType) {
+            List<ParameterDescription.Token> tokens = new ArrayList<ParameterDescription.Token>(instrumentedType.getRecordComponents().size());
+            for (RecordComponentDescription.InDefinedShape recordComponent : instrumentedType.getRecordComponents()) {
+                tokens.add(new ParameterDescription.Token(recordComponent.getType(),
+                        recordComponent.getDeclaredAnnotations().filter(targetsElement(ElementType.CONSTRUCTOR)),
+                        recordComponent.getActualName(),
+                        ModifierContributor.EMPTY_MASK));
+            }
+            return Collections.singletonList(new MethodDescription.Token(MethodDescription.CONSTRUCTOR_INTERNAL_NAME,
+                    Opcodes.ACC_PUBLIC,
+                    Collections.<TypeVariableToken>emptyList(),
+                    TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(void.class),
+                    tokens,
+                    Collections.<TypeDescription.Generic>emptyList(),
+                    Collections.<AnnotationDescription>emptyList(),
+                    AnnotationValue.UNDEFINED,
+                    TypeDescription.Generic.UNDEFINED));
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public MethodRegistry inject(TypeDescription instrumentedType, MethodRegistry methodRegistry) {
+            return methodRegistry.prepend(new LatentMatcher.Resolved<MethodDescription>(isConstructor().and(takesGenericArguments(instrumentedType.getRecordComponents().asTypeList()))),
+                    new MethodRegistry.Handler.ForImplementation(this),
+                    MethodAttributeAppender.ForInstrumentedMethod.EXCLUDING_RECEIVER,
+                    Transformer.ForMethod.NoOp.<MethodDescription>make());
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public ByteCodeAppender appender(Target implementationTarget) {
+            return new Appender(implementationTarget.getInstrumentedType());
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public InstrumentedType prepare(InstrumentedType instrumentedType) {
+            for (RecordComponentDescription.InDefinedShape recordComponent : instrumentedType.getRecordComponents()) {
+                instrumentedType = instrumentedType
+                        .withField(new FieldDescription.Token(recordComponent.getActualName(),
+                                Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL,
+                                recordComponent.getType(),
+                                recordComponent.getDeclaredAnnotations().filter(targetsElement(ElementType.FIELD))))
+                        .withMethod(new MethodDescription.Token(recordComponent.getActualName(),
+                                Opcodes.ACC_PUBLIC,
+                                Collections.<TypeVariableToken>emptyList(),
+                                recordComponent.getType(),
+                                Collections.<ParameterDescription.Token>emptyList(),
+                                Collections.<TypeDescription.Generic>emptyList(),
+                                recordComponent.getDeclaredAnnotations().filter(targetsElement(ElementType.METHOD)),
+                                AnnotationValue.UNDEFINED,
+                                TypeDescription.Generic.UNDEFINED));
+            }
+            return instrumentedType;
+        }
+
+        /**
+         * A byte code appender for accessors and the record constructor.
+         */
+        @HashCodeAndEqualsPlugin.Enhance
+        protected static class Appender implements ByteCodeAppender {
+
+            /**
+             * The instrumented type.
+             */
+            private final TypeDescription instrumentedType;
+
+            /**
+             * Creates a new byte code appender for accessors and the record constructor.
+             *
+             * @param instrumentedType The instrumented type.
+             */
+            protected Appender(TypeDescription instrumentedType) {
+                this.instrumentedType = instrumentedType;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public Size apply(MethodVisitor methodVisitor, Context implementationContext, MethodDescription instrumentedMethod) {
+                if (instrumentedMethod.isMethod()) {
+                    return new Simple(
+                            MethodVariableAccess.loadThis(),
+                            FieldAccess.forField(instrumentedType.getDeclaredFields().filter(named(instrumentedMethod.getName())).getOnly()).read(),
+                            MethodReturn.of(instrumentedMethod.getReturnType())
+                    ).apply(methodVisitor, implementationContext, instrumentedMethod);
+                } else {
+                    List<StackManipulation> stackManipulations = new ArrayList<StackManipulation>(instrumentedType.getRecordComponents().size() * 3 + 2);
+                    stackManipulations.add(MethodVariableAccess.loadThis());
+                    stackManipulations.add(MethodInvocation.invoke(new MethodDescription.Latent(JavaType.RECORD.getTypeStub(), new MethodDescription.Token(Opcodes.ACC_PUBLIC))));
+                    int offset = 1;
+                    for (RecordComponentDescription.InDefinedShape recordComponent : instrumentedType.getRecordComponents()) {
+                        stackManipulations.add(MethodVariableAccess.loadThis());
+                        stackManipulations.add(MethodVariableAccess.of(recordComponent.getType()).loadFrom(offset));
+                        stackManipulations.add(FieldAccess.forField(instrumentedType.getDeclaredFields()
+                                .filter(named(recordComponent.getActualName()))
+                                .getOnly()).write());
+                        offset += recordComponent.getType().getStackSize().getSize();
+                    }
+                    stackManipulations.add(MethodReturn.VOID);
+                    return new Simple(stackManipulations).apply(methodVisitor, implementationContext, instrumentedMethod);
+                }
+            }
+        }
+    }
+
+    /**
+     * Implements the object methods of the Java record type.
+     */
+    @HashCodeAndEqualsPlugin.Enhance
+    protected enum RecordObjectMethod implements Implementation {
+
+        /**
+         * The {@code hashCode} method.
+         */
+        HASH_CODE("hashCode", StackManipulation.Trivial.INSTANCE, int.class),
+
+        /**
+         * The {@code equals} method.
+         */
+        EQUALS("equals", MethodVariableAccess.REFERENCE.loadFrom(1), boolean.class, Object.class),
+
+        /**
+         * The {@code toString} method.
+         */
+        TO_STRING("toString", StackManipulation.Trivial.INSTANCE, String.class);
+
+        /**
+         * The method name.
+         */
+        private final String name;
+
+        /**
+         * The stack manipulation to append to the arguments.
+         */
+        private final StackManipulation stackManipulation;
+
+        /**
+         * The return type.
+         */
+        private final TypeDescription returnType;
+
+        /**
+         * The arguments type.
+         */
+        private final List<? extends TypeDescription> arguments;
+
+        /**
+         * Creates a new object method instance for a Java record.
+         *
+         * @param name              The method name.
+         * @param stackManipulation The stack manipulation to append to the arguments.
+         * @param returnType        The return type.
+         * @param arguments         The arguments type.
+         */
+        RecordObjectMethod(String name, StackManipulation stackManipulation, Class<?> returnType, Class<?>... arguments) {
+            this.name = name;
+            this.stackManipulation = stackManipulation;
+            this.returnType = TypeDescription.ForLoadedType.of(returnType);
+            this.arguments = new TypeList.ForLoadedTypes(arguments);
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public ByteCodeAppender appender(Target implementationTarget) {
+            StringBuilder stringBuilder = new StringBuilder();
+            List<JavaConstant> methodHandles = new ArrayList<JavaConstant>(implementationTarget.getInstrumentedType().getRecordComponents().size());
+            for (RecordComponentDescription.InDefinedShape recordComponent : implementationTarget.getInstrumentedType().getRecordComponents()) {
+                if (stringBuilder.length() > 0) {
+                    stringBuilder.append(";");
+                }
+                stringBuilder.append(recordComponent.getActualName());
+                methodHandles.add(JavaConstant.MethodHandle.ofGetter(implementationTarget.getInstrumentedType().getDeclaredFields()
+                        .filter(named(recordComponent.getActualName()))
+                        .getOnly()));
+            }
+            return new ByteCodeAppender.Simple(MethodVariableAccess.loadThis(),
+                    stackManipulation,
+                    MethodInvocation.invoke(new MethodDescription.Latent(JavaType.OBJECT_METHODS.getTypeStub(), new MethodDescription.Token("bootstrap",
+                            Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC,
+                            TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class),
+                            Arrays.asList(JavaType.METHOD_HANDLES_LOOKUP.getTypeStub().asGenericType(),
+                                    TypeDescription.ForLoadedType.of(String.class).asGenericType(),
+                                    JavaType.TYPE_DESCRIPTOR.getTypeStub().asGenericType(),
+                                    TypeDescription.ForLoadedType.of(Class.class).asGenericType(),
+                                    TypeDescription.ForLoadedType.of(String.class).asGenericType(),
+                                    TypeDescription.ArrayProjection.of(JavaType.METHOD_HANDLE.getTypeStub()).asGenericType())))).dynamic(name,
+                            returnType,
+                            CompoundList.of(implementationTarget.getInstrumentedType(), arguments),
+                            CompoundList.of(Arrays.asList(JavaConstant.Simple.of(implementationTarget.getInstrumentedType()), JavaConstant.Simple.ofLoaded(stringBuilder.toString())), methodHandles)),
+                    MethodReturn.of(returnType));
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public InstrumentedType prepare(InstrumentedType instrumentedType) {
+            return instrumentedType;
         }
     }
 }

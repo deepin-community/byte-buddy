@@ -3,13 +3,16 @@ package net.bytebuddy.agent.builder;
 import net.bytebuddy.ByteBuddy;
 import net.bytebuddy.agent.ByteBuddyAgent;
 import net.bytebuddy.description.type.TypeDescription;
+import net.bytebuddy.dynamic.ClassFileLocator;
 import net.bytebuddy.dynamic.DynamicType;
 import net.bytebuddy.dynamic.loading.ByteArrayClassLoader;
 import net.bytebuddy.dynamic.loading.ClassLoadingStrategy;
 import net.bytebuddy.dynamic.scaffold.TypeValidation;
 import net.bytebuddy.implementation.FixedValue;
 import net.bytebuddy.matcher.ElementMatchers;
-import net.bytebuddy.test.utility.*;
+import net.bytebuddy.test.packaging.SimpleType;
+import net.bytebuddy.test.utility.AgentAttachmentRule;
+import net.bytebuddy.test.utility.IntegrationRule;
 import net.bytebuddy.utility.JavaModule;
 import org.junit.Before;
 import org.junit.Rule;
@@ -18,6 +21,7 @@ import org.junit.rules.MethodRule;
 
 import java.lang.instrument.ClassFileTransformer;
 import java.lang.instrument.Instrumentation;
+import java.security.ProtectionDomain;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
@@ -28,13 +32,11 @@ import static net.bytebuddy.matcher.ElementMatchers.none;
 import static org.hamcrest.CoreMatchers.instanceOf;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoMoreInteractions;
+import static org.mockito.Mockito.*;
 
 public class AgentBuilderDefaultApplicationResubmissionTest {
 
-    private static final String FOO = "foo";
+    private static final String FOO = "foo", BAR = "bar";
 
     private static final long TIMEOUT = 1L;
 
@@ -48,7 +50,7 @@ public class AgentBuilderDefaultApplicationResubmissionTest {
 
     @Before
     public void setUp() throws Exception {
-        classLoader = new ByteArrayClassLoader(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassFileExtraction.of(Foo.class));
+        classLoader = new ByteArrayClassLoader(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassFileLocator.ForClassLoader.readToNames(SimpleType.class));
     }
 
     @Test
@@ -66,24 +68,23 @@ public class AgentBuilderDefaultApplicationResubmissionTest {
                     .with(AgentBuilder.LocationStrategy.NoOp.INSTANCE)
                     .with(AgentBuilder.RedefinitionStrategy.RETRANSFORMATION)
                     .withResubmission(new AgentBuilder.RedefinitionStrategy.ResubmissionScheduler() {
-                        @Override
                         public boolean isAlive() {
                             return true;
                         }
 
-                        @Override
                         public Cancelable schedule(final Runnable job) {
                             return new Cancelable.ForFuture(scheduledExecutorService.scheduleWithFixedDelay(job, TIMEOUT, TIMEOUT, TimeUnit.SECONDS));
                         }
                     })
-                    .type(ElementMatchers.is(Foo.class), ElementMatchers.is(classLoader)).transform(new FooTransformer())
+                    .resubmitOnError()
+                    .type(ElementMatchers.is(SimpleType.class), ElementMatchers.is(classLoader)).transform(new SampleTransformer())
                     .installOnByteBuddyAgent();
             try {
-                Class<?> type = classLoader.loadClass(Foo.class.getName());
+                Class<?> type = classLoader.loadClass(SimpleType.class.getName());
                 Thread.sleep(TimeUnit.SECONDS.toMillis(TIMEOUT * 3));
-                assertThat(type.getDeclaredMethod(FOO).invoke(type.getDeclaredConstructor().newInstance()), is((Object) FOO));
+                assertThat(type.getDeclaredMethod(FOO).invoke(type.getDeclaredConstructor().newInstance()), is((Object) BAR));
             } finally {
-                ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer);
+                assertThat(ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer), is(true));
             }
         } finally {
             scheduledExecutorService.shutdown();
@@ -91,36 +92,63 @@ public class AgentBuilderDefaultApplicationResubmissionTest {
     }
 
     @Test
-    public void testResubmissionCancelationNonOperational() throws Exception {
+    @AgentAttachmentRule.Enforce(retransformsClasses = true)
+    @IntegrationRule.Enforce
+    public void testEnforcedResubmission() throws Exception {
+        // A redefinition reflects on loaded types which are eagerly validated types (Java 7- for redefinition).
+        // This causes type equality for outer/inner classes to fail which is why an external class is used.
+        final ScheduledExecutorService scheduledExecutorService = Executors.newSingleThreadScheduledExecutor();
+        try {
+            assertThat(ByteBuddyAgent.install(), instanceOf(Instrumentation.class));
+            ClassFileTransformer classFileTransformer = new AgentBuilder.Default(new ByteBuddy().with(TypeValidation.DISABLED))
+                    .ignore(none())
+                    .disableClassFormatChanges()
+                    .with(AgentBuilder.LocationStrategy.NoOp.INSTANCE)
+                    .with(AgentBuilder.RedefinitionStrategy.RETRANSFORMATION)
+                    .withResubmission(new AgentBuilder.RedefinitionStrategy.ResubmissionScheduler() {
+                        public boolean isAlive() {
+                            return true;
+                        }
+
+                        public Cancelable schedule(final Runnable job) {
+                            return new Cancelable.ForFuture(scheduledExecutorService.scheduleWithFixedDelay(job, TIMEOUT, TIMEOUT, TimeUnit.SECONDS));
+                        }
+                    }).resubmitImmediate()
+                    .type(ElementMatchers.is(SimpleType.class), ElementMatchers.is(classLoader)).transform(new SampleTransformer())
+                    .installOnByteBuddyAgent();
+            try {
+                Class<?> type = classLoader.loadClass(SimpleType.class.getName());
+                Thread.sleep(TimeUnit.SECONDS.toMillis(TIMEOUT * 3));
+                assertThat(type.getDeclaredMethod(FOO).invoke(type.getDeclaredConstructor().newInstance()), is((Object) BAR));
+            } finally {
+                assertThat(ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer), is(true));
+            }
+        } finally {
+            scheduledExecutorService.shutdown();
+        }
+    }
+
+    @Test
+    public void testResubmissionCancellationNonOperational() throws Exception {
         AgentBuilder.RedefinitionStrategy.ResubmissionScheduler.Cancelable.NoOp.INSTANCE.cancel();
     }
 
     @Test
-    public void testResubmissionCancelationForFuture() throws Exception {
+    public void testResubmissionCancellationForFuture() throws Exception {
         Future<?> future = mock(Future.class);
         new AgentBuilder.RedefinitionStrategy.ResubmissionScheduler.Cancelable.ForFuture(future).cancel();
         verify(future).cancel(true);
         verifyNoMoreInteractions(future);
     }
 
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(AgentBuilder.RedefinitionStrategy.ResubmissionScheduler.Cancelable.NoOp.class).apply();
-        ObjectPropertyAssertion.of(AgentBuilder.RedefinitionStrategy.ResubmissionScheduler.Cancelable.ForFuture.class).apply();
-    }
+    private static class SampleTransformer implements AgentBuilder.Transformer {
 
-    public static class Foo {
-
-        public String foo() {
-            return null;
-        }
-    }
-
-    private static class FooTransformer implements AgentBuilder.Transformer {
-
-        @Override
-        public DynamicType.Builder<?> transform(DynamicType.Builder<?> builder, TypeDescription typeDescription, ClassLoader classLoader, JavaModule module) {
-            return builder.method(named(FOO)).intercept(FixedValue.value(FOO));
+        public DynamicType.Builder<?> transform(DynamicType.Builder<?> builder,
+                                                TypeDescription typeDescription,
+                                                ClassLoader classLoader,
+                                                JavaModule module,
+                                                ProtectionDomain protectionDomain) {
+            return builder.method(named(FOO)).intercept(FixedValue.value(BAR));
         }
     }
 }

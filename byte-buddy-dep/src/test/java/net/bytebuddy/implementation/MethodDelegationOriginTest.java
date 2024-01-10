@@ -5,6 +5,7 @@ import net.bytebuddy.dynamic.DynamicType;
 import net.bytebuddy.dynamic.loading.ClassLoadingStrategy;
 import net.bytebuddy.implementation.bind.annotation.Origin;
 import net.bytebuddy.matcher.ElementMatchers;
+import net.bytebuddy.test.utility.AccessControllerRule;
 import net.bytebuddy.test.utility.JavaVersionRule;
 import org.junit.Rule;
 import org.junit.Test;
@@ -22,16 +23,21 @@ public class MethodDelegationOriginTest {
 
     private static final String FOO = "foo", TYPE = "TYPE";
 
-    private static final String ORIGIN_METHOD_HANDLE = "net.bytebuddy.test.precompiled.OriginMethodHandle";
+    private static final String ORIGIN_METHOD_HANDLE = "net.bytebuddy.test.precompiled.v7.OriginMethodHandle";
 
-    private static final String ORIGIN_METHOD_TYPE = "net.bytebuddy.test.precompiled.OriginMethodType";
+    private static final String ORIGIN_METHOD_TYPE = "net.bytebuddy.test.precompiled.v7.OriginMethodType";
 
-    private static final String ORIGIN_EXECUTABLE = "net.bytebuddy.test.precompiled.OriginExecutable";
+    private static final String ORIGIN_METHOD_HANDLES_LOOKUP = "net.bytebuddy.test.precompiled.v7.OriginMethodHandlesLookup";
 
-    private static final String ORIGIN_EXECUTABLE_CACHED = "net.bytebuddy.test.precompiled.OriginExecutableWithCache";
+    private static final String ORIGIN_EXECUTABLE = "net.bytebuddy.test.precompiled.v8.OriginExecutable";
+
+    private static final String ORIGIN_EXECUTABLE_CACHED = "net.bytebuddy.test.precompiled.v8.OriginExecutableWithCache";
 
     @Rule
     public MethodRule javaVersionRule = new JavaVersionRule();
+
+    @Rule
+    public MethodRule accessControllerRule = new AccessControllerRule();
 
     @Test
     public void testOriginClass() throws Exception {
@@ -41,6 +47,7 @@ public class MethodDelegationOriginTest {
                 .intercept(MethodDelegation.to(OriginClass.class))
                 .make()
                 .load(Foo.class.getClassLoader(), ClassLoadingStrategy.Default.WRAPPER);
+        assertThat(loaded.getLoadedAuxiliaryTypes().size(), is(0));
         Foo instance = loaded.getLoaded().getDeclaredConstructor().newInstance();
         assertThat(instance.foo(), instanceOf(Class.class));
         assertThat(instance.foo(), is((Object) Foo.class));
@@ -54,6 +61,7 @@ public class MethodDelegationOriginTest {
                 .intercept(MethodDelegation.to(OriginMethod.class))
                 .make()
                 .load(Foo.class.getClassLoader(), ClassLoadingStrategy.Default.WRAPPER);
+        assertThat(loaded.getLoadedAuxiliaryTypes().size(), is(0));
         Foo instance = loaded.getLoaded().getDeclaredConstructor().newInstance();
         Object method = instance.foo();
         assertThat(method, instanceOf(Method.class));
@@ -69,6 +77,24 @@ public class MethodDelegationOriginTest {
                 .intercept(MethodDelegation.to(OriginMethodWithCache.class))
                 .make()
                 .load(Foo.class.getClassLoader(), ClassLoadingStrategy.Default.WRAPPER);
+        assertThat(loaded.getLoadedAuxiliaryTypes().size(), is(0));
+        Foo instance = loaded.getLoaded().getDeclaredConstructor().newInstance();
+        Object method = instance.foo();
+        assertThat(method, instanceOf(Method.class));
+        assertThat(method, is((Object) Foo.class.getDeclaredMethod(FOO)));
+        assertThat(method, sameInstance(instance.foo()));
+    }
+
+    @Test
+    @AccessControllerRule.Enforce
+    public void testOriginMethodWithPrivilege() throws Exception {
+        DynamicType.Loaded<Foo> loaded = new ByteBuddy()
+                .subclass(Foo.class)
+                .method(isDeclaredBy(Foo.class))
+                .intercept(MethodDelegation.to(OriginMethodWithPrivilege.class))
+                .make()
+                .load(Foo.class.getClassLoader(), ClassLoadingStrategy.Default.WRAPPER);
+        assertThat(loaded.getLoadedAuxiliaryTypes().size(), is(1));
         Foo instance = loaded.getLoaded().getDeclaredConstructor().newInstance();
         Object method = instance.foo();
         assertThat(method, instanceOf(Method.class));
@@ -86,6 +112,7 @@ public class MethodDelegationOriginTest {
                 .intercept(SuperMethodCall.INSTANCE.andThen(MethodDelegation.to(originConstructor)))
                 .make()
                 .load(Foo.class.getClassLoader(), ClassLoadingStrategy.Default.WRAPPER);
+        assertThat(loaded.getLoadedAuxiliaryTypes().size(), is(0));
         loaded.getLoaded().getDeclaredConstructor().newInstance();
         assertThat(originConstructor.constructor, instanceOf(Constructor.class));
         assertThat(originConstructor.constructor, is((Constructor) loaded.getLoaded().getDeclaredConstructor()));
@@ -106,6 +133,28 @@ public class MethodDelegationOriginTest {
                 .intercept(SuperMethodCall.INSTANCE.andThen(MethodDelegation.to(originConstructor)))
                 .make()
                 .load(Foo.class.getClassLoader(), ClassLoadingStrategy.Default.WRAPPER);
+        assertThat(loaded.getLoadedAuxiliaryTypes().size(), is(0));
+        loaded.getLoaded().getDeclaredConstructor().newInstance();
+        assertThat(originConstructor.constructor, instanceOf(Constructor.class));
+        assertThat(originConstructor.constructor, is((Constructor) loaded.getLoaded().getDeclaredConstructor()));
+        Constructor<?> previous = originConstructor.constructor;
+        loaded.getLoaded().getDeclaredConstructor().newInstance();
+        assertThat(originConstructor.constructor, instanceOf(Constructor.class));
+        assertThat(originConstructor.constructor, sameInstance((Constructor) previous));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    @AccessControllerRule.Enforce
+    public void testOriginConstructorWithPrivilege() throws Exception {
+        OriginConstructorWithPrivilege originConstructor = new OriginConstructorWithPrivilege();
+        DynamicType.Loaded<Foo> loaded = new ByteBuddy()
+                .subclass(Foo.class)
+                .constructor(ElementMatchers.any())
+                .intercept(SuperMethodCall.INSTANCE.andThen(MethodDelegation.to(originConstructor)))
+                .make()
+                .load(Foo.class.getClassLoader(), ClassLoadingStrategy.Default.WRAPPER);
+        assertThat(loaded.getLoadedAuxiliaryTypes().size(), is(1));
         loaded.getLoaded().getDeclaredConstructor().newInstance();
         assertThat(originConstructor.constructor, instanceOf(Constructor.class));
         assertThat(originConstructor.constructor, is((Constructor) loaded.getLoaded().getDeclaredConstructor()));
@@ -125,6 +174,7 @@ public class MethodDelegationOriginTest {
                 .intercept(MethodDelegation.to(origin))
                 .make()
                 .load(Foo.class.getClassLoader(), ClassLoadingStrategy.Default.WRAPPER);
+        assertThat(loaded.getLoadedAuxiliaryTypes().size(), is(0));
         Foo instance = loaded.getLoaded().getDeclaredConstructor().newInstance();
         Object method = instance.foo();
         assertThat(method, instanceOf(Method.class));
@@ -142,6 +192,7 @@ public class MethodDelegationOriginTest {
                 .intercept(MethodDelegation.to(origin))
                 .make()
                 .load(Foo.class.getClassLoader(), ClassLoadingStrategy.Default.WRAPPER);
+        assertThat(loaded.getLoadedAuxiliaryTypes().size(), is(0));
         Foo instance = loaded.getLoaded().getDeclaredConstructor().newInstance();
         Object method = instance.foo();
         assertThat(method, instanceOf(Method.class));
@@ -161,6 +212,7 @@ public class MethodDelegationOriginTest {
                 .intercept(SuperMethodCall.INSTANCE.andThen(MethodDelegation.to(originConstructor)))
                 .make()
                 .load(Foo.class.getClassLoader(), ClassLoadingStrategy.Default.WRAPPER);
+        assertThat(loaded.getLoadedAuxiliaryTypes().size(), is(0));
         loaded.getLoaded().getDeclaredConstructor().newInstance();
         assertThat(constructor.get(originConstructor), instanceOf(Constructor.class));
         assertThat(constructor.get(originConstructor), is((Object) loaded.getLoaded().getDeclaredConstructor()));
@@ -183,6 +235,7 @@ public class MethodDelegationOriginTest {
                 .intercept(SuperMethodCall.INSTANCE.andThen(MethodDelegation.to(originConstructor)))
                 .make()
                 .load(Foo.class.getClassLoader(), ClassLoadingStrategy.Default.WRAPPER);
+        assertThat(loaded.getLoadedAuxiliaryTypes().size(), is(0));
         loaded.getLoaded().getDeclaredConstructor().newInstance();
         assertThat(constructor.get(originConstructor), instanceOf(Constructor.class));
         assertThat(constructor.get(originConstructor), is((Object) loaded.getLoaded().getDeclaredConstructor()));
@@ -200,6 +253,7 @@ public class MethodDelegationOriginTest {
                 .intercept(MethodDelegation.to(OriginString.class))
                 .make()
                 .load(Foo.class.getClassLoader(), ClassLoadingStrategy.Default.WRAPPER);
+        assertThat(loaded.getLoadedAuxiliaryTypes().size(), is(0));
         Foo instance = loaded.getLoaded().getDeclaredConstructor().newInstance();
         assertThat(instance.foo(), instanceOf(String.class));
         assertThat(instance.foo(), is((Object) Foo.class.getDeclaredMethod(FOO).toString()));
@@ -215,6 +269,7 @@ public class MethodDelegationOriginTest {
                 .intercept(MethodDelegation.to(originMethodHandle))
                 .make()
                 .load(Foo.class.getClassLoader(), ClassLoadingStrategy.Default.WRAPPER);
+        assertThat(loaded.getLoadedAuxiliaryTypes().size(), is(0));
         Foo instance = loaded.getLoaded().getDeclaredConstructor().newInstance();
         assertThat(instance.foo(), instanceOf((Class<?>) originMethodHandle.getDeclaredField(TYPE).get(null)));
     }
@@ -229,6 +284,22 @@ public class MethodDelegationOriginTest {
                 .intercept(MethodDelegation.to(originMethodType))
                 .make()
                 .load(Foo.class.getClassLoader(), ClassLoadingStrategy.Default.WRAPPER);
+        assertThat(loaded.getLoadedAuxiliaryTypes().size(), is(0));
+        Foo instance = loaded.getLoaded().getDeclaredConstructor().newInstance();
+        assertThat(instance.foo(), instanceOf((Class<?>) originMethodType.getDeclaredField(TYPE).get(null)));
+    }
+
+    @Test
+    @JavaVersionRule.Enforce(7)
+    public void testOriginMethodHandlesLookup() throws Throwable {
+        Class<?> originMethodType = Class.forName(ORIGIN_METHOD_HANDLES_LOOKUP);
+        DynamicType.Loaded<Foo> loaded = new ByteBuddy()
+                .subclass(Foo.class)
+                .method(isDeclaredBy(Foo.class))
+                .intercept(MethodDelegation.to(originMethodType))
+                .make()
+                .load(Foo.class.getClassLoader(), ClassLoadingStrategy.Default.WRAPPER);
+        assertThat(loaded.getLoadedAuxiliaryTypes().size(), is(0));
         Foo instance = loaded.getLoaded().getDeclaredConstructor().newInstance();
         assertThat(instance.foo(), instanceOf((Class<?>) originMethodType.getDeclaredField(TYPE).get(null)));
     }
@@ -265,7 +336,14 @@ public class MethodDelegationOriginTest {
 
     public static class OriginMethodWithCache {
 
-        public static Object foo(@Origin(cache = true) Method method) {
+        public static Object foo(@Origin Method method) {
+            return method;
+        }
+    }
+
+    public static class OriginMethodWithPrivilege {
+
+        public static Object foo(@Origin(privileged = true) Method method) {
             return method;
         }
     }
@@ -283,10 +361,20 @@ public class MethodDelegationOriginTest {
 
         private Constructor<?> constructor;
 
-        public void foo(@Origin(cache = true) Constructor<?> constructor) {
+        public void foo(@Origin Constructor<?> constructor) {
             this.constructor = constructor;
         }
     }
+
+    public static class OriginConstructorWithPrivilege {
+
+        private Constructor<?> constructor;
+
+        public void foo(@Origin(privileged = true) Constructor<?> constructor) {
+            this.constructor = constructor;
+        }
+    }
+
 
     public static class OriginString {
 

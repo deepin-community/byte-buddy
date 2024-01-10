@@ -1,19 +1,39 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation.bind.annotation;
 
 import net.bytebuddy.description.annotation.AnnotationDescription;
 import net.bytebuddy.description.method.MethodDescription;
+import net.bytebuddy.description.method.MethodList;
 import net.bytebuddy.description.method.ParameterDescription;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.implementation.Implementation;
 import net.bytebuddy.implementation.bind.MethodDelegationBinder;
+import net.bytebuddy.implementation.bytecode.StackManipulation;
 import net.bytebuddy.implementation.bytecode.assign.Assigner;
 import net.bytebuddy.implementation.bytecode.constant.*;
+import net.bytebuddy.implementation.bytecode.member.MethodInvocation;
 import net.bytebuddy.utility.JavaConstant;
 import net.bytebuddy.utility.JavaType;
 
 import java.lang.annotation.*;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
+
+import static net.bytebuddy.matcher.ElementMatchers.named;
 
 /**
  * <p>
@@ -37,6 +57,8 @@ import java.lang.reflect.Method;
  * only supported for byte code versions starting from Java 7.</li>
  * <li>If the annotated type is {@code java.lang.invoke.MethodType}, a description of the intercepted method's type
  * is injected. Method type descriptions are only supported for byte code versions starting from Java 7.</li>
+ * <li>If the annotated type is {@code java.lang.invoke.MethodHandles$Lookup}, a method handle lookup of the instrumented
+ * class is returned. Method type descriptions are only supported for byte code versions starting from Java 7.</li>
  * </ol>
  * <p>
  * Any other parameter type will cause an {@link java.lang.IllegalStateException}.
@@ -44,6 +66,13 @@ import java.lang.reflect.Method;
  * <p>
  * <b>Important:</b> A method handle or method type reference can only be used if the referenced method's types are all visible
  * to the instrumented type or an {@link IllegalAccessError} will be thrown at runtime.
+ * </p>
+ * <p>
+ * <b>Important</b>: Don't confuse this annotation with {@link net.bytebuddy.asm.Advice.Origin} annotation. This annotation
+ * should be used only in combination with method delegation
+ * ({@link net.bytebuddy.implementation.MethodDelegation MethodDelegation.to(...)}).
+ * For {@link net.bytebuddy.asm.Advice} ASM visitor use alternative annotation from
+ * <code>net.bytebuddy.asm.Advice</code> package.
  * </p>
  *
  * @see net.bytebuddy.implementation.MethodDelegation
@@ -64,8 +93,15 @@ public @interface Origin {
     boolean cache() default true;
 
     /**
-     * A binder for binding parameters that are annotated with
-     * {@link net.bytebuddy.implementation.bind.annotation.Origin}.
+     * Determines if the method should be resolved by using an {@code java.security.AccessController} using the privileges of the generated class.
+     * Doing so requires the generation of an auxiliary class that implements {@code java.security.PrivilegedExceptionAction}.
+     *
+     * @return {@code true} if the class should be looked up using an {@code java.security.AccessController}.
+     */
+    boolean privileged() default false;
+
+    /**
+     * A binder for binding parameters that are annotated with {@link net.bytebuddy.implementation.bind.annotation.Origin}.
      *
      * @see TargetMethodAnnotationDrivenBinder
      */
@@ -76,12 +112,51 @@ public @interface Origin {
          */
         INSTANCE;
 
-        @Override
+        /**
+         * A description of the {@link Origin#cache()} method.
+         */
+        private static final MethodDescription.InDefinedShape CACHE;
+
+        /**
+         * A description of the {@link Origin#privileged()} method.
+         */
+        private static final MethodDescription.InDefinedShape PRIVILEGED;
+
+        /*
+         * Resolves annotation properties.
+         */
+        static {
+            MethodList<MethodDescription.InDefinedShape> methods = TypeDescription.ForLoadedType.of(Origin.class).getDeclaredMethods();
+            CACHE = methods.filter(named("cache")).getOnly();
+            PRIVILEGED = methods.filter(named("privileged")).getOnly();
+        }
+
+        /**
+         * Loads a method constant onto the operand stack.
+         *
+         * @param annotation        The origin annotation.
+         * @param methodDescription The method description to load.
+         * @return An appropriate stack manipulation.
+         */
+        private static StackManipulation methodConstant(AnnotationDescription.Loadable<Origin> annotation, MethodDescription.InDefinedShape methodDescription) {
+            MethodConstant.CanCache methodConstant = annotation.getValue(PRIVILEGED).resolve(Boolean.class)
+                    ? MethodConstant.ofPrivileged(methodDescription)
+                    : MethodConstant.of(methodDescription);
+            return annotation.getValue(CACHE).resolve(Boolean.class)
+                    ? methodConstant.cached()
+                    : methodConstant;
+        }
+
+        /**
+         * {@inheritDoc}
+         */
         public Class<Origin> getHandledType() {
             return Origin.class;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public MethodDelegationBinder.ParameterBinding<?> bind(AnnotationDescription.Loadable<Origin> annotation,
                                                                MethodDescription source,
                                                                ParameterDescription target,
@@ -93,30 +168,24 @@ public @interface Origin {
                 return new MethodDelegationBinder.ParameterBinding.Anonymous(ClassConstant.of(implementationTarget.getOriginType().asErasure()));
             } else if (parameterType.represents(Method.class)) {
                 return source.isMethod()
-                        ? new MethodDelegationBinder.ParameterBinding.Anonymous(
-                        annotation.loadSilent().cache()
-                                ? MethodConstant.forMethod(source.asDefined()).cached()
-                                : MethodConstant.forMethod(source.asDefined()))
+                        ? new MethodDelegationBinder.ParameterBinding.Anonymous(methodConstant(annotation, source.asDefined()))
                         : MethodDelegationBinder.ParameterBinding.Illegal.INSTANCE;
             } else if (parameterType.represents(Constructor.class)) {
                 return source.isConstructor()
-                        ? new MethodDelegationBinder.ParameterBinding.Anonymous(
-                        annotation.loadSilent().cache()
-                                ? MethodConstant.forMethod(source.asDefined()).cached()
-                                : MethodConstant.forMethod(source.asDefined()))
+                        ? new MethodDelegationBinder.ParameterBinding.Anonymous(methodConstant(annotation, source.asDefined()))
                         : MethodDelegationBinder.ParameterBinding.Illegal.INSTANCE;
             } else if (JavaType.EXECUTABLE.getTypeStub().equals(parameterType)) {
-                return new MethodDelegationBinder.ParameterBinding.Anonymous(annotation.loadSilent().cache()
-                        ? MethodConstant.forMethod(source.asDefined()).cached()
-                        : MethodConstant.forMethod(source.asDefined()));
+                return new MethodDelegationBinder.ParameterBinding.Anonymous(methodConstant(annotation, source.asDefined()));
             } else if (parameterType.represents(String.class)) {
                 return new MethodDelegationBinder.ParameterBinding.Anonymous(new TextConstant(source.toString()));
             } else if (parameterType.represents(int.class)) {
                 return new MethodDelegationBinder.ParameterBinding.Anonymous(IntegerConstant.forValue(source.getModifiers()));
             } else if (parameterType.equals(JavaType.METHOD_HANDLE.getTypeStub())) {
-                return new MethodDelegationBinder.ParameterBinding.Anonymous(JavaConstant.MethodHandle.of(source.asDefined()).asStackManipulation());
+                return new MethodDelegationBinder.ParameterBinding.Anonymous(new JavaConstantValue(JavaConstant.MethodHandle.of(source.asDefined())));
             } else if (parameterType.equals(JavaType.METHOD_TYPE.getTypeStub())) {
-                return new MethodDelegationBinder.ParameterBinding.Anonymous(JavaConstant.MethodType.of(source.asDefined()).asStackManipulation());
+                return new MethodDelegationBinder.ParameterBinding.Anonymous(new JavaConstantValue(JavaConstant.MethodType.of(source.asDefined())));
+            } else if (parameterType.equals(JavaType.METHOD_HANDLES_LOOKUP.getTypeStub())) {
+                return new MethodDelegationBinder.ParameterBinding.Anonymous(MethodInvocation.lookup());
             } else {
                 throw new IllegalStateException("The " + target + " method's " + target.getIndex() +
                         " parameter is annotated with a Origin annotation with an argument not representing a Class," +

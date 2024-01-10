@@ -1,23 +1,22 @@
 package net.bytebuddy.implementation.bytecode;
 
 import net.bytebuddy.implementation.Implementation;
-import net.bytebuddy.test.utility.MockitoRule;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.After;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 import org.objectweb.asm.MethodVisitor;
 
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.mockito.Mockito.verifyZeroInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 public class StackManipulationTest {
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     @Mock
     private MethodVisitor methodVisitor;
@@ -27,8 +26,8 @@ public class StackManipulationTest {
 
     @After
     public void tearDown() throws Exception {
-        verifyZeroInteractions(methodVisitor);
-        verifyZeroInteractions(implementationContext);
+        verifyNoMoreInteractions(methodVisitor);
+        verifyNoMoreInteractions(implementationContext);
     }
 
     @Test
@@ -51,11 +50,5 @@ public class StackManipulationTest {
     @Test(expected = IllegalStateException.class)
     public void testIllegalIsNotApplicable() throws Exception {
         StackManipulation.Illegal.INSTANCE.apply(methodVisitor, implementationContext);
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(StackManipulation.Trivial.class).apply();
-        ObjectPropertyAssertion.of(StackManipulation.Illegal.class).apply();
     }
 }

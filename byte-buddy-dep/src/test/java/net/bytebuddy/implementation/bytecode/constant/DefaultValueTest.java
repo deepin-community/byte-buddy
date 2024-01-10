@@ -4,15 +4,15 @@ import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.implementation.Implementation;
 import net.bytebuddy.implementation.bytecode.StackManipulation;
 import net.bytebuddy.implementation.bytecode.StackSize;
-import net.bytebuddy.test.utility.MockitoRule;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 
@@ -31,7 +31,7 @@ public class DefaultValueTest {
     private final int opcode;
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     @Mock
     private MethodVisitor methodVisitor;
@@ -71,7 +71,7 @@ public class DefaultValueTest {
 
     @After
     public void tearDown() throws Exception {
-        verifyZeroInteractions(implementationContext);
+        verifyNoMoreInteractions(implementationContext);
     }
 
     @Test
@@ -82,7 +82,7 @@ public class DefaultValueTest {
         assertThat(size.getSizeImpact(), is(StackSize.of(type).getSize()));
         assertThat(size.getMaximalSize(), is(StackSize.of(type).getSize()));
         if (opcode == -1) {
-            verifyZeroInteractions(methodVisitor);
+            verifyNoMoreInteractions(methodVisitor);
         } else {
             verify(methodVisitor).visitInsn(opcode);
             verifyNoMoreInteractions(methodVisitor);

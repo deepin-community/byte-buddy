@@ -17,7 +17,7 @@ public class TypePoolDefaultLazyFieldListTest extends AbstractFieldListTest<Fiel
 
     @Before
     public void setUp() throws Exception {
-        typePool = TypePool.Default.ofClassPath();
+        typePool = TypePool.Default.ofSystemLoader();
     }
 
     @After
@@ -25,22 +25,18 @@ public class TypePoolDefaultLazyFieldListTest extends AbstractFieldListTest<Fiel
         typePool.clear();
     }
 
-    @Override
     protected Field getFirst() throws Exception {
         return Foo.class.getDeclaredField("foo");
     }
 
-    @Override
     protected Field getSecond() throws Exception {
         return Foo.class.getDeclaredField("bar");
     }
 
-    @Override
     protected FieldList<FieldDescription.InDefinedShape> asList(List<Field> elements) {
-        return typePool.describe(Foo.class.getName()).resolve().getDeclaredFields().filter(anyOf(elements.toArray(new Field[elements.size()])));
+        return typePool.describe(Foo.class.getName()).resolve().getDeclaredFields().filter(anyOf(elements.toArray(new Field[0])));
     }
 
-    @Override
     protected FieldDescription.InDefinedShape asElement(Field element) {
         return new FieldDescription.ForLoadedField(element);
     }

@@ -1,6 +1,21 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation;
 
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.description.type.TypeList;
@@ -30,7 +45,7 @@ import java.util.*;
  * implemented by the instrumented type. The Java runtime only requires the second condition to be fulfilled which
  * is why this implementation only checks the later condition, as well.
  */
-@EqualsAndHashCode
+@HashCodeAndEqualsPlugin.Enhance
 public class DefaultMethodCall implements Implementation {
 
     /**
@@ -126,12 +141,16 @@ public class DefaultMethodCall implements Implementation {
         return new DefaultMethodCall(Collections.<TypeDescription>emptyList());
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public InstrumentedType prepare(InstrumentedType instrumentedType) {
         return instrumentedType;
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public ByteCodeAppender appender(Target implementationTarget) {
         return new Appender(implementationTarget, filterRelevant(implementationTarget.getInstrumentedType()));
     }
@@ -157,7 +176,7 @@ public class DefaultMethodCall implements Implementation {
     /**
      * The appender for implementing a {@link net.bytebuddy.implementation.DefaultMethodCall}.
      */
-    @EqualsAndHashCode(exclude = "nonPrioritizedInterfaces")
+    @HashCodeAndEqualsPlugin.Enhance
     protected static class Appender implements ByteCodeAppender {
 
         /**
@@ -173,6 +192,7 @@ public class DefaultMethodCall implements Implementation {
         /**
          * The relevant non-prioritized interfaces to be considered by this appender.
          */
+        @HashCodeAndEqualsPlugin.ValueHandling(HashCodeAndEqualsPlugin.ValueHandling.Sort.IGNORE)
         private final Set<TypeDescription> nonPrioritizedInterfaces;
 
         /**
@@ -188,7 +208,9 @@ public class DefaultMethodCall implements Implementation {
             nonPrioritizedInterfaces.removeAll(prioritizedInterfaces);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Size apply(MethodVisitor methodVisitor, Context implementationContext, MethodDescription instrumentedMethod) {
             StackManipulation defaultMethodInvocation = locateDefault(instrumentedMethod);
             if (!defaultMethodInvocation.isValid()) {
@@ -213,13 +235,17 @@ public class DefaultMethodCall implements Implementation {
             MethodDescription.SignatureToken methodToken = methodDescription.asSignatureToken();
             SpecialMethodInvocation specialMethodInvocation = SpecialMethodInvocation.Illegal.INSTANCE;
             for (TypeDescription typeDescription : prioritizedInterfaces) {
-                specialMethodInvocation = implementationTarget.invokeDefault(methodToken, typeDescription);
+                specialMethodInvocation = implementationTarget
+                        .invokeDefault(methodToken, typeDescription)
+                        .withCheckedCompatibilityTo(methodDescription.asTypeToken());
                 if (specialMethodInvocation.isValid()) {
                     return specialMethodInvocation;
                 }
             }
             for (TypeDescription typeDescription : nonPrioritizedInterfaces) {
-                SpecialMethodInvocation other = implementationTarget.invokeDefault(methodToken, typeDescription);
+                SpecialMethodInvocation other = implementationTarget
+                        .invokeDefault(methodToken, typeDescription)
+                        .withCheckedCompatibilityTo(methodDescription.asTypeToken());
                 if (specialMethodInvocation.isValid() && other.isValid()) {
                     throw new IllegalStateException(methodDescription + " has an ambiguous default method with "
                             + other.getMethodDescription() + " and " + specialMethodInvocation.getMethodDescription());

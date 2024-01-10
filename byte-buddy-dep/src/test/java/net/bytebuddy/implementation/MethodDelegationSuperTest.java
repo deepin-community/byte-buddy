@@ -3,13 +3,13 @@ package net.bytebuddy.implementation;
 import net.bytebuddy.ByteBuddy;
 import net.bytebuddy.description.modifier.TypeManifestation;
 import net.bytebuddy.description.modifier.Visibility;
+import net.bytebuddy.dynamic.ClassFileLocator;
 import net.bytebuddy.dynamic.DynamicType;
 import net.bytebuddy.dynamic.TargetType;
 import net.bytebuddy.dynamic.loading.ByteArrayClassLoader;
 import net.bytebuddy.dynamic.loading.ClassLoadingStrategy;
-import net.bytebuddy.dynamic.loading.PackageDefinitionStrategy;
+import net.bytebuddy.dynamic.loading.InjectionClassLoader;
 import net.bytebuddy.implementation.bind.annotation.Super;
-import net.bytebuddy.test.utility.ClassFileExtraction;
 import org.junit.Test;
 
 import java.io.Serializable;
@@ -120,14 +120,16 @@ public class MethodDelegationSuperTest {
 
     @Test
     public void testFinalType() throws Exception {
-        ClassLoader classLoader = new ByteArrayClassLoader(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassFileExtraction.of(SimpleInterceptor.class));
+        InjectionClassLoader classLoader = new ByteArrayClassLoader(ClassLoadingStrategy.BOOTSTRAP_LOADER,
+                false,
+                ClassFileLocator.ForClassLoader.readToNames(SimpleInterceptor.class));
         Class<?> type = new ByteBuddy()
                 .rebase(FinalType.class)
                 .modifiers(TypeManifestation.PLAIN, Visibility.PUBLIC)
                 .method(named(FOO)).intercept(ExceptionMethod.throwing(RuntimeException.class))
                 .method(named(BAR)).intercept(MethodDelegation.to(SimpleInterceptor.class))
                 .make()
-                .load(classLoader, ClassLoadingStrategy.Default.INJECTION)
+                .load(classLoader, InjectionClassLoader.Strategy.INSTANCE)
                 .getLoaded();
         assertThat(type.getDeclaredMethod(BAR).invoke(type.getDeclaredConstructor().newInstance()), is((Object) FOO));
     }
@@ -139,7 +141,6 @@ public class MethodDelegationSuperTest {
 
     public static class Foo implements Qux {
 
-        @Override
         public Object qux() {
             return FOO;
         }
@@ -171,7 +172,6 @@ public class MethodDelegationSuperTest {
 
     public abstract static class FooBarQuxBaz implements Qux {
 
-        @Override
         public abstract Object qux();
     }
 

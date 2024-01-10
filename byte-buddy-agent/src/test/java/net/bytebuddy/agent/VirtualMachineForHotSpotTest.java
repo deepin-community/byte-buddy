@@ -1,120 +1,228 @@
 package net.bytebuddy.agent;
 
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
-import net.bytebuddy.test.utility.UnixSocketRule;
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.MethodRule;
-import org.mockito.InOrder;
+import org.mockito.Mockito;
+import org.mockito.invocation.InvocationOnMock;
+import org.mockito.stubbing.Answer;
 
 import java.io.IOException;
+import java.util.Properties;
 
-import static org.mockito.Mockito.inOrder;
-import static org.mockito.Mockito.spy;
+import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.mockito.Mockito.*;
 
 public class VirtualMachineForHotSpotTest {
 
-    @Rule
-    public MethodRule unixSocketRule = new UnixSocketRule();
+    private static final String FOO = "foo", BAR = "bar";
 
     @Test
-    @UnixSocketRule.Enforce
-    public void testAttachment() throws Exception {
-        VirtualMachine.ForHotSpot virtualMachine = spy(new PseudoMachine(
-                "0".getBytes("UTF-8"),
-                new byte[]{10}
-        ));
-        virtualMachine.loadAgent("foo", "bar");
-        InOrder order = inOrder(virtualMachine);
-        order.verify(virtualMachine).connect();
-        order.verify(virtualMachine).write("1".getBytes("UTF-8"));
-        order.verify(virtualMachine).write(new byte[1]);
-        order.verify(virtualMachine).write("load".getBytes("UTF-8"));
-        order.verify(virtualMachine).write(new byte[1]);
-        order.verify(virtualMachine).write("instrument".getBytes("UTF-8"));
-        order.verify(virtualMachine).write(new byte[1]);
-        order.verify(virtualMachine).write(Boolean.FALSE.toString().getBytes("UTF-8"));
-        order.verify(virtualMachine).write(new byte[1]);
-        order.verify(virtualMachine).write("foo=bar".getBytes("UTF-8"));
-        order.verify(virtualMachine).write(new byte[1]);
+    public void testSystemProperties() throws Exception {
+        VirtualMachine.ForHotSpot.Connection connection = mock(VirtualMachine.ForHotSpot.Connection.class);
+        VirtualMachine.ForHotSpot.Connection.Response response = mock(VirtualMachine.ForHotSpot.Connection.Response.class);
+        when(connection.execute("1", "properties", null, null, null)).thenReturn(response);
+        when(response.read(any(byte[].class)))
+                .then(new ByteAnswer("0".getBytes("UTF-8")))
+                .then(new ByteAnswer("\n".getBytes("UTF-8")))
+                .then(new ByteAnswer((FOO + "=" + BAR).getBytes("ISO_8859_1")))
+                .thenReturn(-1);
+        VirtualMachine virtualMachine = new VirtualMachine.ForHotSpot(connection);
+        Properties properties = virtualMachine.getSystemProperties();
+        assertThat(properties.size(), is(1));
+        assertThat(properties.getProperty(FOO), is(BAR));
+        verify(connection).execute("1", "properties", null, null, null);
+        verify(response).close();
+        verifyNoMoreInteractions(connection);
+        virtualMachine.detach();
+        verify(connection).close();
     }
 
     @Test
-    @UnixSocketRule.Enforce
+    public void testAgentProperties() throws Exception {
+        VirtualMachine.ForHotSpot.Connection connection = mock(VirtualMachine.ForHotSpot.Connection.class);
+        VirtualMachine.ForHotSpot.Connection.Response response = mock(VirtualMachine.ForHotSpot.Connection.Response.class);
+        when(connection.execute("1", "agentProperties", null, null, null)).thenReturn(response);
+        when(response.read(any(byte[].class)))
+                .then(new ByteAnswer("0".getBytes("UTF-8")))
+                .then(new ByteAnswer("\n".getBytes("UTF-8")))
+                .then(new ByteAnswer((FOO + "=" + BAR).getBytes("ISO_8859_1")))
+                .thenReturn(-1);
+        VirtualMachine virtualMachine = new VirtualMachine.ForHotSpot(connection);
+        Properties properties = virtualMachine.getAgentProperties();
+        assertThat(properties.size(), is(1));
+        assertThat(properties.getProperty(FOO), is(BAR));
+        verify(connection).execute("1", "agentProperties", null, null, null);
+        verify(response).close();
+        verifyNoMoreInteractions(connection);
+        virtualMachine.detach();
+        verify(connection).close();
+    }
+
+    @Test
+    public void testAttachment() throws Exception {
+        VirtualMachine.ForHotSpot.Connection connection = mock(VirtualMachine.ForHotSpot.Connection.class);
+        VirtualMachine.ForHotSpot.Connection.Response response = mock(VirtualMachine.ForHotSpot.Connection.Response.class);
+        when(connection.execute("1", "load", "instrument", "false", FOO + "=" + BAR)).thenReturn(response);
+        when(response.read(any(byte[].class))).then(new ByteAnswer("0".getBytes("UTF-8"))).then(new ByteAnswer((byte) 10));
+        VirtualMachine virtualMachine = new VirtualMachine.ForHotSpot(connection);
+        virtualMachine.loadAgent(FOO, BAR);
+        verify(connection).execute("1", "load", "instrument", "false", FOO + "=" + BAR);
+        verify(response).close();
+        verifyNoMoreInteractions(connection);
+        virtualMachine.detach();
+        verify(connection).close();
+    }
+
+    @Test
     public void testAttachmentWithoutArgument() throws Exception {
-        VirtualMachine.ForHotSpot virtualMachine = spy(new PseudoMachine(
-                "0".getBytes("UTF-8"),
-                new byte[]{10}
-        ));
-        virtualMachine.loadAgent("foo", null);
-        InOrder order = inOrder(virtualMachine);
-        order.verify(virtualMachine).connect();
-        order.verify(virtualMachine).write("1".getBytes("UTF-8"));
-        order.verify(virtualMachine).write(new byte[1]);
-        order.verify(virtualMachine).write("load".getBytes("UTF-8"));
-        order.verify(virtualMachine).write(new byte[1]);
-        order.verify(virtualMachine).write("instrument".getBytes("UTF-8"));
-        order.verify(virtualMachine).write(new byte[1]);
-        order.verify(virtualMachine).write(Boolean.FALSE.toString().getBytes("UTF-8"));
-        order.verify(virtualMachine).write(new byte[1]);
-        order.verify(virtualMachine).write("foo".getBytes("UTF-8"));
-        order.verify(virtualMachine).write(new byte[1]);
+        VirtualMachine.ForHotSpot.Connection connection = mock(VirtualMachine.ForHotSpot.Connection.class);
+        VirtualMachine.ForHotSpot.Connection.Response response = mock(VirtualMachine.ForHotSpot.Connection.Response.class);
+        when(connection.execute("1", "load", "instrument", "false", FOO)).thenReturn(response);
+        when(response.read(any(byte[].class))).then(new ByteAnswer("0".getBytes("UTF-8"))).then(new ByteAnswer((byte) 10));
+        VirtualMachine virtualMachine = new VirtualMachine.ForHotSpot(connection);
+        virtualMachine.loadAgent(FOO);
+        verify(connection).execute("1", "load", "instrument", "false", FOO);
+        verify(response).close();
+        verifyNoMoreInteractions(connection);
+        virtualMachine.detach();
+        verify(connection).close();
+    }
+
+    @Test
+    public void testNativeAttachment() throws Exception {
+        VirtualMachine.ForHotSpot.Connection connection = mock(VirtualMachine.ForHotSpot.Connection.class);
+        VirtualMachine.ForHotSpot.Connection.Response response = mock(VirtualMachine.ForHotSpot.Connection.Response.class);
+        when(connection.execute("1", "load", "instrument", "true", FOO + "=" + BAR)).thenReturn(response);
+        when(response.read(any(byte[].class))).then(new ByteAnswer("0".getBytes("UTF-8"))).then(new ByteAnswer((byte) 10));
+        VirtualMachine virtualMachine = new VirtualMachine.ForHotSpot(connection);
+        virtualMachine.loadAgentPath(FOO, BAR);
+        verify(connection).execute("1", "load", "instrument", "true", FOO + "=" + BAR);
+        verify(response).close();
+        verifyNoMoreInteractions(connection);
+        virtualMachine.detach();
+        verify(connection).close();
+    }
+
+    @Test
+    public void testNativeAttachmentWithoutArgument() throws Exception {
+        VirtualMachine.ForHotSpot.Connection connection = mock(VirtualMachine.ForHotSpot.Connection.class);
+        VirtualMachine.ForHotSpot.Connection.Response response = mock(VirtualMachine.ForHotSpot.Connection.Response.class);
+        when(connection.execute("1", "load", "instrument", "true", FOO)).thenReturn(response);
+        when(response.read(any(byte[].class))).then(new ByteAnswer("0".getBytes("UTF-8"))).then(new ByteAnswer((byte) 10));
+        VirtualMachine virtualMachine = new VirtualMachine.ForHotSpot(connection);
+        virtualMachine.loadAgentPath(FOO);
+        verify(connection).execute("1", "load", "instrument", "true", FOO);
+        verify(response).close();
+        verifyNoMoreInteractions(connection);
+        virtualMachine.detach();
+        verify(connection).close();
+    }
+
+    @Test
+    public void testNativeLibraryAttachment() throws Exception {
+        VirtualMachine.ForHotSpot.Connection connection = mock(VirtualMachine.ForHotSpot.Connection.class);
+        VirtualMachine.ForHotSpot.Connection.Response response = mock(VirtualMachine.ForHotSpot.Connection.Response.class);
+        when(connection.execute("1", "load", "instrument", "false", FOO + "=" + BAR)).thenReturn(response);
+        when(response.read(any(byte[].class))).then(new ByteAnswer("0".getBytes("UTF-8"))).then(new ByteAnswer((byte) 10));
+        VirtualMachine virtualMachine = new VirtualMachine.ForHotSpot(connection);
+        virtualMachine.loadAgentLibrary(FOO, BAR);
+        verify(connection).execute("1", "load", "instrument", "false", FOO + "=" + BAR);
+        verify(response).close();
+        verifyNoMoreInteractions(connection);
+        virtualMachine.detach();
+        verify(connection).close();
+    }
+
+    @Test
+    public void testNativeLibraryAttachmentWithoutArgument() throws Exception {
+        VirtualMachine.ForHotSpot.Connection connection = mock(VirtualMachine.ForHotSpot.Connection.class);
+        VirtualMachine.ForHotSpot.Connection.Response response = mock(VirtualMachine.ForHotSpot.Connection.Response.class);
+        when(connection.execute("1", "load", "instrument", "false", FOO)).thenReturn(response);
+        when(response.read(any(byte[].class))).then(new ByteAnswer("0".getBytes("UTF-8"))).then(new ByteAnswer((byte) 10));
+        VirtualMachine virtualMachine = new VirtualMachine.ForHotSpot(connection);
+        virtualMachine.loadAgentLibrary(FOO);
+        verify(connection).execute("1", "load", "instrument", "false", FOO);
+        verify(response).close();
+        verifyNoMoreInteractions(connection);
+        virtualMachine.detach();
+        verify(connection).close();
+    }
+
+    @Test
+    public void testStartManagementAgent() throws Exception {
+        VirtualMachine.ForHotSpot.Connection connection = mock(VirtualMachine.ForHotSpot.Connection.class);
+        VirtualMachine.ForHotSpot.Connection.Response response = mock(VirtualMachine.ForHotSpot.Connection.Response.class);
+        when(connection.execute("1", "jcmd", "ManagementAgent.start foo=bar", null, null)).thenReturn(response);
+        when(response.read(any(byte[].class))).then(new ByteAnswer("0".getBytes("UTF-8"))).then(new ByteAnswer((byte) 10));
+        VirtualMachine virtualMachine = new VirtualMachine.ForHotSpot(connection);
+        Properties properties = new Properties();
+        properties.setProperty("com.sun.management.foo", BAR);
+        virtualMachine.startManagementAgent(properties);
+        verify(connection).execute("1", "jcmd", "ManagementAgent.start foo=bar", null, null);
+        verify(response).close();
+        verifyNoMoreInteractions(connection);
+        virtualMachine.detach();
+        verify(connection).close();
+    }
+
+    @Test
+    public void testStartLocalManagementAgent() throws Exception {
+        VirtualMachine.ForHotSpot.Connection connection = mock(VirtualMachine.ForHotSpot.Connection.class);
+        VirtualMachine.ForHotSpot.Connection.Response response = mock(VirtualMachine.ForHotSpot.Connection.Response.class);
+        when(connection.execute("1", "jcmd", "ManagementAgent.start_local", null, null)).thenReturn(response);
+        when(response.read(any(byte[].class)))
+                .then(new ByteAnswer("0".getBytes("UTF-8")))
+                .then(new ByteAnswer((byte) 10));
+        VirtualMachine virtualMachine = spy(new VirtualMachine.ForHotSpot(connection));
+        Properties properties = new Properties();
+        properties.setProperty("com.sun.management.jmxremote.localConnectorAddress", BAR);
+        doReturn(properties).when(virtualMachine).getAgentProperties();
+        assertThat(virtualMachine.startLocalManagementAgent(), is(BAR));
+        verify(connection).execute("1", "jcmd", "ManagementAgent.start_local", null, null);
+        verify(response).close();
+        verifyNoMoreInteractions(connection);
+        virtualMachine.detach();
+        verify(connection).close();
     }
 
     @Test(expected = IOException.class)
-    @UnixSocketRule.Enforce
     public void testAttachmentIncompatibleProtocol() throws Exception {
-        new PseudoMachine(
-                "1".getBytes("UTF-8"),
-                "0".getBytes("UTF-8"),
-                "1".getBytes("UTF-8"),
-                new byte[]{10}
-        ).loadAgent("foo", null);
+        VirtualMachine.ForHotSpot.Connection connection = mock(VirtualMachine.ForHotSpot.Connection.class);
+        VirtualMachine.ForHotSpot.Connection.Response response = mock(VirtualMachine.ForHotSpot.Connection.Response.class);
+        when(connection.execute(anyString(), Mockito.<String[]>any())).thenReturn(response);
+        when(response.read(any(byte[].class)))
+                .then(new ByteAnswer("1".getBytes("UTF-8")))
+                .then(new ByteAnswer("0".getBytes("UTF-8")))
+                .then(new ByteAnswer("1".getBytes("UTF-8")))
+                .then(new ByteAnswer((byte) 10));
+        new VirtualMachine.ForHotSpot(connection).loadAgent(FOO, null);
     }
 
     @Test(expected = IllegalStateException.class)
-    @UnixSocketRule.Enforce
     public void testAttachmentUnknownError() throws Exception {
-        new PseudoMachine(
-                "1".getBytes("UTF-8"),
-                new byte[]{10},
-                "foo".getBytes("UTF-8")
-        ).loadAgent("foo", null);
+        VirtualMachine.ForHotSpot.Connection connection = mock(VirtualMachine.ForHotSpot.Connection.class);
+        VirtualMachine.ForHotSpot.Connection.Response response = mock(VirtualMachine.ForHotSpot.Connection.Response.class);
+        when(connection.execute(anyString(), Mockito.<String[]>any())).thenReturn(response);
+        when(response.read(any(byte[].class)))
+                .then(new ByteAnswer("1".getBytes("UTF-8")))
+                .then(new ByteAnswer((byte) 10))
+                .then(new ByteAnswer(FOO.getBytes("UTF-8")))
+                .thenReturn(-1);
+        new VirtualMachine.ForHotSpot(connection).loadAgent(FOO, null);
     }
 
-    private static class PseudoMachine extends VirtualMachine.ForHotSpot {
+    private static class ByteAnswer implements Answer<Integer> {
 
-        private final byte[][] read;
+        private final byte[] value;
 
-        private int index;
-
-        private PseudoMachine(byte[]... read) {
-            super(null);
-            this.read = read;
+        private ByteAnswer(byte... value) {
+            this.value = value;
         }
 
-        @Override
-        public void detach() throws IOException {
-        }
-
-        @Override
-        protected void connect() throws IOException {
-
-        }
-
-        @Override
-        protected int read(byte[] buffer) throws IOException {
-            if (index == read.length) {
-                return -1;
-            }
-            byte[] read = this.read[index++];
-            System.arraycopy(read, 0, buffer, 0, read.length);
-            return read.length;
-        }
-
-        @Override
-        protected void write(byte[] buffer) throws IOException {
-
+        public Integer answer(InvocationOnMock invocationOnMock) throws Throwable {
+            byte[] buffer = invocationOnMock.getArgument(0);
+            System.arraycopy(value, 0, buffer, 0, value.length);
+            return value.length;
         }
     }
 }

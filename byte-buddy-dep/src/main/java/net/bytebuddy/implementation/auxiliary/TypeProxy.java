@@ -1,9 +1,23 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation.auxiliary;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import lombok.EqualsAndHashCode;
 import net.bytebuddy.ByteBuddy;
 import net.bytebuddy.ClassFileVersion;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.field.FieldDescription;
 import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.modifier.Ownership;
@@ -11,6 +25,7 @@ import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.dynamic.DynamicType;
 import net.bytebuddy.dynamic.TargetType;
 import net.bytebuddy.dynamic.scaffold.InstrumentedType;
+import net.bytebuddy.dynamic.scaffold.TypeValidation;
 import net.bytebuddy.implementation.Implementation;
 import net.bytebuddy.implementation.MethodAccessorFactory;
 import net.bytebuddy.implementation.bytecode.*;
@@ -20,6 +35,7 @@ import net.bytebuddy.implementation.bytecode.member.MethodInvocation;
 import net.bytebuddy.implementation.bytecode.member.MethodReturn;
 import net.bytebuddy.implementation.bytecode.member.MethodVariableAccess;
 import net.bytebuddy.matcher.ElementMatchers;
+import net.bytebuddy.utility.RandomString;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
@@ -33,7 +49,7 @@ import static net.bytebuddy.matcher.ElementMatchers.*;
  * A type proxy creates accessor methods for all overridable methods of a given type by subclassing the given type and
  * delegating all method calls to accessor methods of the instrumented type it was created for.
  */
-@EqualsAndHashCode
+@HashCodeAndEqualsPlugin.Enhance
 public class TypeProxy implements AuxiliaryType {
 
     /**
@@ -93,11 +109,23 @@ public class TypeProxy implements AuxiliaryType {
         this.serializableProxy = serializableProxy;
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
+    public String getSuffix() {
+        return RandomString.hashOf(proxiedType.hashCode())
+                + (ignoreFinalizer ? "I" : "0")
+                + (serializableProxy ? "S" : "0");
+    }
+
+    /**
+     * {@inheritDoc}
+     */
     public DynamicType make(String auxiliaryTypeName,
                             ClassFileVersion classFileVersion,
                             MethodAccessorFactory methodAccessorFactory) {
         return new ByteBuddy(classFileVersion)
+                .with(TypeValidation.DISABLED)
                 .ignore(ignoreFinalizer ? isFinalizer() : ElementMatchers.<MethodDescription>none())
                 .subclass(proxiedType)
                 .name(auxiliaryTypeName)
@@ -121,14 +149,13 @@ public class TypeProxy implements AuxiliaryType {
         /**
          * The stack manipulation that throws the abstract method error.
          */
-        private final StackManipulation implementation;
+        private final transient StackManipulation implementation;
 
         /**
          * Creates the singleton instance.
          */
-        @SuppressFBWarnings(value = "SE_BAD_FIELD_STORE", justification = "Fields of enumerations are never serialized")
         AbstractMethodErrorThrow() {
-            TypeDescription abstractMethodError = new TypeDescription.ForLoadedType(AbstractMethodError.class);
+            TypeDescription abstractMethodError = TypeDescription.ForLoadedType.of(AbstractMethodError.class);
             MethodDescription constructor = abstractMethodError.getDeclaredMethods()
                     .filter(isConstructor().and(takesArguments(0))).getOnly();
             implementation = new Compound(TypeCreation.of(abstractMethodError),
@@ -137,12 +164,16 @@ public class TypeProxy implements AuxiliaryType {
                     Throw.INSTANCE);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public boolean isValid() {
             return implementation.isValid();
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext) {
             return implementation.apply(methodVisitor, implementationContext);
         }
@@ -160,12 +191,16 @@ public class TypeProxy implements AuxiliaryType {
          */
         INSTANCE;
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public InstrumentedType prepare(InstrumentedType instrumentedType) {
             return instrumentedType;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public ByteCodeAppender appender(Target implementationTarget) {
             return new Appender(implementationTarget.getInstrumentedType());
         }
@@ -173,7 +208,7 @@ public class TypeProxy implements AuxiliaryType {
         /**
          * The appender for implementing a {@link net.bytebuddy.implementation.auxiliary.TypeProxy.SilentConstruction}.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         protected static class Appender implements ByteCodeAppender {
 
             /**
@@ -257,7 +292,9 @@ public class TypeProxy implements AuxiliaryType {
                 this.instrumentedType = instrumentedType;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext, MethodDescription instrumentedMethod) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC,
                         REFLECTION_FACTORY_INTERNAL_NAME,
@@ -323,7 +360,7 @@ public class TypeProxy implements AuxiliaryType {
              * Invokes the super method of the instrumented method.
              */
             SUPER_METHOD {
-                @Override
+                /** {@inheritDoc} */
                 public Implementation.SpecialMethodInvocation invoke(Implementation.Target implementationTarget,
                                                                      TypeDescription proxiedType,
                                                                      MethodDescription instrumentedMethod) {
@@ -335,13 +372,13 @@ public class TypeProxy implements AuxiliaryType {
              * Invokes the default method of the instrumented method if it exists and is not ambiguous.
              */
             DEFAULT_METHOD {
-                @Override
+                /** {@inheritDoc} */
                 public Implementation.SpecialMethodInvocation invoke(Implementation.Target implementationTarget,
                                                                      TypeDescription proxiedType,
                                                                      MethodDescription instrumentedMethod) {
                     return implementationTarget.invokeDefault(instrumentedMethod.asSignatureToken(), proxiedType);
                 }
-            };
+            }
         }
     }
 
@@ -350,8 +387,8 @@ public class TypeProxy implements AuxiliaryType {
      * stack manipulation is applied, an instance of the instrumented type must lie on top of the operand stack.
      * All constructor parameters will be assigned their default values when this stack operation is applied.
      */
-    @EqualsAndHashCode
-    public static class ForSuperMethodByConstructor implements StackManipulation {
+    @HashCodeAndEqualsPlugin.Enhance
+    public static class ForSuperMethodByConstructor extends StackManipulation.AbstractBase {
 
         /**
          * The type for the type proxy to subclass or implement.
@@ -399,12 +436,9 @@ public class TypeProxy implements AuxiliaryType {
             this.serializableProxy = serializableProxy;
         }
 
-        @Override
-        public boolean isValid() {
-            return true;
-        }
-
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext) {
             TypeDescription proxyType = implementationContext
                     .register(new TypeProxy(proxiedType,
@@ -435,8 +469,8 @@ public class TypeProxy implements AuxiliaryType {
      * method which might not be available in any Java runtime. When this stack manipulation is applied, an instance of
      * the instrumented type must lie on top of the operand stack.
      */
-    @EqualsAndHashCode
-    public static class ForSuperMethodByReflectionFactory implements StackManipulation {
+    @HashCodeAndEqualsPlugin.Enhance
+    public static class ForSuperMethodByReflectionFactory extends StackManipulation.AbstractBase {
 
         /**
          * The type for which a proxy type is created.
@@ -476,12 +510,9 @@ public class TypeProxy implements AuxiliaryType {
             this.serializableProxy = serializableProxy;
         }
 
-        @Override
-        public boolean isValid() {
-            return true;
-        }
-
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext) {
             TypeDescription proxyType = implementationContext.register(new TypeProxy(proxiedType,
                     implementationTarget,
@@ -501,8 +532,8 @@ public class TypeProxy implements AuxiliaryType {
      * Creates a type proxy which delegates its super method calls to any invokable default method of
      * a given interface and loads an instance of this proxy onto the operand stack.
      */
-    @EqualsAndHashCode
-    public static class ForDefaultMethod implements StackManipulation {
+    @HashCodeAndEqualsPlugin.Enhance
+    public static class ForDefaultMethod extends StackManipulation.AbstractBase {
 
         /**
          * The proxied interface type.
@@ -534,12 +565,9 @@ public class TypeProxy implements AuxiliaryType {
             this.serializableProxy = serializableProxy;
         }
 
-        @Override
-        public boolean isValid() {
-            return true;
-        }
-
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext) {
             TypeDescription proxyType = implementationContext.register(new TypeProxy(proxiedType,
                     implementationTarget,
@@ -560,6 +588,7 @@ public class TypeProxy implements AuxiliaryType {
     /**
      * An implementation for a method call of a {@link net.bytebuddy.implementation.auxiliary.TypeProxy}.
      */
+    @HashCodeAndEqualsPlugin.Enhance(includeSyntheticFields = true)
     protected class MethodCall implements Implementation {
 
         /**
@@ -576,42 +605,26 @@ public class TypeProxy implements AuxiliaryType {
             this.methodAccessorFactory = methodAccessorFactory;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public InstrumentedType prepare(InstrumentedType instrumentedType) {
             return instrumentedType.withField(new FieldDescription.Token(INSTANCE_FIELD,
                     Opcodes.ACC_PUBLIC | Opcodes.ACC_VOLATILE,
                     implementationTarget.getInstrumentedType().asGenericType()));
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public ByteCodeAppender appender(Target implementationTarget) {
             return new Appender(implementationTarget.getInstrumentedType());
         }
 
         /**
-         * Returns the outer instance.
-         *
-         * @return The outer instance.
-         */
-        private TypeProxy getTypeProxy() {
-            return TypeProxy.this;
-        }
-
-        @Override // HE: Remove when Lombok support for getOuter is added.
-        public boolean equals(Object other) {
-            return this == other || !(other == null || getClass() != other.getClass())
-                    && methodAccessorFactory.equals(((MethodCall) other).methodAccessorFactory)
-                    && TypeProxy.this.equals(((MethodCall) other).getTypeProxy());
-        }
-
-        @Override // HE: Remove when Lombok support for getOuter is added.
-        public int hashCode() {
-            return 31 * TypeProxy.this.hashCode() + methodAccessorFactory.hashCode();
-        }
-
-        /**
          * Implementation of a byte code appender for a {@link net.bytebuddy.implementation.auxiliary.TypeProxy.MethodCall}.
          */
+        @HashCodeAndEqualsPlugin.Enhance(includeSyntheticFields = true)
         protected class Appender implements ByteCodeAppender {
 
             /**
@@ -628,7 +641,9 @@ public class TypeProxy implements AuxiliaryType {
                 fieldLoadingInstruction = FieldAccess.forField(instrumentedType.getDeclaredFields().filter((named(INSTANCE_FIELD))).getOnly()).read();
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext, MethodDescription instrumentedMethod) {
                 SpecialMethodInvocation specialMethodInvocation = invocationFactory.invoke(implementationTarget, proxiedType, instrumentedMethod);
                 StackManipulation.Size size = (specialMethodInvocation.isValid()
@@ -638,29 +653,9 @@ public class TypeProxy implements AuxiliaryType {
             }
 
             /**
-             * Returns the outer instance.
-             *
-             * @return The outer instance.
-             */
-            private MethodCall getMethodCall() {
-                return MethodCall.this;
-            }
-
-            @Override // HE: Remove when Lombok support for getOuter is added.
-            public boolean equals(Object other) {
-                return this == other || !(other == null || getClass() != other.getClass())
-                        && fieldLoadingInstruction.equals(((Appender) other).fieldLoadingInstruction)
-                        && MethodCall.this.equals(((Appender) other).getMethodCall());
-            }
-
-            @Override // HE: Remove when Lombok support for getOuter is added.
-            public int hashCode() {
-                return 31 * MethodCall.this.hashCode() + fieldLoadingInstruction.hashCode();
-            }
-
-            /**
              * Stack manipulation for invoking an accessor method.
              */
+            @HashCodeAndEqualsPlugin.Enhance(includeSyntheticFields = true)
             protected class AccessorMethodInvocation implements StackManipulation {
 
                 /**
@@ -686,12 +681,16 @@ public class TypeProxy implements AuxiliaryType {
                     this.specialMethodInvocation = specialMethodInvocation;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public boolean isValid() {
                     return specialMethodInvocation.isValid();
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext) {
                     MethodDescription.InDefinedShape proxyMethod = methodAccessorFactory.registerAccessorFor(specialMethodInvocation, MethodAccessorFactory.AccessType.DEFAULT);
                     return new StackManipulation.Compound(
@@ -701,33 +700,6 @@ public class TypeProxy implements AuxiliaryType {
                             MethodInvocation.invoke(proxyMethod),
                             MethodReturn.of(instrumentedMethod.getReturnType())
                     ).apply(methodVisitor, implementationContext);
-                }
-
-                /**
-                 * Returns the outer instance.
-                 *
-                 * @return The outer instance.
-                 */
-                private Appender getAppender() {
-                    return Appender.this;
-                }
-
-                @Override // HE: Remove when Lombok support for getOuter is added.
-                public boolean equals(Object other) {
-                    if (this == other) return true;
-                    if (other == null || getClass() != other.getClass()) return false;
-                    AccessorMethodInvocation that = (AccessorMethodInvocation) other;
-                    return Appender.this.equals(that.getAppender())
-                            && instrumentedMethod.equals(that.instrumentedMethod)
-                            && specialMethodInvocation.equals(that.specialMethodInvocation);
-                }
-
-                @Override // HE: Remove when Lombok support for getOuter is added.
-                public int hashCode() {
-                    int result = Appender.this.hashCode();
-                    result = 31 * result + instrumentedMethod.hashCode();
-                    result = 31 * result + specialMethodInvocation.hashCode();
-                    return result;
                 }
             }
         }

@@ -13,9 +13,10 @@ public class TypePoolDefaultEnumerationDescriptionTest extends AbstractEnumerati
     private TypePool typePool;
 
     @Before
+    @Override
     public void setUp() throws Exception {
         super.setUp();
-        typePool = TypePool.Default.ofClassPath();
+        typePool = TypePool.Default.ofSystemLoader();
     }
 
     @After
@@ -23,7 +24,6 @@ public class TypePoolDefaultEnumerationDescriptionTest extends AbstractEnumerati
         typePool.clear();
     }
 
-    @Override
     protected EnumerationDescription describe(Enum<?> enumeration,
                                               Class<?> carrierType,
                                               MethodDescription.InDefinedShape annotationMethod) {

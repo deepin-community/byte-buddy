@@ -1,22 +1,21 @@
 package net.bytebuddy.implementation;
 
-import net.bytebuddy.test.utility.MockitoRule;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.After;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 import org.objectweb.asm.MethodVisitor;
 
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.mockito.Mockito.verifyZeroInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 public class ImplementationSpecialMethodInvocationIllegalTest {
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     @Mock
     private MethodVisitor methodVisitor;
@@ -26,8 +25,8 @@ public class ImplementationSpecialMethodInvocationIllegalTest {
 
     @After
     public void tearDown() throws Exception {
-        verifyZeroInteractions(methodVisitor);
-        verifyZeroInteractions(implementationContext);
+        verifyNoMoreInteractions(methodVisitor);
+        verifyNoMoreInteractions(implementationContext);
     }
 
     @Test
@@ -48,10 +47,5 @@ public class ImplementationSpecialMethodInvocationIllegalTest {
     @Test(expected = IllegalStateException.class)
     public void testApplicationIllegal() throws Exception {
         Implementation.SpecialMethodInvocation.Illegal.INSTANCE.apply(methodVisitor, implementationContext);
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(Implementation.SpecialMethodInvocation.Illegal.class).apply();
     }
 }

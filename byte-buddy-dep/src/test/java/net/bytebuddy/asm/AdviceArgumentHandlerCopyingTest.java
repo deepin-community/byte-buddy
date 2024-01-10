@@ -1,16 +1,13 @@
 package net.bytebuddy.asm;
 
 import net.bytebuddy.ByteBuddy;
-import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.dynamic.loading.ClassLoadingStrategy;
-import net.bytebuddy.test.utility.DebuggingWrapper;
 import org.junit.Test;
-import org.objectweb.asm.ClassReader;
 
 import static net.bytebuddy.matcher.ElementMatchers.isConstructor;
 import static net.bytebuddy.matcher.ElementMatchers.named;
+import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.core.Is.is;
 
 public class AdviceArgumentHandlerCopyingTest {
 

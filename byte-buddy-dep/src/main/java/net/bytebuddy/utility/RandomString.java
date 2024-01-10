@@ -1,4 +1,22 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.utility;
+
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import net.bytebuddy.utility.nullability.MaybeNull;
 
 import java.util.Random;
 
@@ -65,11 +83,21 @@ public class RandomString {
      * @param length The length of the random {@link String}.
      */
     public RandomString(int length) {
+        this(length, new Random());
+    }
+
+    /**
+     * Creates a random {@link java.lang.String} provider where each value is of the given length.
+     *
+     * @param length The length of the random {@link String}.
+     * @param random The random number generator to use.
+     */
+    public RandomString(int length, Random random) {
         if (length <= 0) {
             throw new IllegalArgumentException("A random string's length cannot be zero or negative");
         }
         this.length = length;
-        random = new Random();
+        this.random = random;
     }
 
     /**
@@ -92,6 +120,19 @@ public class RandomString {
     }
 
     /**
+     * Represents a object value as a string hash. This string is not technically random but generates a fixed character
+     * sequence based on the hash provided.
+     *
+     * @param value The value to represent as a string or {@code null}.
+     * @return A string representing the supplied value as a string.
+     */
+    public static String hashOf(@MaybeNull Object value) {
+        return hashOf(value == null
+                ? 0
+                : value.getClass().hashCode() ^ System.identityHashCode(value));
+    }
+
+    /**
      * Represents an integer value as a string hash. This string is not technically random but generates a fixed character
      * sequence based on the hash provided.
      *
@@ -111,6 +152,7 @@ public class RandomString {
      *
      * @return A random {@link java.lang.String} of the given length for this instance.
      */
+    @SuppressFBWarnings(value = "DMI_RANDOM_USED_ONLY_ONCE", justification = "Random value is used on each invocation.")
     public String nextString() {
         char[] buffer = new char[length];
         for (int index = 0; index < length; index++) {

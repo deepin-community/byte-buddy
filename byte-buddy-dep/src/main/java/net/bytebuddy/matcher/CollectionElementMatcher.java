@@ -1,6 +1,21 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.matcher;
 
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 
 import java.util.Iterator;
 
@@ -10,8 +25,8 @@ import java.util.Iterator;
  *
  * @param <T> The type of the elements contained by the collection.
  */
-@EqualsAndHashCode(callSuper = false)
-public class CollectionElementMatcher<T> extends ElementMatcher.Junction.AbstractBase<Iterable<? extends T>> {
+@HashCodeAndEqualsPlugin.Enhance
+public class CollectionElementMatcher<T> extends ElementMatcher.Junction.ForNonNullValues<Iterable<? extends T>> {
 
     /**
      * The index of the matched element.
@@ -26,7 +41,7 @@ public class CollectionElementMatcher<T> extends ElementMatcher.Junction.Abstrac
     /**
      * Creates a new matcher for an element in a collection.
      *
-     * @param index          The index of the matched element.
+     * @param index   The index of the matched element.
      * @param matcher The matcher for the given element, if it exists.
      */
     public CollectionElementMatcher(int index, ElementMatcher<? super T> matcher) {
@@ -34,8 +49,10 @@ public class CollectionElementMatcher<T> extends ElementMatcher.Junction.Abstrac
         this.matcher = matcher;
     }
 
-    @Override
-    public boolean matches(Iterable<? extends T> target) {
+    /**
+     * {@inheritDoc}
+     */
+    protected boolean doMatch(Iterable<? extends T> target) {
         Iterator<? extends T> iterator = target.iterator();
         for (int index = 0; index < this.index; index++) {
             if (iterator.hasNext()) {

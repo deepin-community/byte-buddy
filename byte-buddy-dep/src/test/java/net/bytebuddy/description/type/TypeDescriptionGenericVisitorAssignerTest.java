@@ -1,7 +1,6 @@
 package net.bytebuddy.description.type;
 
 import net.bytebuddy.description.field.FieldList;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -50,7 +49,7 @@ public class TypeDescriptionGenericVisitorAssignerTest {
 
     @Before
     public void setUp() throws Exception {
-        FieldList<?> fields = new TypeDescription.ForLoadedType(GenericTypes.class).getDeclaredFields();
+        FieldList<?> fields = TypeDescription.ForLoadedType.of(GenericTypes.class).getDeclaredFields();
         collectionRaw = fields.filter(named("collectionRaw")).getOnly().getType();
         collectionWildcard = fields.filter(named("collectionWildcard")).getOnly().getType();
         collectionTypeVariableT = fields.filter(named("collectionTypeVariableT")).getOnly().getType();
@@ -76,9 +75,9 @@ public class TypeDescriptionGenericVisitorAssignerTest {
         listRawArray = fields.filter(named("listRawArray")).getOnly().getType();
         listWildcardArray = fields.filter(named("listWildcardArray")).getOnly().getType();
         arrayListRawArray = fields.filter(named("arrayListRawArray")).getOnly().getType();
-        stringArray = new TypeDescription.Generic.OfNonGenericType.ForLoadedType(String[].class);
-        objectArray = new TypeDescription.Generic.OfNonGenericType.ForLoadedType(Object[].class);
-        objectNestedArray = new TypeDescription.Generic.OfNonGenericType.ForLoadedType(Object[][].class);
+        stringArray = TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(String[].class);
+        objectArray = TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object[].class);
+        objectNestedArray = TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object[][].class);
         unboundWildcard = listWildcard.getTypeArguments().getOnly();
         typeVariableT = arrayListTypeVariableT.getTypeArguments().getOnly();
         typeVariableS = arrayListTypeVariableS.getTypeArguments().getOnly();
@@ -97,25 +96,25 @@ public class TypeDescriptionGenericVisitorAssignerTest {
 
     @Test
     public void testAssignNonGenericTypeFromAssignableNonGenericType() throws Exception {
-        assertThat(TypeDescription.Generic.OBJECT.accept(TypeDescription.Generic.Visitor.Assigner.INSTANCE)
-                .isAssignableFrom(TypeDescription.STRING.asGenericType()), is(true));
+        assertThat(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class).accept(TypeDescription.Generic.Visitor.Assigner.INSTANCE)
+                .isAssignableFrom(TypeDescription.ForLoadedType.of(String.class).asGenericType()), is(true));
     }
 
     @Test
     public void testAssignNonGenericTypeFromNonAssignableNonGenericType() throws Exception {
-        assertThat(TypeDescription.STRING.asGenericType().accept(TypeDescription.Generic.Visitor.Assigner.INSTANCE)
-                .isAssignableFrom(TypeDescription.Generic.OBJECT), is(false));
+        assertThat(TypeDescription.ForLoadedType.of(String.class).asGenericType().accept(TypeDescription.Generic.Visitor.Assigner.INSTANCE)
+                .isAssignableFrom(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class)), is(false));
     }
 
     @Test
     public void testAssignObjectTypeFromAssignableGenericType() throws Exception {
-        assertThat(TypeDescription.Generic.OBJECT.accept(TypeDescription.Generic.Visitor.Assigner.INSTANCE)
+        assertThat(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class).accept(TypeDescription.Generic.Visitor.Assigner.INSTANCE)
                 .isAssignableFrom(listWildcard), is(true));
     }
 
     @Test
     public void testAssignNonGenericTypeFromNonAssignableGenericType() throws Exception {
-        assertThat(TypeDescription.STRING.asGenericType().accept(TypeDescription.Generic.Visitor.Assigner.INSTANCE)
+        assertThat(TypeDescription.ForLoadedType.of(String.class).asGenericType().accept(TypeDescription.Generic.Visitor.Assigner.INSTANCE)
                 .isAssignableFrom(listWildcard), is(false));
     }
 
@@ -151,19 +150,19 @@ public class TypeDescriptionGenericVisitorAssignerTest {
 
     @Test(expected = IllegalArgumentException.class)
     public void testAssignNonGenericTypeFromWildcardThrowsException() throws Exception {
-        TypeDescription.Generic.OBJECT.accept(TypeDescription.Generic.Visitor.Assigner.INSTANCE)
+        TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class).accept(TypeDescription.Generic.Visitor.Assigner.INSTANCE)
                 .isAssignableFrom(unboundWildcard);
     }
 
     @Test
     public void testAssignNonGenericTypeFromAssignableTypeVariable() throws Exception {
-        assertThat(TypeDescription.Generic.OBJECT.accept(TypeDescription.Generic.Visitor.Assigner.INSTANCE)
+        assertThat(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class).accept(TypeDescription.Generic.Visitor.Assigner.INSTANCE)
                 .isAssignableFrom(typeVariableT), is(true));
     }
 
     @Test
     public void testAssignNonGenericTypeFromNonAssignableTypeVariable() throws Exception {
-        assertThat(TypeDescription.STRING.asGenericType().accept(TypeDescription.Generic.Visitor.Assigner.INSTANCE)
+        assertThat(TypeDescription.ForLoadedType.of(String.class).asGenericType().accept(TypeDescription.Generic.Visitor.Assigner.INSTANCE)
                 .isAssignableFrom(typeVariableT), is(false));
     }
 
@@ -199,26 +198,26 @@ public class TypeDescriptionGenericVisitorAssignerTest {
 
     @Test
     public void testAssignObjectTypeFromGenericArrayType() throws Exception {
-        assertThat(TypeDescription.Generic.OBJECT.accept(TypeDescription.Generic.Visitor.Assigner.INSTANCE)
+        assertThat(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class).accept(TypeDescription.Generic.Visitor.Assigner.INSTANCE)
                 .isAssignableFrom(listWildcardArray), is(true));
     }
 
     @Test
     public void testAssignCloneableTypeFromGenericArrayType() throws Exception {
-        assertThat(new TypeDescription.Generic.OfNonGenericType.ForLoadedType(Cloneable.class).accept(TypeDescription.Generic.Visitor.Assigner.INSTANCE)
+        assertThat(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Cloneable.class).accept(TypeDescription.Generic.Visitor.Assigner.INSTANCE)
                 .isAssignableFrom(listWildcardArray), is(true));
     }
 
     @Test
     public void testAssignSerializableTypeFromGenericArrayType() throws Exception {
-        assertThat(new TypeDescription.Generic.OfNonGenericType.ForLoadedType(Serializable.class).accept(TypeDescription.Generic.Visitor.Assigner.INSTANCE)
+        assertThat(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Serializable.class).accept(TypeDescription.Generic.Visitor.Assigner.INSTANCE)
                 .isAssignableFrom(listWildcardArray), is(true));
     }
 
     @Test
     public void testAssignTypeVariableFromNonGenericType() throws Exception {
         assertThat(typeVariableT.accept(TypeDescription.Generic.Visitor.Assigner.INSTANCE)
-                .isAssignableFrom(TypeDescription.Generic.OBJECT), is(false));
+                .isAssignableFrom(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class)), is(false));
     }
 
     @Test(expected = IllegalArgumentException.class)
@@ -271,7 +270,7 @@ public class TypeDescriptionGenericVisitorAssignerTest {
 
     @Test
     public void testAssignGenericNestedArrayFromAssignableObjectArray() throws Exception {
-        assertThat(new TypeDescription.Generic.OfNonGenericType.ForLoadedType(Object[][].class).accept(TypeDescription.Generic.Visitor.Assigner.INSTANCE)
+        assertThat(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object[][].class).accept(TypeDescription.Generic.Visitor.Assigner.INSTANCE)
                 .isAssignableFrom(arrayNestedTypeVariableT), is(true));
     }
 
@@ -284,7 +283,7 @@ public class TypeDescriptionGenericVisitorAssignerTest {
     @Test
     public void testAssignGenericArrayFromNonAssignableNonGenericNonArrayType() throws Exception {
         assertThat(arrayTypeVariableT.accept(TypeDescription.Generic.Visitor.Assigner.INSTANCE)
-                .isAssignableFrom(TypeDescription.Generic.OBJECT), is(false));
+                .isAssignableFrom(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class)), is(false));
     }
 
     @Test
@@ -350,7 +349,7 @@ public class TypeDescriptionGenericVisitorAssignerTest {
     @Test
     public void testAssignParameterizedWildcardTypeFromNonAssignableRawType() throws Exception {
         assertThat(collectionWildcard.accept(TypeDescription.Generic.Visitor.Assigner.INSTANCE)
-                .isAssignableFrom(TypeDescription.STRING.asGenericType()), is(false));
+                .isAssignableFrom(TypeDescription.ForLoadedType.of(String.class).asGenericType()), is(false));
     }
 
     @Test
@@ -496,22 +495,10 @@ public class TypeDescriptionGenericVisitorAssignerTest {
         new TypeDescription.Generic.Visitor.Assigner.Dispatcher.ForParameterizedType(target).onParameterizedType(source);
     }
 
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(TypeDescription.Generic.Visitor.Assigner.class).apply();
-        ObjectPropertyAssertion.of(TypeDescription.Generic.Visitor.Assigner.Dispatcher.ForGenericArray.class).apply();
-        ObjectPropertyAssertion.of(TypeDescription.Generic.Visitor.Assigner.Dispatcher.ForNonGenericType.class).apply();
-        ObjectPropertyAssertion.of(TypeDescription.Generic.Visitor.Assigner.Dispatcher.ForTypeVariable.class).apply();
-        ObjectPropertyAssertion.of(TypeDescription.Generic.Visitor.Assigner.Dispatcher.ForParameterizedType.class).apply();
-        ObjectPropertyAssertion.of(TypeDescription.Generic.Visitor.Assigner.Dispatcher.ForParameterizedType.ParameterAssigner.class).apply();
-        ObjectPropertyAssertion.of(TypeDescription.Generic.Visitor.Assigner.Dispatcher.ForParameterizedType.ParameterAssigner.InvariantBinding.class).apply();
-        ObjectPropertyAssertion.of(TypeDescription.Generic.Visitor.Assigner.Dispatcher.ForParameterizedType.ParameterAssigner.CovariantBinding.class).apply();
-        ObjectPropertyAssertion.of(TypeDescription.Generic.Visitor.Assigner.Dispatcher.ForParameterizedType.ParameterAssigner.ContravariantBinding.class).apply();
-    }
-
     @SuppressWarnings({"unused", "unchecked"})
     private static class GenericTypes<T, S, U extends T, V extends List<?>> {
 
+        @SuppressWarnings("rawtypes")
         private Collection collectionRaw;
 
         private Collection<?> collectionWildcard;
@@ -534,22 +521,28 @@ public class TypeDescriptionGenericVisitorAssignerTest {
 
         private Collection<? super U> collectionLowerBoundTypeVariableU;
 
+        @SuppressWarnings("rawtypes")
         private Collection[] collectionRawArray;
 
+        @SuppressWarnings("rawtypes")
         private List listRaw;
 
         private List<?> listWildcard;
 
+        @SuppressWarnings("rawtypes")
         private List[] listRawArray;
 
         private List<?>[] listWildcardArray;
 
+        @SuppressWarnings("rawtypes")
         private AbstractList abstractListRaw;
 
+        @SuppressWarnings("rawtypes")
         private ArrayList arrayListRaw;
 
         private ArrayList<?> arrayListWildcard;
 
+        @SuppressWarnings("rawtypes")
         private ArrayList[] arrayListRawArray;
 
         private ArrayList<T> arrayListTypeVariableT;

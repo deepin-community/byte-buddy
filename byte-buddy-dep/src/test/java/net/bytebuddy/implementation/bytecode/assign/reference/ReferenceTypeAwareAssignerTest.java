@@ -4,14 +4,13 @@ import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.implementation.Implementation;
 import net.bytebuddy.implementation.bytecode.StackManipulation;
 import net.bytebuddy.implementation.bytecode.assign.Assigner;
-import net.bytebuddy.test.utility.MockitoRule;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 
@@ -24,7 +23,7 @@ public class ReferenceTypeAwareAssignerTest {
     private static final String FOO = "foo";
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     @Mock
     private MethodVisitor methodVisitor;
@@ -46,7 +45,7 @@ public class ReferenceTypeAwareAssignerTest {
 
     @After
     public void tearDown() throws Exception {
-        verifyZeroInteractions(implementationContext);
+        verifyNoMoreInteractions(implementationContext);
     }
 
     @Test
@@ -57,7 +56,7 @@ public class ReferenceTypeAwareAssignerTest {
         StackManipulation.Size size = stackManipulation.apply(methodVisitor, implementationContext);
         assertThat(size.getSizeImpact(), is(0));
         assertThat(size.getMaximalSize(), is(0));
-        verifyZeroInteractions(methodVisitor);
+        verifyNoMoreInteractions(methodVisitor);
     }
 
     @Test
@@ -68,7 +67,7 @@ public class ReferenceTypeAwareAssignerTest {
         StackManipulation.Size size = stackManipulation.apply(methodVisitor, implementationContext);
         assertThat(size.getSizeImpact(), is(0));
         assertThat(size.getMaximalSize(), is(0));
-        verifyZeroInteractions(methodVisitor);
+        verifyNoMoreInteractions(methodVisitor);
     }
 
     @Test(expected = IllegalStateException.class)
@@ -94,19 +93,19 @@ public class ReferenceTypeAwareAssignerTest {
 
     @Test
     public void testPrimitiveAssignabilityWhenEqual() throws Exception {
-        TypeDescription.Generic primitiveType = new TypeDescription.Generic.OfNonGenericType.ForLoadedType(int.class); // Note: cannot mock equals
+        TypeDescription.Generic primitiveType = TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(int.class); // Note: cannot mock equals
         StackManipulation stackManipulation = ReferenceTypeAwareAssigner.INSTANCE.assign(primitiveType, primitiveType, Assigner.Typing.DYNAMIC);
         assertThat(stackManipulation.isValid(), is(true));
         StackManipulation.Size size = stackManipulation.apply(methodVisitor, implementationContext);
         assertThat(size.getSizeImpact(), is(0));
         assertThat(size.getMaximalSize(), is(0));
-        verifyZeroInteractions(methodVisitor);
+        verifyNoMoreInteractions(methodVisitor);
     }
 
     @Test(expected = IllegalStateException.class)
     public void testPrimitiveAssignabilityWhenNotEqual() throws Exception {
-        TypeDescription.Generic primitiveType = new TypeDescription.Generic.OfNonGenericType.ForLoadedType(int.class); // Note: cannot mock equals
-        TypeDescription.Generic otherPrimitiveType = new TypeDescription.Generic.OfNonGenericType.ForLoadedType(long.class); // Note: cannot mock equals
+        TypeDescription.Generic primitiveType = TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(int.class); // Note: cannot mock equals
+        TypeDescription.Generic otherPrimitiveType = TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(long.class); // Note: cannot mock equals
         StackManipulation stackManipulation = ReferenceTypeAwareAssigner.INSTANCE.assign(primitiveType, otherPrimitiveType, Assigner.Typing.DYNAMIC);
         assertThat(stackManipulation.isValid(), is(false));
         stackManipulation.apply(methodVisitor, implementationContext);
@@ -121,10 +120,5 @@ public class ReferenceTypeAwareAssignerTest {
             when(rawTarget.isAssignableTo(rawSource)).thenReturn(true);
             when(rawSource.isAssignableFrom(rawTarget)).thenReturn(true);
         }
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(ReferenceTypeAwareAssigner.class).apply();
     }
 }

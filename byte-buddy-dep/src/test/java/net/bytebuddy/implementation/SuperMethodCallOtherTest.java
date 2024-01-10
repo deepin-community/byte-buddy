@@ -15,14 +15,12 @@ import net.bytebuddy.implementation.bytecode.member.MethodReturn;
 import net.bytebuddy.matcher.ElementMatcher;
 import net.bytebuddy.test.utility.CallTraceable;
 import net.bytebuddy.test.utility.JavaVersionRule;
-import net.bytebuddy.test.utility.MockitoRule;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.MethodRule;
-import org.junit.rules.TestRule;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 import org.objectweb.asm.MethodVisitor;
 
 import java.lang.reflect.Method;
@@ -35,16 +33,16 @@ import static org.mockito.Mockito.*;
 
 public class SuperMethodCallOtherTest {
 
-    private static final String SINGLE_DEFAULT_METHOD = "net.bytebuddy.test.precompiled.SingleDefaultMethodInterface";
+    private static final String SINGLE_DEFAULT_METHOD = "net.bytebuddy.test.precompiled.v8.SingleDefaultMethodInterface";
 
-    private static final String SINGLE_DEFAULT_METHOD_CLASS = "net.bytebuddy.test.precompiled.SingleDefaultMethodClass";
+    private static final String SINGLE_DEFAULT_METHOD_CLASS = "net.bytebuddy.test.precompiled.v8.SingleDefaultMethodClass";
 
-    private static final String CONFLICTING_INTERFACE = "net.bytebuddy.test.precompiled.SingleDefaultMethodConflictingInterface";
+    private static final String CONFLICTING_INTERFACE = "net.bytebuddy.test.precompiled.v8.SingleDefaultMethodConflictingInterface";
 
     private static final String FOO = "foo";
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     @Rule
     public MethodRule javaVersionRule = new JavaVersionRule();
@@ -74,7 +72,7 @@ public class SuperMethodCallOtherTest {
     private MethodDescription.SignatureToken token;
 
     @Mock
-    private MethodList superClassMethods;
+    private MethodList<MethodDescription.InDefinedShape> superClassMethods;
 
     @Before
     public void setUp() throws Exception {
@@ -87,7 +85,7 @@ public class SuperMethodCallOtherTest {
     @Test
     public void testPreparation() throws Exception {
         assertThat(SuperMethodCall.INSTANCE.prepare(instrumentedType), is(instrumentedType));
-        verifyZeroInteractions(instrumentedType);
+        verifyNoMoreInteractions(instrumentedType);
     }
 
     @Test(expected = IllegalStateException.class)
@@ -102,7 +100,7 @@ public class SuperMethodCallOtherTest {
     }
 
     @Test(expected = IllegalStateException.class)
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings({"unchecked", "rawtypes"})
     public void testStaticMethod() throws Exception {
         when(typeDescription.getSuperClass()).thenReturn(superClass);
         when(methodDescription.isStatic()).thenReturn(true);
@@ -116,7 +114,7 @@ public class SuperMethodCallOtherTest {
     }
 
     @Test(expected = IllegalStateException.class)
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings({"unchecked", "rawtypes"})
     public void testNoSuper() throws Exception {
         when(typeDescription.getSuperClass()).thenReturn(superClass);
         when(methodDescription.getParameters()).thenReturn((ParameterList) new ParameterList.Empty<ParameterDescription>());
@@ -182,14 +180,6 @@ public class SuperMethodCallOtherTest {
                 .intercept(SuperMethodCall.INSTANCE)
                 .make()
                 .load(Class.forName(SINGLE_DEFAULT_METHOD).getClassLoader(), ClassLoadingStrategy.Default.WRAPPER);
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(SuperMethodCall.class).apply();
-        ObjectPropertyAssertion.of(SuperMethodCall.WithoutReturn.class).apply();
-        ObjectPropertyAssertion.of(SuperMethodCall.Appender.class).apply();
-        ObjectPropertyAssertion.of(SuperMethodCall.Appender.TerminationHandler.class).apply();
     }
 
     public static class Foo extends CallTraceable {

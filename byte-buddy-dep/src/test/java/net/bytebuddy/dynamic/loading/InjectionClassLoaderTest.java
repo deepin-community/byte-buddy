@@ -1,7 +1,6 @@
 package net.bytebuddy.dynamic.loading;
 
 import net.bytebuddy.description.type.TypeDescription;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Test;
 
 import java.util.Collections;
@@ -46,7 +45,16 @@ public class InjectionClassLoaderTest {
     }
 
     @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(InjectionClassLoader.Strategy.class).apply();
+    public void testSealed() {
+        InjectionClassLoader classLoader = new InjectionClassLoader(null, false) {
+            @Override
+            protected Map<String, Class<?>> doDefineClasses(Map<String, byte[]> typeDefinitions) {
+                throw new UnsupportedOperationException();
+            }
+        };
+        assertThat(classLoader.isSealed(), is(false));
+        assertThat(classLoader.seal(), is(true));
+        assertThat(classLoader.isSealed(), is(true));
+        assertThat(classLoader.seal(), is(false));
     }
 }

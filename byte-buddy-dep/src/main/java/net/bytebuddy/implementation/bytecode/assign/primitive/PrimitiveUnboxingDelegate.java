@@ -1,6 +1,21 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation.bytecode.assign.primitive;
 
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.type.TypeDefinition;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.implementation.Implementation;
@@ -95,8 +110,8 @@ public enum PrimitiveUnboxingDelegate implements StackManipulation {
                               String unboxingMethodName,
                               String unboxingMethodDescriptor) {
         this.size = sizeDifference.toIncreasingSize();
-        this.wrapperType = new TypeDescription.ForLoadedType(wrapperType);
-        this.primitiveType = new TypeDescription.ForLoadedType(primitiveType);
+        this.wrapperType = TypeDescription.ForLoadedType.of(wrapperType);
+        this.primitiveType = TypeDescription.ForLoadedType.of(primitiveType);
         this.unboxingMethodName = unboxingMethodName;
         this.unboxingMethodDescriptor = unboxingMethodDescriptor;
     }
@@ -104,28 +119,28 @@ public enum PrimitiveUnboxingDelegate implements StackManipulation {
     /**
      * Locates a primitive unboxing delegate for a given primitive type.
      *
-     * @param typeDescription A description of the primitive type.
+     * @param typeDefinition A description of the primitive type.
      * @return A corresponding primitive unboxing delegate.
      */
-    protected static PrimitiveUnboxingDelegate forPrimitive(TypeDescription.Generic typeDescription) {
-        if (typeDescription.represents(boolean.class)) {
+    public static PrimitiveUnboxingDelegate forPrimitive(TypeDefinition typeDefinition) {
+        if (typeDefinition.represents(boolean.class)) {
             return BOOLEAN;
-        } else if (typeDescription.represents(byte.class)) {
+        } else if (typeDefinition.represents(byte.class)) {
             return BYTE;
-        } else if (typeDescription.represents(short.class)) {
+        } else if (typeDefinition.represents(short.class)) {
             return SHORT;
-        } else if (typeDescription.represents(char.class)) {
+        } else if (typeDefinition.represents(char.class)) {
             return CHARACTER;
-        } else if (typeDescription.represents(int.class)) {
+        } else if (typeDefinition.represents(int.class)) {
             return INTEGER;
-        } else if (typeDescription.represents(long.class)) {
+        } else if (typeDefinition.represents(long.class)) {
             return LONG;
-        } else if (typeDescription.represents(float.class)) {
+        } else if (typeDefinition.represents(float.class)) {
             return FLOAT;
-        } else if (typeDescription.represents(double.class)) {
+        } else if (typeDefinition.represents(double.class)) {
             return DOUBLE;
         } else {
-            throw new IllegalArgumentException("Expected non-void primitive type instead of " + typeDescription);
+            throw new IllegalArgumentException("Expected non-void primitive type instead of " + typeDefinition);
         }
     }
 
@@ -176,12 +191,16 @@ public enum PrimitiveUnboxingDelegate implements StackManipulation {
         return wrapperType.asGenericType();
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public boolean isValid() {
         return true;
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext) {
         methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL,
                 wrapperType.asErasure().getInternalName(),
@@ -250,7 +269,9 @@ public enum PrimitiveUnboxingDelegate implements StackManipulation {
             this.primitiveUnboxingDelegate = primitiveUnboxingDelegate;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public StackManipulation assignUnboxedTo(TypeDescription.Generic targetType, Assigner assigner, Assigner.Typing typing) {
             return new Compound(
                     primitiveUnboxingDelegate,
@@ -281,7 +302,7 @@ public enum PrimitiveUnboxingDelegate implements StackManipulation {
      * were not found to be of a given wrapper type. Instead, this unboxing responsible tries to assign the
      * source type to the primitive target type's wrapper type before performing an unboxing operation.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     protected static class ImplicitlyTypedUnboxingResponsible implements UnboxingResponsible {
 
         /**
@@ -298,7 +319,9 @@ public enum PrimitiveUnboxingDelegate implements StackManipulation {
             this.originalType = originalType;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public StackManipulation assignUnboxedTo(TypeDescription.Generic target, Assigner assigner, Assigner.Typing typing) {
             PrimitiveUnboxingDelegate primitiveUnboxingDelegate = PrimitiveUnboxingDelegate.forPrimitive(target);
             return new Compound(

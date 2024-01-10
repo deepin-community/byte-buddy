@@ -3,20 +3,20 @@ package net.bytebuddy.description.type;
 import net.bytebuddy.description.annotation.AnnotationDescription;
 import net.bytebuddy.description.annotation.AnnotationSource;
 import net.bytebuddy.implementation.bytecode.StackSize;
-import net.bytebuddy.test.utility.MockitoRule;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 
 import static org.hamcrest.CoreMatchers.*;
-import static org.junit.Assert.assertThat;
+import static org.hamcrest.MatcherAssert.assertThat;
 
 public class TypeDescriptionGenericOfTypeVariableSymbolicTest {
 
     private static final String FOO = "foo", BAR = "bar";
 
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     private TypeDescription.Generic typeVariable;
 
@@ -69,7 +69,7 @@ public class TypeDescriptionGenericOfTypeVariableSymbolicTest {
         assertThat(typeVariable, is((TypeDescription.Generic) new TypeDescription.Generic.OfTypeVariable.Symbolic(FOO, new AnnotationSource.Explicit(annotationDescription))));
         assertThat(typeVariable, is((TypeDescription.Generic) new TypeDescription.Generic.OfTypeVariable.Symbolic(FOO, AnnotationSource.Empty.INSTANCE)));
         assertThat(typeVariable, not((TypeDescription.Generic) new TypeDescription.Generic.OfTypeVariable.Symbolic(BAR, AnnotationSource.Empty.INSTANCE)));
-        assertThat(typeVariable, not(TypeDescription.Generic.OBJECT));
+        assertThat(typeVariable, not(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class)));
         assertThat(typeVariable, not(new Object()));
         assertThat(typeVariable, not(equalTo(null)));
     }

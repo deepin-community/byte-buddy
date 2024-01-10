@@ -2,7 +2,6 @@ package net.bytebuddy.pool;
 
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.dynamic.ClassFileLocator;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.hamcrest.CoreMatchers;
 import org.junit.After;
 import org.junit.Before;
@@ -21,7 +20,7 @@ public class TypePoolDefaultTest {
 
     @Before
     public void setUp() throws Exception {
-        typePool = TypePool.Default.ofClassPath();
+        typePool = TypePool.Default.ofSystemLoader();
     }
 
     @After
@@ -56,24 +55,8 @@ public class TypePoolDefaultTest {
     }
 
     @Test
-    public void testGenericsObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(TypePool.Default.GenericTypeExtractor.IncompleteToken.ForTopLevelType.class).apply();
-        ObjectPropertyAssertion.of(TypePool.Default.GenericTypeExtractor.IncompleteToken.ForInnerClass.class).apply();
-        ObjectPropertyAssertion.of(TypePool.Default.GenericTypeExtractor.ForSignature.OfType.SuperClassRegistrant.class).apply();
-        ObjectPropertyAssertion.of(TypePool.Default.GenericTypeExtractor.ForSignature.OfType.InterfaceTypeRegistrant.class).apply();
-        ObjectPropertyAssertion.of(TypePool.Default.GenericTypeExtractor.ForSignature.OfMethod.ReturnTypeTypeRegistrant.class).apply();
-        ObjectPropertyAssertion.of(TypePool.Default.GenericTypeExtractor.ForSignature.OfMethod.ParameterTypeRegistrant.class).apply();
-        ObjectPropertyAssertion.of(TypePool.Default.GenericTypeExtractor.ForSignature.OfMethod.ExceptionTypeRegistrant.class).apply();
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(TypePool.Default.class).apply();
-    }
-
-    @Test
     public void testTypeIsCached() throws Exception {
-        ClassFileLocator classFileLocator = spy(ClassFileLocator.ForClassLoader.ofClassPath());
+        ClassFileLocator classFileLocator = spy(ClassFileLocator.ForClassLoader.ofSystemLoader());
         TypePool typePool = TypePool.Default.of(classFileLocator);
         TypePool.Resolution resolution = typePool.describe(Object.class.getName());
         assertThat(typePool.describe(Object.class.getName()).resolve(), CoreMatchers.is(resolution.resolve()));
@@ -83,11 +66,11 @@ public class TypePoolDefaultTest {
 
     @Test
     public void testReferencedTypeIsCached() throws Exception {
-        ClassFileLocator classFileLocator = spy(ClassFileLocator.ForClassLoader.ofClassPath());
+        ClassFileLocator classFileLocator = spy(ClassFileLocator.ForClassLoader.ofSystemLoader());
         TypePool typePool = TypePool.Default.of(classFileLocator);
         TypePool.Resolution resolution = typePool.describe(String.class.getName());
         assertThat(typePool.describe(String.class.getName()).resolve(), CoreMatchers.is(resolution.resolve()));
-        assertThat(typePool.describe(String.class.getName()).resolve().getSuperClass().asErasure(), CoreMatchers.is(TypeDescription.OBJECT));
+        assertThat(typePool.describe(String.class.getName()).resolve().getSuperClass().asErasure(), CoreMatchers.is(TypeDescription.ForLoadedType.of(Object.class)));
         verify(classFileLocator).locate(String.class.getName());
         verify(classFileLocator).locate(Object.class.getName());
         verifyNoMoreInteractions(classFileLocator);

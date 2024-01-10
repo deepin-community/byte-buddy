@@ -8,28 +8,29 @@ import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.modifier.*;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.dynamic.DynamicType;
+import net.bytebuddy.dynamic.loading.ByteArrayClassLoader;
 import net.bytebuddy.dynamic.loading.ClassLoadingStrategy;
+import net.bytebuddy.dynamic.loading.InjectionClassLoader;
+import net.bytebuddy.dynamic.loading.PackageDefinitionStrategy;
 import net.bytebuddy.dynamic.scaffold.subclass.ConstructorStrategy;
 import net.bytebuddy.implementation.FixedValue;
 import net.bytebuddy.implementation.StubMethod;
 import net.bytebuddy.implementation.SuperMethodCall;
 import net.bytebuddy.implementation.bytecode.ByteCodeAppender;
 import net.bytebuddy.test.utility.JavaVersionRule;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import net.bytebuddy.utility.JavaConstant;
+import net.bytebuddy.utility.OpenedClassReader;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.MethodRule;
-import org.objectweb.asm.ClassReader;
-import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.*;
 
 import java.io.File;
 import java.io.Serializable;
+import java.lang.annotation.Annotation;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
-import java.util.Arrays;
 import java.util.Collections;
-import java.util.List;
 
 import static net.bytebuddy.matcher.ElementMatchers.*;
 import static org.hamcrest.CoreMatchers.is;
@@ -42,9 +43,9 @@ public class TypeWriterDefaultTest {
 
     private static final String FOO = "foo", BAR = "bar";
 
-    private static final String LEGACY_INTERFACE = "net.bytebuddy.test.precompiled.LegacyInterface";
+    private static final String LEGACY_INTERFACE = "net.bytebuddy.test.precompiled.v6.LegacyInterface";
 
-    private static final String JAVA_8_INTERFACE = "net.bytebuddy.test.precompiled.SingleDefaultMethodInterface";
+    private static final String JAVA_8_INTERFACE = "net.bytebuddy.test.precompiled.v8.SingleDefaultMethodInterface";
 
     @Rule
     public MethodRule javaVersionRule = new JavaVersionRule();
@@ -195,8 +196,8 @@ public class TypeWriterDefaultTest {
                 .make();
     }
 
-    @Test
-    public void testNonPublicMethodOnInterfaceAssertionJava8() throws Exception {
+    @Test(expected = IllegalStateException.class)
+    public void testPackagePrivateMethodOnInterfaceAssertionJava8() throws Exception {
         new ByteBuddy(ClassFileVersion.JAVA_V8)
                 .makeInterface()
                 .defineMethod(FOO, void.class)
@@ -322,14 +323,29 @@ public class TypeWriterDefaultTest {
     }
 
     @Test(expected = IllegalStateException.class)
-    public void testAnnotationPreJava5TypeAssertion() throws Exception {
+    public void testNestHostPreJava11() throws Exception {
+        new ByteBuddy(ClassFileVersion.JAVA_V10)
+                .subclass(Object.class)
+                .nestMembers(Object.class)
+                .make();
+    }
+
+    @Test(expected = IllegalStateException.class)
+    public void testRecordPreJava14() throws Exception {
+        new ByteBuddy(ClassFileVersion.JAVA_V13)
+                .makeRecord()
+                .make();
+    }
+
+    @Test(expected = IllegalStateException.class)
+    public void testAnnotationPreJava5() throws Exception {
         new ByteBuddy(ClassFileVersion.JAVA_V4)
                 .makeAnnotation()
                 .make();
     }
 
     @Test(expected = IllegalStateException.class)
-    public void testAnnotationOnTypePreJava5TypeAssertion() throws Exception {
+    public void testAnnotationOnTypePreJava5() throws Exception {
         new ByteBuddy(ClassFileVersion.JAVA_V4)
                 .subclass(Object.class)
                 .annotateType(AnnotationDescription.Builder.ofType(Foo.class).build())
@@ -337,7 +353,7 @@ public class TypeWriterDefaultTest {
     }
 
     @Test(expected = IllegalStateException.class)
-    public void testAnnotationOnFieldPreJava5TypeAssertion() throws Exception {
+    public void testAnnotationOnFieldPreJava5() throws Exception {
         new ByteBuddy(ClassFileVersion.JAVA_V4)
                 .subclass(Object.class)
                 .defineField(FOO, Void.class)
@@ -346,7 +362,7 @@ public class TypeWriterDefaultTest {
     }
 
     @Test(expected = IllegalStateException.class)
-    public void testAnnotationOnMethodPreJava5TypeAssertion() throws Exception {
+    public void testAnnotationOnMethodPreJava5() throws Exception {
         new ByteBuddy(ClassFileVersion.JAVA_V4)
                 .subclass(Object.class)
                 .defineMethod(FOO, void.class)
@@ -469,7 +485,7 @@ public class TypeWriterDefaultTest {
     public void testLegacyTypeRedefinitionIsDiscovered() throws Exception {
         Class<?> dynamicType = new ByteBuddy()
                 .with(TypeValidation.DISABLED)
-                .redefine(Class.forName("net.bytebuddy.test.precompiled.TypeConstantSample"))
+                .redefine(Class.forName("net.bytebuddy.test.precompiled.v4.TypeConstantSample"))
                 .method(named(BAR))
                 .intercept(FixedValue.value(int.class))
                 .make()
@@ -488,6 +504,15 @@ public class TypeWriterDefaultTest {
     }
 
     @Test(expected = IllegalStateException.class)
+    public void testDynamicConstantInPre11ConstantPool() throws Exception {
+        new ByteBuddy(ClassFileVersion.JAVA_V10)
+                .subclass(Object.class)
+                .defineMethod(FOO, Object.class)
+                .intercept(FixedValue.value(JavaConstant.Dynamic.ofNullConstant()))
+                .make();
+    }
+
+    @Test(expected = IllegalStateException.class)
     public void testMethodHandleInLegacyConstantPool() throws Exception {
         new ByteBuddy(ClassFileVersion.JAVA_V4)
                 .subclass(Object.class)
@@ -500,7 +525,7 @@ public class TypeWriterDefaultTest {
     @JavaVersionRule.Enforce(8)
     public void testDefaultMethodCallFromLegacyType() throws Exception {
         new ByteBuddy(ClassFileVersion.JAVA_V7)
-                .subclass(Class.forName("net.bytebuddy.test.precompiled.SingleDefaultMethodInterface"))
+                .subclass(Class.forName("net.bytebuddy.test.precompiled.v8.SingleDefaultMethodInterface"))
                 .method(isDefaultMethod())
                 .intercept(SuperMethodCall.INSTANCE)
                 .make();
@@ -515,14 +540,14 @@ public class TypeWriterDefaultTest {
                 .defineMethod("bar", Object.class).intercept(StubMethod.INSTANCE)
                 .defineMethod("bar", String.class).intercept(StubMethod.INSTANCE)
                 .make()
-                .load(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassLoadingStrategy.Default.WRAPPER)
+                .load(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassLoadingStrategy.Default.WRAPPER.opened())
                 .getLoaded();
         Class<?> subclass = new ByteBuddy(ClassFileVersion.JAVA_V5)
                 .subclass(base)
                 .modifiers(Visibility.PUBLIC)
                 .method(named("bar")).intercept(StubMethod.INSTANCE)
                 .make()
-                .load(base.getClassLoader(), ClassLoadingStrategy.Default.INJECTION)
+                .load((InjectionClassLoader) base.getClassLoader(), InjectionClassLoader.Strategy.INSTANCE)
                 .getLoaded();
         assertThat(subclass.getDeclaredMethods().length, is(3));
         assertThat(subclass.getDeclaredMethod("foo").isBridge(), is(true));
@@ -540,14 +565,14 @@ public class TypeWriterDefaultTest {
                 .defineMethod(BAR, Object.class).intercept(StubMethod.INSTANCE)
                 .defineMethod(BAR, String.class).intercept(StubMethod.INSTANCE)
                 .make()
-                .load(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassLoadingStrategy.Default.WRAPPER)
+                .load(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassLoadingStrategy.Default.WRAPPER.opened())
                 .getLoaded();
         Class<?> subclass = new ByteBuddy(ClassFileVersion.JAVA_V4)
                 .subclass(base)
                 .modifiers(Visibility.PUBLIC)
                 .method(named(BAR)).intercept(StubMethod.INSTANCE)
                 .make()
-                .load(base.getClassLoader(), ClassLoadingStrategy.Default.INJECTION)
+                .load((InjectionClassLoader) base.getClassLoader(), InjectionClassLoader.Strategy.INSTANCE)
                 .getLoaded();
         assertThat(subclass.getDeclaredMethods().length, is(1));
         assertThat(subclass.getDeclaredMethod(BAR).isBridge(), is(false));
@@ -561,18 +586,22 @@ public class TypeWriterDefaultTest {
                 .defineMethod(FOO, Object.class, Visibility.PUBLIC).intercept(StubMethod.INSTANCE)
                 .defineMethod(FOO, void.class, Visibility.PUBLIC, MethodManifestation.BRIDGE).intercept(StubMethod.INSTANCE)
                 .make()
-                .load(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassLoadingStrategy.Default.WRAPPER)
+                .load(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassLoadingStrategy.Default.WRAPPER.opened())
                 .getLoaded();
         Class<?> subclass = new ByteBuddy()
                 .subclass(base)
                 .method(named(FOO)).intercept(StubMethod.INSTANCE)
                 .make()
-                .load(base.getClassLoader(), ClassLoadingStrategy.Default.INJECTION)
+                .load((InjectionClassLoader) base.getClassLoader(), InjectionClassLoader.Strategy.INSTANCE)
                 .getLoaded();
         assertThat(subclass.getDeclaredMethods().length, is(1));
         assertThat(subclass.getDeclaredMethod(FOO).isBridge(), is(false));
         assertThat(subclass.getDeclaredMethod(FOO).getReturnType(), is((Object) Object.class));
+    }
 
+    @Test
+    public void testClassNoDump() throws Exception {
+        TypeWriter.Default.ClassDumpAction.Dispatcher.Disabled.INSTANCE.dump(null, false, null);
     }
 
     @Test
@@ -584,7 +613,25 @@ public class TypeWriterDefaultTest {
         file = new File(file.getParentFile(), "temp" + System.currentTimeMillis());
         assertThat(file.mkdir(), is(true));
         when(instrumentedType.getName()).thenReturn(FOO + "." + BAR);
-        new TypeWriter.Default.ClassDumpAction(file.getAbsolutePath(), instrumentedType, binaryRepresentation).run();
+        new TypeWriter.Default.ClassDumpAction.Dispatcher.Enabled(file.getAbsolutePath(), 123).dump(instrumentedType, false, binaryRepresentation);
+        File[] child = file.listFiles();
+        assertThat(child, notNullValue(File[].class));
+        assertThat(child.length, is(1));
+        assertThat(child[0].length(), is(3L));
+        assertThat(child[0].delete(), is(true));
+        assertThat(file.delete(), is(true));
+    }
+
+    @Test
+    public void testClassDumpOriginal() throws Exception {
+        TypeDescription instrumentedType = mock(TypeDescription.class);
+        byte[] binaryRepresentation = new byte[]{1, 2, 3};
+        File file = File.createTempFile(FOO, BAR);
+        assertThat(file.delete(), is(true));
+        file = new File(file.getParentFile(), "temp" + System.currentTimeMillis());
+        assertThat(file.mkdir(), is(true));
+        when(instrumentedType.getName()).thenReturn(FOO + "." + BAR);
+        new TypeWriter.Default.ClassDumpAction.Dispatcher.Enabled(file.getAbsolutePath(), 123).dump(instrumentedType, true, binaryRepresentation);
         File[] child = file.listFiles();
         assertThat(child, notNullValue(File[].class));
         assertThat(child.length, is(1));
@@ -630,23 +677,55 @@ public class TypeWriterDefaultTest {
     }
 
     @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(TypeWriter.Default.UnresolvedType.class).apply();
-        ObjectPropertyAssertion.of(TypeWriter.Default.ClassDumpAction.class).apply();
-        ObjectPropertyAssertion.of(TypeWriter.Default.ForCreation.class).apply();
-        ObjectPropertyAssertion.of(TypeWriter.Default.ForInlining.class).apply();
-        ObjectPropertyAssertion.of(TypeWriter.Default.ForInlining.InitializationHandler.Creating.class).apply();
-        ObjectPropertyAssertion.of(TypeWriter.Default.ValidatingClassVisitor.Constraint.ForAnnotation.class).apply();
-        ObjectPropertyAssertion.of(TypeWriter.Default.ValidatingClassVisitor.Constraint.ForInterface.class).apply();
-        ObjectPropertyAssertion.of(TypeWriter.Default.ValidatingClassVisitor.Constraint.ForClass.class).apply();
-        ObjectPropertyAssertion.of(TypeWriter.Default.ValidatingClassVisitor.Constraint.ForPackageType.class).apply();
-        ObjectPropertyAssertion.of(TypeWriter.Default.ValidatingClassVisitor.Constraint.ForClassFileVersion.class).apply();
-        ObjectPropertyAssertion.of(TypeWriter.Default.ValidatingClassVisitor.Constraint.Compound.class).create(new ObjectPropertyAssertion.Creator<List<?>>() {
+    public void testOldJavaClassFileDeprecation() {
+        ClassWriter classWriter = new ClassWriter(0);
+        classWriter.visit(Opcodes.V1_4, Opcodes.ACC_DEPRECATED | Opcodes.ACC_ABSTRACT, "foo/Bar", null, "java/lang/Object", null);
+        classWriter.visitField(Opcodes.ACC_DEPRECATED, "qux", "Ljava/lang/Object;", null, null).visitEnd();
+        classWriter.visitMethod(Opcodes.ACC_DEPRECATED | Opcodes.ACC_ABSTRACT, "baz", "()V", null, null).visitEnd();
+        classWriter.visitEnd();
+
+        TypeDescription typeDescription = new TypeDescription.Latent("foo.Bar", 0, TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class));
+        Class<?> type = ByteArrayClassLoader.load(ClassLoadingStrategy.BOOTSTRAP_LOADER,
+                Collections.singletonMap(typeDescription, classWriter.toByteArray()),
+                ClassLoadingStrategy.NO_PROTECTION_DOMAIN,
+                ByteArrayClassLoader.PersistenceHandler.MANIFEST,
+                PackageDefinitionStrategy.Trivial.INSTANCE,
+                false,
+                true).get(typeDescription);
+
+        byte[] binaryRepresentation = new ByteBuddy()
+                .redefine(type)
+                .field(isDeclaredBy(type)).annotateField(new Annotation[0])
+                .method(isDeclaredBy(type)).withoutCode()
+                .make()
+                .getBytes();
+
+        ClassReader classReader = new ClassReader(binaryRepresentation);
+        classReader.accept(new ClassVisitor(OpenedClassReader.ASM_API) {
             @Override
-            public List<?> create() {
-                return Collections.singletonList(mock(TypeWriter.Default.ValidatingClassVisitor.Constraint.class));
+            public void visit(int version, int access, String name, String signature, String superName, String[] interfaces) {
+                if ((access & Opcodes.ACC_DEPRECATED) == 0) {
+                    throw new AssertionError();
+                }
+                super.visit(version, access, name, signature, superName, interfaces);
             }
-        }).apply();
+
+            @Override
+            public FieldVisitor visitField(int access, String name, String descriptor, String signature, Object value) {
+                if ((access & Opcodes.ACC_DEPRECATED) == 0) {
+                    throw new AssertionError();
+                }
+                return super.visitField(access, name, descriptor, signature, value);
+            }
+
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+                if ((access & Opcodes.ACC_DEPRECATED) == 0) {
+                    throw new AssertionError();
+                }
+                return super.visitMethod(access, name, descriptor, signature, exceptions);
+            }
+        }, 0);
     }
 
     @Retention(RetentionPolicy.RUNTIME)

@@ -3,58 +3,55 @@ package net.bytebuddy.description.type;
 import net.bytebuddy.description.annotation.AnnotationDescription;
 import net.bytebuddy.description.field.FieldDescription;
 import net.bytebuddy.description.method.MethodDescription;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
-import org.junit.Ignore;
+import net.bytebuddy.test.utility.JavaVersionRule;
+import org.junit.Rule;
 import org.junit.Test;
-import org.mockito.Mockito;
+import org.junit.rules.MethodRule;
 
-import java.lang.reflect.*;
-import java.util.ArrayList;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.lang.reflect.Type;
+import java.lang.reflect.WildcardType;
 import java.util.Collections;
-import java.util.List;
 
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.sameInstance;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 public class TypeDescriptionGenericBuilderTest extends AbstractTypeDescriptionGenericTest {
 
-    @Override
+    @Rule
+    public MethodRule javaVersionRule = new JavaVersionRule();
+
     protected TypeDescription.Generic describeType(Field field) {
-        return describe(field.getGenericType(), TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveFieldType(field))
+        return describe(field.getGenericType(), new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedField(field))
                 .accept(TypeDescription.Generic.Visitor.Substitutor.ForAttachment.of(new FieldDescription.ForLoadedField(field)));
     }
 
-    @Override
     protected TypeDescription.Generic describeReturnType(Method method) {
-        return describe(method.getGenericReturnType(), TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveReturnType(method))
+        return describe(method.getGenericReturnType(), new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedMethodReturnType(method))
                 .accept(TypeDescription.Generic.Visitor.Substitutor.ForAttachment.of(new MethodDescription.ForLoadedMethod(method)));
     }
 
-    @Override
     protected TypeDescription.Generic describeParameterType(Method method, int index) {
-        return describe(method.getGenericParameterTypes()[index], TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveParameterType(method, index))
+        return describe(method.getGenericParameterTypes()[index], new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedExecutableParameterType(method, index))
                 .accept(TypeDescription.Generic.Visitor.Substitutor.ForAttachment.of(new MethodDescription.ForLoadedMethod(method)));
     }
 
-    @Override
     protected TypeDescription.Generic describeExceptionType(Method method, int index) {
-        return describe(method.getGenericExceptionTypes()[index], TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveExceptionType(method, index))
+        return describe(method.getGenericExceptionTypes()[index], new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedExecutableExceptionType(method, index))
                 .accept(TypeDescription.Generic.Visitor.Substitutor.ForAttachment.of(new MethodDescription.ForLoadedMethod(method)));
     }
 
-    @Override
     protected TypeDescription.Generic describeSuperClass(Class<?> type) {
-        return describe(type.getGenericSuperclass(), TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveSuperClassType(type))
-                .accept(TypeDescription.Generic.Visitor.Substitutor.ForAttachment.of(new TypeDescription.ForLoadedType(type)));
+        return describe(type.getGenericSuperclass(), new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedSuperClass(type))
+                .accept(TypeDescription.Generic.Visitor.Substitutor.ForAttachment.of(TypeDescription.ForLoadedType.of(type)));
     }
 
-    @Override
     protected TypeDescription.Generic describeInterfaceType(Class<?> type, int index) {
-        return describe(type.getGenericInterfaces()[index], TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveInterfaceType(type, index))
-                .accept(TypeDescription.Generic.Visitor.Substitutor.ForAttachment.of(new TypeDescription.ForLoadedType(type)));
+        return describe(type.getGenericInterfaces()[index], new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedInterface(type, index))
+                .accept(TypeDescription.Generic.Visitor.Substitutor.ForAttachment.of(TypeDescription.ForLoadedType.of(type)));
     }
 
     @Test(expected = IllegalArgumentException.class)
@@ -85,9 +82,9 @@ public class TypeDescriptionGenericBuilderTest extends AbstractTypeDescriptionGe
 
     @Test(expected = IllegalArgumentException.class)
     public void testGenericOwnerType() throws Exception {
-        TypeDescription.Generic.Builder.parameterizedType(new TypeDescription.ForLoadedType(Foo.Nested.class),
+        TypeDescription.Generic.Builder.parameterizedType(TypeDescription.ForLoadedType.of(Foo.Nested.class),
                 TypeDescription.Generic.Builder.parameterizedType(Foo.class, Object.class).build(),
-                Collections.<TypeDefinition>singletonList(TypeDescription.OBJECT));
+                Collections.<TypeDefinition>singletonList(TypeDescription.ForLoadedType.of(Object.class)));
     }
 
     @Test(expected = IllegalArgumentException.class)
@@ -127,12 +124,12 @@ public class TypeDescriptionGenericBuilderTest extends AbstractTypeDescriptionGe
 
     @Test(expected = IllegalArgumentException.class)
     public void testIncompatibleType() throws Exception {
-        TypeDescription.Generic.Builder.rawType(Bar.Inner.class, TypeDescription.Generic.OBJECT);
+        TypeDescription.Generic.Builder.rawType(Bar.Inner.class, TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class));
     }
 
     @Test(expected = IllegalArgumentException.class)
     public void testIncompatibleOwnerTypeWhenNonRequired() throws Exception {
-        TypeDescription.Generic.Builder.rawType(Object.class, TypeDescription.Generic.OBJECT);
+        TypeDescription.Generic.Builder.rawType(Object.class, TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class));
     }
 
     @Test
@@ -145,30 +142,22 @@ public class TypeDescriptionGenericBuilderTest extends AbstractTypeDescriptionGe
     }
 
     @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(TypeDescription.Generic.Builder.OfGenericArrayType.class).apply();
-        ObjectPropertyAssertion.of(TypeDescription.Generic.Builder.OfNonGenericType.class).refine(new ObjectPropertyAssertion.Refinement<TypeDescription>() {
-            @Override
-            public void apply(TypeDescription mock) {
-                when(mock.asGenericType()).thenReturn(Mockito.mock(TypeDescription.Generic.class));
-            }
-        }).apply();
-        ObjectPropertyAssertion.of(TypeDescription.Generic.Builder.OfParameterizedType.class).apply();
-        ObjectPropertyAssertion.of(TypeDescription.Generic.Builder.OfTypeVariable.class).apply();
-    }
-
     @Override
-    @Test
-    @Ignore("The Java reflection API does not currently support owner types")
+    @JavaVersionRule.Enforce(9)
     public void testTypeAnnotationOwnerType() throws Exception {
         super.testTypeAnnotationOwnerType();
     }
 
-    @Override
     @Test
-    @Ignore("The Java reflection API does not currently support generic inner types")
+    @Override
+    @JavaVersionRule.Enforce(9)
     public void testTypeAnnotationNonGenericInnerType() throws Exception {
         super.testTypeAnnotationNonGenericInnerType();
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void testWildcardCannotBeResolved() {
+        TypeDescription.Generic.Builder.of(TypeDescription.Generic.Builder.unboundWildcard());
     }
 
     private TypeDescription.Generic describe(Type type, TypeDescription.Generic.AnnotationReader annotationReader) {
@@ -183,30 +172,7 @@ public class TypeDescriptionGenericBuilderTest extends AbstractTypeDescriptionGe
     }
 
     private TypeDescription.Generic.Builder builder(Type type, TypeDescription.Generic.AnnotationReader annotationReader) {
-        if (type instanceof TypeVariable) {
-            return TypeDescription.Generic.Builder.typeVariable(((TypeVariable<?>) type).getName()).annotate(annotationReader.asList());
-        } else if (type instanceof Class) {
-            Class<?> rawType = (Class<?>) type;
-            return (rawType.isArray()
-                    ? builder(rawType.getComponentType(), annotationReader.ofComponentType()).asArray()
-                    : TypeDescription.Generic.Builder.rawType((Class<?>) type)).annotate(annotationReader.asList());
-        } else if (type instanceof GenericArrayType) {
-            return builder(((GenericArrayType) type).getGenericComponentType(), annotationReader.ofComponentType()).asArray().annotate(annotationReader.asList());
-        } else if (type instanceof ParameterizedType) {
-            ParameterizedType parameterizedType = (ParameterizedType) type;
-            List<TypeDescription.Generic> parameters = new ArrayList<TypeDescription.Generic>(parameterizedType.getActualTypeArguments().length);
-            int index = 0;
-            for (Type parameter : parameterizedType.getActualTypeArguments()) {
-                parameters.add(describe(parameter, annotationReader.ofTypeArgument(index++)));
-            }
-            return TypeDescription.Generic.Builder.parameterizedType(new TypeDescription.ForLoadedType((Class<?>) parameterizedType.getRawType()),
-                    parameterizedType.getOwnerType() == null
-                            ? null
-                            : describe(parameterizedType.getOwnerType(), annotationReader.ofOwnerType()),
-                    parameters).annotate(annotationReader.asList());
-        } else {
-            throw new AssertionError("Unexpected type: " + type);
-        }
+        return TypeDescription.Generic.Builder.of(TypeDefinition.Sort.describe(type, annotationReader));
     }
 
     @SuppressWarnings("unused")

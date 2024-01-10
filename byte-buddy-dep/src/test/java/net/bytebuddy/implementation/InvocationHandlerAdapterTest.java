@@ -5,9 +5,11 @@ import net.bytebuddy.description.modifier.Ownership;
 import net.bytebuddy.description.modifier.Visibility;
 import net.bytebuddy.dynamic.DynamicType;
 import net.bytebuddy.dynamic.loading.ClassLoadingStrategy;
+import net.bytebuddy.test.utility.AccessControllerRule;
 import net.bytebuddy.test.utility.CallTraceable;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.MethodRule;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationHandler;
@@ -17,6 +19,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static net.bytebuddy.matcher.ElementMatchers.isDeclaredBy;
+import static net.bytebuddy.matcher.ElementMatchers.isToString;
 import static org.hamcrest.CoreMatchers.*;
 import static org.hamcrest.MatcherAssert.assertThat;
 
@@ -25,6 +28,9 @@ public class InvocationHandlerAdapterTest {
     private static final String FOO = "foo", BAR = "bar", QUX = "qux";
 
     private static final int BAZ = 42;
+
+    @Rule
+    public MethodRule accessControllerRule = new AccessControllerRule();
 
     @Test
     public void testStaticAdapterWithoutCache() throws Exception {
@@ -36,6 +42,44 @@ public class InvocationHandlerAdapterTest {
                 .make()
                 .load(Bar.class.getClassLoader(), ClassLoadingStrategy.Default.WRAPPER);
         assertThat(loaded.getLoadedAuxiliaryTypes().size(), is(0));
+        assertThat(loaded.getLoaded().getDeclaredMethods().length, is(1));
+        assertThat(loaded.getLoaded().getDeclaredFields().length, is(1));
+        Bar instance = loaded.getLoaded().getDeclaredConstructor().newInstance();
+        assertThat(instance.bar(FOO), is((Object) instance));
+        assertThat(foo.methods.size(), is(1));
+        assertThat(instance.bar(FOO), is((Object) instance));
+        assertThat(foo.methods.size(), is(2));
+        assertThat(foo.methods.get(0), not(sameInstance(foo.methods.get(1))));
+        instance.assertZeroCalls();
+    }
+
+    @Test
+    public void testStaticAdapterWithoutCacheNoParameters() throws Exception {
+        FooBar fooBar = new FooBar();
+        DynamicType.Loaded<Object> loaded = new ByteBuddy()
+                .subclass(Object.class)
+                .method(isToString())
+                .intercept(InvocationHandlerAdapter.of(fooBar).withoutMethodCache())
+                .make()
+                .load(Bar.class.getClassLoader(), ClassLoadingStrategy.Default.WRAPPER);
+        assertThat(loaded.getLoadedAuxiliaryTypes().size(), is(0));
+        assertThat(loaded.getLoaded().getDeclaredMethods().length, is(1));
+        assertThat(loaded.getLoaded().getDeclaredFields().length, is(1));
+        Object instance = loaded.getLoaded().getDeclaredConstructor().newInstance();
+        assertThat(instance.toString(), nullValue(String.class));
+    }
+
+    @Test
+    @AccessControllerRule.Enforce
+    public void testStaticAdapterPrivileged() throws Exception {
+        Foo foo = new Foo();
+        DynamicType.Loaded<Bar> loaded = new ByteBuddy()
+                .subclass(Bar.class)
+                .method(isDeclaredBy(Bar.class))
+                .intercept(InvocationHandlerAdapter.of(foo).withoutMethodCache().withPrivilegedLookup())
+                .make()
+                .load(Bar.class.getClassLoader(), ClassLoadingStrategy.Default.WRAPPER);
+        assertThat(loaded.getLoadedAuxiliaryTypes().size(), is(1));
         assertThat(loaded.getLoaded().getDeclaredMethods().length, is(1));
         assertThat(loaded.getLoaded().getDeclaredFields().length, is(1));
         Bar instance = loaded.getLoaded().getDeclaredConstructor().newInstance();
@@ -166,15 +210,6 @@ public class InvocationHandlerAdapterTest {
                 .make();
     }
 
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(InvocationHandlerAdapter.ForInstance.class).apply();
-        ObjectPropertyAssertion.of(InvocationHandlerAdapter.ForInstance.Appender.class).apply();
-        ObjectPropertyAssertion.of(InvocationHandlerAdapter.ForInstance.Appender.class).skipSynthetic().apply();
-        ObjectPropertyAssertion.of(InvocationHandlerAdapter.ForField.class).apply();
-        ObjectPropertyAssertion.of(InvocationHandlerAdapter.ForField.Appender.class).skipSynthetic().apply();
-    }
-
     private static class Foo implements InvocationHandler {
 
         private final String marker;
@@ -186,7 +221,6 @@ public class InvocationHandlerAdapterTest {
             methods = new ArrayList<Method>();
         }
 
-        @Override
         public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
             methods.add(method);
             assertThat(args.length, is(1));
@@ -197,14 +231,14 @@ public class InvocationHandlerAdapterTest {
         }
 
         @Override
-        public boolean equals(Object other) {
-            return this == other || !(other == null || getClass() != other.getClass())
-                    && marker.equals(((Foo) other).marker);
+        public int hashCode() {
+            return marker.hashCode();
         }
 
         @Override
-        public int hashCode() {
-            return marker.hashCode();
+        public boolean equals(Object other) {
+            return this == other || !(other == null || getClass() != other.getClass())
+                    && marker.equals(((Foo) other).marker);
         }
     }
 
@@ -218,7 +252,6 @@ public class InvocationHandlerAdapterTest {
 
     private static class Qux implements InvocationHandler {
 
-        @Override
         public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
             return ((Integer) args[0]) * 2L;
         }
@@ -229,6 +262,16 @@ public class InvocationHandlerAdapterTest {
         public long bar(int o) {
             register(BAR);
             return o;
+        }
+    }
+
+    public static class FooBar implements InvocationHandler {
+
+        public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+            if (args != null) {
+                throw new AssertionError();
+            }
+            return null;
         }
     }
 }

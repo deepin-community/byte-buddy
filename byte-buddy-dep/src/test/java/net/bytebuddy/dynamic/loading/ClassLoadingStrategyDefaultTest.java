@@ -1,18 +1,17 @@
 package net.bytebuddy.dynamic.loading;
 
 import net.bytebuddy.description.type.TypeDescription;
-import net.bytebuddy.test.utility.ClassFileExtraction;
-import net.bytebuddy.test.utility.MockitoRule;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
+import net.bytebuddy.dynamic.ClassFileLocator;
+import net.bytebuddy.test.utility.ClassReflectionInjectionAvailableRule;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 
 import java.net.URL;
 import java.net.URLClassLoader;
-import java.security.AccessControlContext;
 import java.security.ProtectionDomain;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -26,7 +25,10 @@ import static org.mockito.Mockito.*;
 public class ClassLoadingStrategyDefaultTest {
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
+
+    @Rule
+    public MethodRule classInjectionAvailableRule = new ClassReflectionInjectionAvailableRule();
 
     private ClassLoader classLoader;
 
@@ -43,8 +45,8 @@ public class ClassLoadingStrategyDefaultTest {
     public void setUp() throws Exception {
         classLoader = new URLClassLoader(new URL[0], null);
         binaryRepresentations = new LinkedHashMap<TypeDescription, byte[]>();
-        typeDescription = new TypeDescription.ForLoadedType(Foo.class);
-        binaryRepresentations.put(typeDescription, ClassFileExtraction.extract(Foo.class));
+        typeDescription = TypeDescription.ForLoadedType.of(Foo.class);
+        binaryRepresentations.put(typeDescription, ClassFileLocator.ForClassLoader.read(Foo.class));
         protectionDomain = getClass().getProtectionDomain();
         when(packageDefinitionStrategy.define(any(ClassLoader.class), any(String.class), any(String.class)))
                 .thenReturn(PackageDefinitionStrategy.Definition.Undefined.INSTANCE);
@@ -87,6 +89,7 @@ public class ClassLoadingStrategyDefaultTest {
     }
 
     @Test
+    @ClassReflectionInjectionAvailableRule.Enforce
     public void testInjection() throws Exception {
         Map<TypeDescription, Class<?>> loaded = ClassLoadingStrategy.Default.INJECTION.load(classLoader, binaryRepresentations);
         assertThat(loaded.size(), is(1));
@@ -136,6 +139,7 @@ public class ClassLoadingStrategyDefaultTest {
     }
 
     @Test
+    @ClassReflectionInjectionAvailableRule.Enforce
     public void testInjectionWithProtectionDomain() throws Exception {
         Map<TypeDescription, Class<?>> loaded = ClassLoadingStrategy.Default.INJECTION.with(protectionDomain)
                 .load(classLoader, binaryRepresentations);
@@ -190,6 +194,7 @@ public class ClassLoadingStrategyDefaultTest {
     }
 
     @Test
+    @ClassReflectionInjectionAvailableRule.Enforce
     public void testInjectionWithPackageDefinitionStrategy() throws Exception {
         Map<TypeDescription, Class<?>> loaded = ClassLoadingStrategy.Default.INJECTION.with(packageDefinitionStrategy)
                 .load(classLoader, binaryRepresentations);
@@ -202,61 +207,44 @@ public class ClassLoadingStrategyDefaultTest {
 
     @Test(expected = IllegalStateException.class)
     public void testWrapperThrowsExceptionOnExistingClass() throws Exception {
-        ClassLoadingStrategy.Default.WRAPPER.load(ClassLoader.getSystemClassLoader(), Collections.singletonMap(TypeDescription.STRING, new byte[0]));
+        ClassLoadingStrategy.Default.WRAPPER.load(ClassLoader.getSystemClassLoader(), Collections.singletonMap(TypeDescription.ForLoadedType.of(String.class), new byte[0]));
     }
 
     @Test(expected = IllegalStateException.class)
     public void testWrapperPersistentThrowsExceptionOnExistingClass() throws Exception {
-        ClassLoadingStrategy.Default.WRAPPER_PERSISTENT.load(ClassLoader.getSystemClassLoader(), Collections.singletonMap(TypeDescription.STRING, new byte[0]));
+        ClassLoadingStrategy.Default.WRAPPER_PERSISTENT.load(ClassLoader.getSystemClassLoader(), Collections.singletonMap(TypeDescription.ForLoadedType.of(String.class), new byte[0]));
     }
 
     @Test(expected = IllegalStateException.class)
     public void testInjectionThrowsExceptionOnExistingClass() throws Exception {
-        ClassLoadingStrategy.Default.INJECTION.load(ClassLoader.getSystemClassLoader(), Collections.singletonMap(TypeDescription.STRING, new byte[0]));
+        ClassLoadingStrategy.Default.INJECTION.load(ClassLoader.getSystemClassLoader(), Collections.singletonMap(TypeDescription.ForLoadedType.of(String.class), new byte[0]));
     }
 
     @Test
     public void testWrapperDoesNotThrowExceptionOnExistingClassWhenSupressed() throws Exception {
         Map<TypeDescription, Class<?>> types = ClassLoadingStrategy.Default.WRAPPER
                 .allowExistingTypes()
-                .load(ClassLoader.getSystemClassLoader(), Collections.singletonMap(TypeDescription.STRING, new byte[0]));
+                .load(ClassLoader.getSystemClassLoader(), Collections.singletonMap(TypeDescription.ForLoadedType.of(String.class), new byte[0]));
         assertThat(types.size(), is(1));
-        assertEquals(String.class, types.get(TypeDescription.STRING));
+        assertEquals(String.class, types.get(TypeDescription.ForLoadedType.of(String.class)));
     }
 
     @Test
     public void testWrapperPersistentDoesNotThrowExceptionOnExistingClassWhenSupressed() throws Exception {
         Map<TypeDescription, Class<?>> types = ClassLoadingStrategy.Default.WRAPPER_PERSISTENT
                 .allowExistingTypes()
-                .load(ClassLoader.getSystemClassLoader(), Collections.singletonMap(TypeDescription.STRING, new byte[0]));
+                .load(ClassLoader.getSystemClassLoader(), Collections.singletonMap(TypeDescription.ForLoadedType.of(String.class), new byte[0]));
         assertThat(types.size(), is(1));
-        assertEquals(String.class, types.get(TypeDescription.STRING));
+        assertEquals(String.class, types.get(TypeDescription.ForLoadedType.of(String.class)));
     }
 
     @Test
     public void testInjectionDoesNotThrowExceptionOnExistingClassWhenSupressed() throws Exception {
         Map<TypeDescription, Class<?>> types = ClassLoadingStrategy.Default.INJECTION
                 .allowExistingTypes()
-                .load(ClassLoader.getSystemClassLoader(), Collections.singletonMap(TypeDescription.STRING, new byte[0]));
+                .load(ClassLoader.getSystemClassLoader(), Collections.singletonMap(TypeDescription.ForLoadedType.of(String.class), new byte[0]));
         assertThat(types.size(), is(1));
-        assertEquals(String.class, types.get(TypeDescription.STRING));
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(ClassLoadingStrategy.Default.class).apply();
-        ObjectPropertyAssertion.of(ClassLoadingStrategy.Default.WrappingDispatcher.class).create(new ObjectPropertyAssertion.Creator<AccessControlContext>() {
-            @Override
-            public AccessControlContext create() {
-                return new AccessControlContext(new ProtectionDomain[]{mock(ProtectionDomain.class)});
-            }
-        }).apply();
-        ObjectPropertyAssertion.of(ClassLoadingStrategy.Default.InjectionDispatcher.class).create(new ObjectPropertyAssertion.Creator<AccessControlContext>() {
-            @Override
-            public AccessControlContext create() {
-                return new AccessControlContext(new ProtectionDomain[]{mock(ProtectionDomain.class)});
-            }
-        }).skipSynthetic().apply();
+        assertEquals(String.class, types.get(TypeDescription.ForLoadedType.of(String.class)));
     }
 
     private static class Foo {

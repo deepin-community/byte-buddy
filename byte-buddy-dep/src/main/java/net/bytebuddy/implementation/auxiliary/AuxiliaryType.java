@@ -1,8 +1,23 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation.auxiliary;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import lombok.EqualsAndHashCode;
 import net.bytebuddy.ClassFileVersion;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.modifier.ModifierContributor;
 import net.bytebuddy.description.modifier.SyntheticState;
 import net.bytebuddy.description.type.TypeDescription;
@@ -25,7 +40,7 @@ public interface AuxiliaryType {
     /**
      * The default type access of an auxiliary type. <b>This array must not be mutated</b>.
      */
-    @SuppressFBWarnings(value = {"MS_MUTABLE_ARRAY", "MS_OOI_PKGPROTECT"}, justification = "The array is not to be modified by contract")
+    @SuppressFBWarnings(value = {"MS_MUTABLE_ARRAY", "MS_OOI_PKGPROTECT"}, justification = "The array is not modified by class contract.")
     ModifierContributor.ForType[] DEFAULT_TYPE_MODIFIER = {SyntheticState.SYNTHETIC};
 
     /**
@@ -41,6 +56,13 @@ public interface AuxiliaryType {
     DynamicType make(String auxiliaryTypeName, ClassFileVersion classFileVersion, MethodAccessorFactory methodAccessorFactory);
 
     /**
+     * Produces a suffix that gives this auxiliary type a stable name. A best effort is made that this suffix is unique.
+     *
+     * @return The suffix for this auxiliary type.
+     */
+    String getSuffix();
+
+    /**
      * Representation of a naming strategy for an auxiliary type.
      */
     interface NamingStrategy {
@@ -49,15 +71,71 @@ public interface AuxiliaryType {
          * Names an auxiliary type.
          *
          * @param instrumentedType The instrumented type for which an auxiliary type is registered.
+         * @param auxiliaryType    The named auxiliary type.
          * @return The fully qualified name for the given auxiliary type.
          */
-        String name(TypeDescription instrumentedType);
+        String name(TypeDescription instrumentedType, AuxiliaryType auxiliaryType);
+
+        /**
+         * A naming strategy for an auxiliary type which attempts an enumeration of types by using the hash code
+         * of the instrumenting instance.
+         */
+        class Enumerating implements NamingStrategy {
+
+            /**
+             * The suffix to append to the instrumented type for creating names for the auxiliary types.
+             */
+            private final String suffix;
+
+            /**
+             * Creates a new suffixing random naming strategy.
+             *
+             * @param suffix The suffix to extend to the instrumented type.
+             */
+            public Enumerating(String suffix) {
+                this.suffix = suffix;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public String name(TypeDescription instrumentedType, AuxiliaryType auxiliaryType) {
+                return instrumentedType.getName() + "$" + suffix + "$" + RandomString.hashOf(auxiliaryType);
+            }
+        }
+
+        /**
+         * Creates a naming strategy that uses stable suffixes that are provided by the auxiliary types themselves.
+         */
+        class Suffixing implements NamingStrategy {
+
+            /**
+             * The suffix to append to the instrumented type for creating names for the auxiliary types.
+             */
+            private final String suffix;
+
+            /**
+             * Creates a new suffixing random naming strategy.
+             *
+             * @param suffix The suffix to extend to the instrumented type.
+             */
+            public Suffixing(String suffix) {
+                this.suffix = suffix;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public String name(TypeDescription instrumentedType, AuxiliaryType auxiliaryType) {
+                return instrumentedType.getName() + "$" + suffix + "$" + auxiliaryType.getSuffix();
+            }
+        }
 
         /**
          * A naming strategy for an auxiliary type which returns the instrumented type's name with a fixed extension
          * and a random number as a suffix. All generated names will be in the same package as the instrumented type.
          */
-        @EqualsAndHashCode(of = "suffix")
+        @HashCodeAndEqualsPlugin.Enhance
         class SuffixingRandom implements NamingStrategy {
 
             /**
@@ -68,6 +146,7 @@ public interface AuxiliaryType {
             /**
              * An instance for creating random values.
              */
+            @HashCodeAndEqualsPlugin.ValueHandling(HashCodeAndEqualsPlugin.ValueHandling.Sort.IGNORE)
             private final RandomString randomString;
 
             /**
@@ -80,8 +159,10 @@ public interface AuxiliaryType {
                 randomString = new RandomString();
             }
 
-            @Override
-            public String name(TypeDescription instrumentedType) {
+            /**
+             * {@inheritDoc}
+             */
+            public String name(TypeDescription instrumentedType, AuxiliaryType auxiliaryType) {
                 return instrumentedType.getName() + "$" + suffix + "$" + randomString.nextString();
             }
         }

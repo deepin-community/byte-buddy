@@ -1,9 +1,29 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.dynamic.loading;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.agent.builder.AgentBuilder;
+import net.bytebuddy.build.AccessControllerPlugin;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.dynamic.ClassFileLocator;
+import net.bytebuddy.utility.JavaModule;
+import net.bytebuddy.utility.dispatcher.JavaDispatcher;
+import net.bytebuddy.utility.nullability.AlwaysNull;
+import net.bytebuddy.utility.nullability.MaybeNull;
 
 import java.io.File;
 import java.io.IOException;
@@ -11,6 +31,7 @@ import java.lang.instrument.ClassDefinition;
 import java.lang.instrument.ClassFileTransformer;
 import java.lang.instrument.Instrumentation;
 import java.lang.instrument.UnmodifiableClassException;
+import java.security.PrivilegedAction;
 import java.security.ProtectionDomain;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -29,23 +50,13 @@ import java.util.concurrent.ConcurrentHashMap;
  * recommended to use this {@link ClassLoadingStrategy} with arbitrary classes.
  * </p>
  */
-@EqualsAndHashCode
+@HashCodeAndEqualsPlugin.Enhance
 public class ClassReloadingStrategy implements ClassLoadingStrategy<ClassLoader> {
 
     /**
-     * The name of the Byte Buddy {@code net.bytebuddy.agent.Installer} class.
+     * A dispatcher to use with some methods of the {@link Instrumentation} API.
      */
-    private static final String INSTALLER_TYPE = "net.bytebuddy.agent.Installer";
-
-    /**
-     * The name of the {@code net.bytebuddy.agent.Installer} getter for reading an installed {@link Instrumentation}.
-     */
-    private static final String INSTRUMENTATION_GETTER = "getInstrumentation";
-
-    /**
-     * Indicator for access to a static member via reflection to make the code more readable.
-     */
-    private static final Object STATIC_MEMBER = null;
+    protected static final Dispatcher DISPATCHER = doPrivileged(JavaDispatcher.of(Dispatcher.class));
 
     /**
      * This instance's instrumentation.
@@ -101,6 +112,18 @@ public class ClassReloadingStrategy implements ClassLoadingStrategy<ClassLoader>
     }
 
     /**
+     * A proxy for {@code java.security.AccessController#doPrivileged} that is activated if available.
+     *
+     * @param action The action to execute from a privileged context.
+     * @param <T>    The type of the action's resolved value.
+     * @return The action's resolved value.
+     */
+    @AccessControllerPlugin.Enhance
+    private static <T> T doPrivileged(PrivilegedAction<T> action) {
+        return action.run();
+    }
+
+    /**
      * Creates a class reloading strategy for the given instrumentation. The given instrumentation must either
      * support {@link java.lang.instrument.Instrumentation#isRedefineClassesSupported()} or
      * {@link java.lang.instrument.Instrumentation#isRetransformClassesSupported()}. If both modes are supported,
@@ -110,12 +133,33 @@ public class ClassReloadingStrategy implements ClassLoadingStrategy<ClassLoader>
      * @return A suitable class reloading strategy.
      */
     public static ClassReloadingStrategy of(Instrumentation instrumentation) {
-        if (instrumentation.isRetransformClassesSupported()) {
+        if (DISPATCHER.isRetransformClassesSupported(instrumentation)) {
             return new ClassReloadingStrategy(instrumentation, Strategy.RETRANSFORMATION);
         } else if (instrumentation.isRedefineClassesSupported()) {
             return new ClassReloadingStrategy(instrumentation, Strategy.REDEFINITION);
         } else {
             throw new IllegalArgumentException("Instrumentation does not support reloading of classes: " + instrumentation);
+        }
+    }
+
+    /**
+     * Resolves the instrumentation provided by {@code net.bytebuddy.agent.Installer}.
+     *
+     * @return The installed instrumentation instance.
+     */
+    private static Instrumentation resolveByteBuddyAgentInstrumentation() {
+        try {
+            Class<?> installer = ClassLoader.getSystemClassLoader().loadClass("net.bytebuddy.agent.Installer");
+            JavaModule source = JavaModule.ofType(AgentBuilder.class), target = JavaModule.ofType(installer);
+            if (source != null && !source.canRead(target)) {
+                Class<?> module = Class.forName("java.lang.Module");
+                module.getMethod("addReads", module).invoke(source.unwrap(), target.unwrap());
+            }
+            return (Instrumentation) installer.getMethod("getInstrumentation").invoke(null);
+        } catch (RuntimeException exception) {
+            throw exception;
+        } catch (Exception exception) {
+            throw new IllegalStateException("The Byte Buddy agent is not installed or not accessible", exception);
         }
     }
 
@@ -131,21 +175,12 @@ public class ClassReloadingStrategy implements ClassLoadingStrategy<ClassLoader>
      * </p>
      * or after the start up using the Attach API. A convenience installer for the OpenJDK is provided by the
      * {@code ByteBuddyAgent} within the {@code byte-buddy-agent} module. The strategy is determined by the agent's support
-     * for redefinition where are retransformation is prefered over a redefinition.
+     * for redefinition where are retransformation is preferred over a redefinition.
      *
      * @return A class reloading strategy which uses the Byte Buddy agent's {@link java.lang.instrument.Instrumentation}.
      */
     public static ClassReloadingStrategy fromInstalledAgent() {
-        try {
-            return ClassReloadingStrategy.of((Instrumentation) ClassLoader.getSystemClassLoader()
-                    .loadClass(INSTALLER_TYPE)
-                    .getMethod(INSTRUMENTATION_GETTER)
-                    .invoke(STATIC_MEMBER));
-        } catch (RuntimeException exception) {
-            throw exception;
-        } catch (Exception exception) {
-            throw new IllegalStateException("The Byte Buddy agent is not installed or not accessible", exception);
-        }
+        return ClassReloadingStrategy.of(resolveByteBuddyAgentInstrumentation());
     }
 
     /**
@@ -165,20 +200,13 @@ public class ClassReloadingStrategy implements ClassLoadingStrategy<ClassLoader>
      * @return A class reloading strategy which uses the Byte Buddy agent's {@link java.lang.instrument.Instrumentation}.
      */
     public static ClassReloadingStrategy fromInstalledAgent(Strategy strategy) {
-        try {
-            return new ClassReloadingStrategy((Instrumentation) ClassLoader.getSystemClassLoader()
-                    .loadClass(INSTALLER_TYPE)
-                    .getMethod(INSTRUMENTATION_GETTER)
-                    .invoke(STATIC_MEMBER), strategy);
-        } catch (RuntimeException exception) {
-            throw exception;
-        } catch (Exception exception) {
-            throw new IllegalStateException("The Byte Buddy agent is not installed or not accessible", exception);
-        }
+        return new ClassReloadingStrategy(resolveByteBuddyAgentInstrumentation(), strategy);
     }
 
-    @Override
-    public Map<TypeDescription, Class<?>> load(ClassLoader classLoader, Map<TypeDescription, byte[]> types) {
+    /**
+     * {@inheritDoc}
+     */
+    public Map<TypeDescription, Class<?>> load(@MaybeNull ClassLoader classLoader, Map<TypeDescription, byte[]> types) {
         Map<String, Class<?>> availableTypes = new HashMap<String, Class<?>>(preregisteredTypes);
         for (Class<?> type : instrumentation.getInitiatedClasses(classLoader)) {
             availableTypes.put(TypeDescription.ForLoadedType.getName(type), type);
@@ -269,6 +297,48 @@ public class ClassReloadingStrategy implements ClassLoadingStrategy<ClassLoader>
     }
 
     /**
+     * A dispatcher to interact with the instrumentation API.
+     */
+    @JavaDispatcher.Proxied("java.lang.instrument.Instrumentation")
+    protected interface Dispatcher {
+
+        /**
+         * Invokes the {@code Instrumentation#isModifiableClass} method.
+         *
+         * @param instrumentation The instrumentation instance to invoke the method on.
+         * @param type            The type to consider for modifiability.
+         * @return {@code true} if the supplied type can be modified.
+         */
+        boolean isModifiableClass(Instrumentation instrumentation, Class<?> type);
+
+        /**
+         * Invokes the {@code Instrumentation#isRetransformClassesSupported} method.
+         *
+         * @param instrumentation The instrumentation instance to invoke the method on.
+         * @return {@code true} if the supplied instrumentation instance supports retransformation.
+         */
+        boolean isRetransformClassesSupported(Instrumentation instrumentation);
+
+        /**
+         * Registers a transformer.
+         *
+         * @param instrumentation      The instrumentation instance to invoke the method on.
+         * @param classFileTransformer The class file transformer to register.
+         * @param canRetransform       {@code true} if the class file transformer should be invoked upon a retransformation.
+         */
+        void addTransformer(Instrumentation instrumentation, ClassFileTransformer classFileTransformer, boolean canRetransform);
+
+        /**
+         * Retransforms the supplied classes.
+         *
+         * @param instrumentation The instrumentation instance to invoke the method on.
+         * @param type            The types to retransform.
+         * @throws UnmodifiableClassException If any of the supplied types are unmodifiable.
+         */
+        void retransformClasses(Instrumentation instrumentation, Class<?>[] type) throws UnmodifiableClassException;
+    }
+
+    /**
      * A strategy which performs the actual redefinition of a {@link java.lang.Class}.
      */
     public enum Strategy {
@@ -286,7 +356,7 @@ public class ClassReloadingStrategy implements ClassLoadingStrategy<ClassLoader>
             @Override
             protected void apply(Instrumentation instrumentation, Map<Class<?>, ClassDefinition> classDefinitions)
                     throws UnmodifiableClassException, ClassNotFoundException {
-                instrumentation.redefineClasses(classDefinitions.values().toArray(new ClassDefinition[classDefinitions.size()]));
+                instrumentation.redefineClasses(classDefinitions.values().toArray(new ClassDefinition[0]));
             }
 
             @Override
@@ -324,9 +394,9 @@ public class ClassReloadingStrategy implements ClassLoadingStrategy<ClassLoader>
             protected void apply(Instrumentation instrumentation, Map<Class<?>, ClassDefinition> classDefinitions) throws UnmodifiableClassException {
                 ClassRedefinitionTransformer classRedefinitionTransformer = new ClassRedefinitionTransformer(classDefinitions);
                 synchronized (this) {
-                    instrumentation.addTransformer(classRedefinitionTransformer, REDEFINE_CLASSES);
+                    DISPATCHER.addTransformer(instrumentation, classRedefinitionTransformer, REDEFINE_CLASSES);
                     try {
-                        instrumentation.retransformClasses(classDefinitions.keySet().toArray(new Class<?>[classDefinitions.size()]));
+                        DISPATCHER.retransformClasses(instrumentation, classDefinitions.keySet().toArray(new Class<?>[0]));
                     } finally {
                         instrumentation.removeTransformer(classRedefinitionTransformer);
                     }
@@ -336,22 +406,22 @@ public class ClassReloadingStrategy implements ClassLoadingStrategy<ClassLoader>
 
             @Override
             protected Strategy validate(Instrumentation instrumentation) {
-                if (!instrumentation.isRetransformClassesSupported()) {
+                if (!DISPATCHER.isRetransformClassesSupported(instrumentation)) {
                     throw new IllegalArgumentException("Does not support retransformation: " + instrumentation);
                 }
                 return this;
             }
 
             @Override
-            public void reset(Instrumentation instrumentation, ClassFileLocator classFileLocator, List<Class<?>> types) throws IOException, UnmodifiableClassException, ClassNotFoundException {
+            public void reset(Instrumentation instrumentation, ClassFileLocator classFileLocator, List<Class<?>> types) throws UnmodifiableClassException, ClassNotFoundException {
                 for (Class<?> type : types) {
-                    if (!instrumentation.isModifiableClass(type)) {
+                    if (!DISPATCHER.isModifiableClass(instrumentation, type)) {
                         throw new IllegalArgumentException("Cannot modify type: " + type);
                     }
                 }
-                instrumentation.addTransformer(ClassResettingTransformer.INSTANCE, true);
+                DISPATCHER.addTransformer(instrumentation, ClassResettingTransformer.INSTANCE, REDEFINE_CLASSES);
                 try {
-                    instrumentation.retransformClasses(types.toArray(new Class<?>[types.size()]));
+                    DISPATCHER.retransformClasses(instrumentation, types.toArray(new Class<?>[0]));
                 } finally {
                     instrumentation.removeTransformer(ClassResettingTransformer.INSTANCE);
                 }
@@ -361,6 +431,7 @@ public class ClassReloadingStrategy implements ClassLoadingStrategy<ClassLoader>
         /**
          * Indicates that a class is not redefined.
          */
+        @AlwaysNull
         private static final byte[] NO_REDEFINITION = null;
 
         /**
@@ -442,11 +513,13 @@ public class ClassReloadingStrategy implements ClassLoadingStrategy<ClassLoader>
                 this.redefinedClasses = redefinedClasses;
             }
 
-            @Override
-            @SuppressFBWarnings(value = "EI_EXPOSE_REP", justification = "Value is always null")
-            public byte[] transform(ClassLoader classLoader,
-                                    String internalTypeName,
-                                    Class<?> classBeingRedefined,
+            /**
+             * {@inheritDoc}
+             */
+            @MaybeNull
+            public byte[] transform(@MaybeNull ClassLoader classLoader,
+                                    @MaybeNull String internalTypeName,
+                                    @MaybeNull Class<?> classBeingRedefined,
                                     ProtectionDomain protectionDomain,
                                     byte[] classfileBuffer) {
                 if (internalTypeName == null) {
@@ -478,10 +551,13 @@ public class ClassReloadingStrategy implements ClassLoadingStrategy<ClassLoader>
              */
             INSTANCE;
 
-            @Override
-            public byte[] transform(ClassLoader classLoader,
-                                    String internalTypeName,
-                                    Class<?> classBeingRedefined,
+            /**
+             * {@inheritDoc}
+             */
+            @MaybeNull
+            public byte[] transform(@MaybeNull ClassLoader classLoader,
+                                    @MaybeNull String internalTypeName,
+                                    @MaybeNull Class<?> classBeingRedefined,
                                     ProtectionDomain protectionDomain,
                                     byte[] classfileBuffer) {
                 return NO_REDEFINITION;
@@ -512,7 +588,9 @@ public class ClassReloadingStrategy implements ClassLoadingStrategy<ClassLoader>
              */
             INSTANCE;
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public ClassInjector make(Instrumentation instrumentation) {
                 throw new IllegalStateException("Bootstrap injection is not enabled");
             }
@@ -521,7 +599,7 @@ public class ClassReloadingStrategy implements ClassLoadingStrategy<ClassLoader>
         /**
          * An enabled bootstrap class loader injection strategy.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class Enabled implements BootstrapInjection {
 
             /**
@@ -538,7 +616,9 @@ public class ClassReloadingStrategy implements ClassLoadingStrategy<ClassLoader>
                 this.folder = folder;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public ClassInjector make(Instrumentation instrumentation) {
                 return ClassInjector.UsingInstrumentation.of(folder, ClassInjector.UsingInstrumentation.Target.BOOTSTRAP, instrumentation);
             }

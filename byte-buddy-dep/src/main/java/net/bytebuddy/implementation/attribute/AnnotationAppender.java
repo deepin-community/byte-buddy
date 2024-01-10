@@ -1,11 +1,29 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation.attribute;
 
-import lombok.EqualsAndHashCode;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.annotation.AnnotationDescription;
 import net.bytebuddy.description.enumeration.EnumerationDescription;
 import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.description.type.TypeList;
+import net.bytebuddy.utility.nullability.AlwaysNull;
+import net.bytebuddy.utility.nullability.MaybeNull;
 import org.objectweb.asm.*;
 
 import java.lang.reflect.Array;
@@ -19,6 +37,7 @@ public interface AnnotationAppender {
     /**
      * A constant for informing ASM over ignoring a given name.
      */
+    @AlwaysNull
     String NO_NAME = null;
 
     /**
@@ -53,6 +72,7 @@ public interface AnnotationAppender {
          * @param visible                  {@code true} if the annotation is to be visible at runtime.
          * @return An annotation visitor for consuming the specified annotation.
          */
+        @MaybeNull
         AnnotationVisitor visit(String annotationTypeDescriptor, boolean visible);
 
         /**
@@ -64,12 +84,13 @@ public interface AnnotationAppender {
          * @param typePath                 The type annotation's type path.
          * @return An annotation visitor for consuming the specified annotation.
          */
+        @MaybeNull
         AnnotationVisitor visit(String annotationTypeDescriptor, boolean visible, int typeReference, String typePath);
 
         /**
          * Target for an annotation that is written to a Java type.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class OnType implements Target {
 
             /**
@@ -86,21 +107,64 @@ public interface AnnotationAppender {
                 this.classVisitor = classVisitor;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
+            @MaybeNull
             public AnnotationVisitor visit(String annotationTypeDescriptor, boolean visible) {
                 return classVisitor.visitAnnotation(annotationTypeDescriptor, visible);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
+            @MaybeNull
             public AnnotationVisitor visit(String annotationTypeDescriptor, boolean visible, int typeReference, String typePath) {
                 return classVisitor.visitTypeAnnotation(typeReference, TypePath.fromString(typePath), annotationTypeDescriptor, visible);
             }
         }
 
         /**
+         * Target for an annotation that is written to a Java field.
+         */
+        @HashCodeAndEqualsPlugin.Enhance
+        class OnField implements Target {
+
+            /**
+             * The field visitor to write the annotation to.
+             */
+            private final FieldVisitor fieldVisitor;
+
+            /**
+             * Creates a new wrapper for a Java field.
+             *
+             * @param fieldVisitor The ASM field visitor to which the annotations are appended to.
+             */
+            public OnField(FieldVisitor fieldVisitor) {
+                this.fieldVisitor = fieldVisitor;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            @MaybeNull
+            public AnnotationVisitor visit(String annotationTypeDescriptor, boolean visible) {
+                return fieldVisitor.visitAnnotation(annotationTypeDescriptor, visible);
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            @MaybeNull
+            public AnnotationVisitor visit(String annotationTypeDescriptor, boolean visible, int typeReference, String typePath) {
+                return fieldVisitor.visitTypeAnnotation(typeReference, TypePath.fromString(typePath), annotationTypeDescriptor, visible);
+            }
+        }
+
+        /**
          * Target for an annotation that is written to a Java method or constructor.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class OnMethod implements Target {
 
             /**
@@ -117,12 +181,18 @@ public interface AnnotationAppender {
                 this.methodVisitor = methodVisitor;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
+            @MaybeNull
             public AnnotationVisitor visit(String annotationTypeDescriptor, boolean visible) {
                 return methodVisitor.visitAnnotation(annotationTypeDescriptor, visible);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
+            @MaybeNull
             public AnnotationVisitor visit(String annotationTypeDescriptor, boolean visible, int typeReference, String typePath) {
                 return methodVisitor.visitTypeAnnotation(typeReference, TypePath.fromString(typePath), annotationTypeDescriptor, visible);
             }
@@ -131,7 +201,7 @@ public interface AnnotationAppender {
         /**
          * Target for an annotation that is written to a Java method or constructor parameter.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class OnMethodParameter implements Target {
 
             /**
@@ -155,45 +225,57 @@ public interface AnnotationAppender {
                 this.parameterIndex = parameterIndex;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
+            @MaybeNull
             public AnnotationVisitor visit(String annotationTypeDescriptor, boolean visible) {
                 return methodVisitor.visitParameterAnnotation(parameterIndex, annotationTypeDescriptor, visible);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
+            @MaybeNull
             public AnnotationVisitor visit(String annotationTypeDescriptor, boolean visible, int typeReference, String typePath) {
                 return methodVisitor.visitTypeAnnotation(typeReference, TypePath.fromString(typePath), annotationTypeDescriptor, visible);
             }
         }
 
         /**
-         * Target for an annotation that is written to a Java field.
+         * Target for an annotation that is written to a Java record component.
          */
-        @EqualsAndHashCode
-        class OnField implements Target {
+        @HashCodeAndEqualsPlugin.Enhance
+        class OnRecordComponent implements Target {
 
             /**
-             * The field visitor to write the annotation to.
+             * The record component visitor to write the annotation to.
              */
-            private final FieldVisitor fieldVisitor;
+            private final RecordComponentVisitor recordComponentVisitor;
 
             /**
-             * Creates a new wrapper for a Java field.
+             * Creates a new wrapper for a Java record component.
              *
-             * @param fieldVisitor The ASM field visitor to which the annotations are appended to.
+             * @param recordComponentVisitor The record component visitor to write the annotation to.
              */
-            public OnField(FieldVisitor fieldVisitor) {
-                this.fieldVisitor = fieldVisitor;
+            public OnRecordComponent(RecordComponentVisitor recordComponentVisitor) {
+                this.recordComponentVisitor = recordComponentVisitor;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
+            @MaybeNull
             public AnnotationVisitor visit(String annotationTypeDescriptor, boolean visible) {
-                return fieldVisitor.visitAnnotation(annotationTypeDescriptor, visible);
+                return recordComponentVisitor.visitAnnotation(annotationTypeDescriptor, visible);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
+            @MaybeNull
             public AnnotationVisitor visit(String annotationTypeDescriptor, boolean visible, int typeReference, String typePath) {
-                return fieldVisitor.visitTypeAnnotation(typeReference, TypePath.fromString(typePath), annotationTypeDescriptor, visible);
+                return recordComponentVisitor.visitTypeAnnotation(typeReference, TypePath.fromString(typePath), annotationTypeDescriptor, visible);
             }
         }
     }
@@ -202,7 +284,7 @@ public interface AnnotationAppender {
      * A default implementation for an annotation appender that writes annotations to a given byte consumer
      * represented by an ASM {@link org.objectweb.asm.AnnotationVisitor}.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class Default implements AnnotationAppender {
 
         /**
@@ -239,11 +321,11 @@ public interface AnnotationAppender {
          * Performs the writing of a given annotation value to an annotation visitor.
          *
          * @param annotationVisitor The annotation visitor the write process is to be applied on.
-         * @param valueType         The type of the annotation value.
-         * @param name              The name of the annotation type.
+         * @param valueType         The type of the annotation.
+         * @param name              The name of the annotation type or {@code null} if no name is available..
          * @param value             The annotation's value.
          */
-        public static void apply(AnnotationVisitor annotationVisitor, TypeDescription valueType, String name, Object value) {
+        public static void apply(AnnotationVisitor annotationVisitor, TypeDescription valueType, @MaybeNull String name, Object value) {
             if (valueType.isArray()) { // The Android emulator reads annotation arrays as annotation types. Therefore, this check needs to come first.
                 AnnotationVisitor arrayVisitor = annotationVisitor.visitArray(name);
                 int length = Array.getLength(value);
@@ -263,7 +345,9 @@ public interface AnnotationAppender {
             }
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public AnnotationAppender append(AnnotationDescription annotationDescription, AnnotationValueFilter annotationValueFilter) {
             switch (annotationDescription.getRetention()) {
                 case RUNTIME:
@@ -288,10 +372,15 @@ public interface AnnotationAppender {
          * @param annotationValueFilter The annotation value filter to apply.
          */
         private void doAppend(AnnotationDescription annotation, boolean visible, AnnotationValueFilter annotationValueFilter) {
-            handle(target.visit(annotation.getAnnotationType().getDescriptor(), visible), annotation, annotationValueFilter);
+            AnnotationVisitor annotationVisitor = target.visit(annotation.getAnnotationType().getDescriptor(), visible);
+            if (annotationVisitor != null) {
+                handle(annotationVisitor, annotation, annotationValueFilter);
+            }
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public AnnotationAppender append(AnnotationDescription annotationDescription, AnnotationValueFilter annotationValueFilter, int typeReference, String typePath) {
             switch (annotationDescription.getRetention()) {
                 case RUNTIME:
@@ -322,7 +411,10 @@ public interface AnnotationAppender {
                               AnnotationValueFilter annotationValueFilter,
                               int typeReference,
                               String typePath) {
-            handle(target.visit(annotation.getAnnotationType().getDescriptor(), visible, typeReference, typePath), annotation, annotationValueFilter);
+            AnnotationVisitor annotationVisitor = target.visit(annotation.getAnnotationType().getDescriptor(), visible, typeReference, typePath);
+            if (annotationVisitor != null) {
+                handle(annotationVisitor, annotation, annotationValueFilter);
+            }
         }
     }
 
@@ -330,7 +422,7 @@ public interface AnnotationAppender {
      * A type visitor that visits all type annotations of a generic type and writes any discovered annotation to a
      * supplied {@link AnnotationAppender}.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class ForTypeAnnotations implements TypeDescription.Generic.Visitor<AnnotationAppender> {
 
         /**
@@ -566,7 +658,10 @@ public interface AnnotationAppender {
             return annotationAppender;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
+        @SuppressFBWarnings(value = "NP_NULL_ON_SOME_PATH_FROM_RETURN_VALUE", justification = "Assuming component type for array type.")
         public AnnotationAppender onGenericArray(TypeDescription.Generic genericArray) {
             return genericArray.getComponentType().accept(new ForTypeAnnotations(apply(genericArray, typePath),
                     annotationValueFilter,
@@ -574,7 +669,9 @@ public interface AnnotationAppender {
                     typePath + COMPONENT_TYPE_PATH));
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public AnnotationAppender onWildcard(TypeDescription.Generic wildcard) {
             TypeList.Generic lowerBounds = wildcard.getLowerBounds();
             return (lowerBounds.isEmpty()
@@ -582,7 +679,9 @@ public interface AnnotationAppender {
                     : lowerBounds.getOnly()).accept(new ForTypeAnnotations(apply(wildcard, typePath), annotationValueFilter, typeReference, typePath + WILDCARD_TYPE_PATH));
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public AnnotationAppender onParameterizedType(TypeDescription.Generic parameterizedType) {
             StringBuilder typePath = new StringBuilder(this.typePath);
             for (int index = 0; index < parameterizedType.asErasure().getInnerClassCount(); index++) {
@@ -606,20 +705,25 @@ public interface AnnotationAppender {
             return annotationAppender;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public AnnotationAppender onTypeVariable(TypeDescription.Generic typeVariable) {
             return apply(typeVariable, typePath);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public AnnotationAppender onNonGenericType(TypeDescription.Generic typeDescription) {
             StringBuilder typePath = new StringBuilder(this.typePath);
             for (int index = 0; index < typeDescription.asErasure().getInnerClassCount(); index++) {
                 typePath = typePath.append(INNER_CLASS_PATH);
             }
             AnnotationAppender annotationAppender = apply(typeDescription, typePath.toString());
-            if (typeDescription.isArray()) {
-                annotationAppender = typeDescription.getComponentType().accept(new ForTypeAnnotations(annotationAppender,
+            TypeDescription.Generic componentType = typeDescription.getComponentType();
+            if (componentType != null) {
+                annotationAppender = componentType.accept(new ForTypeAnnotations(annotationAppender,
                         annotationValueFilter,
                         typeReference,
                         this.typePath + COMPONENT_TYPE_PATH)); // Impossible to be inner class

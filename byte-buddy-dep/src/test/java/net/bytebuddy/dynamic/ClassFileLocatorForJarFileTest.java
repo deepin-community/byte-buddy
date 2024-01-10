@@ -2,7 +2,6 @@ package net.bytebuddy.dynamic;
 
 import net.bytebuddy.ByteBuddy;
 import net.bytebuddy.test.utility.JavaVersionRule;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
@@ -10,7 +9,6 @@ import org.junit.Test;
 import org.junit.rules.MethodRule;
 import org.objectweb.asm.ClassVisitor;
 
-import java.io.Closeable;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.util.jar.JarEntry;
@@ -66,14 +64,6 @@ public class ClassFileLocatorForJarFileTest {
     }
 
     @Test
-    public void testJarFileClosable() throws Exception {
-        JarFile jarFile = mock(JarFile.class);
-        Closeable classFileLocator = new ClassFileLocator.ForJarFile(jarFile);
-        classFileLocator.close();
-        verify(jarFile).close();
-    }
-
-    @Test
     public void testClassPath() throws Exception {
         ClassFileLocator classFileLocator = ClassFileLocator.ForJarFile.ofClassPath();
         try {
@@ -123,10 +113,5 @@ public class ClassFileLocatorForJarFileTest {
         new ClassFileLocator.ForJarFile(jarFile).close();
         verify(jarFile).close();
         verifyNoMoreInteractions(jarFile);
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(ClassFileLocator.ForJarFile.class).apply();
     }
 }

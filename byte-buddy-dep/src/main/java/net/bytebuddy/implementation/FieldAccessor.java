@@ -1,21 +1,46 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation;
 
-import lombok.EqualsAndHashCode;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.field.FieldDescription;
 import net.bytebuddy.description.method.MethodDescription;
-import net.bytebuddy.description.method.ParameterDescription;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.dynamic.scaffold.FieldLocator;
 import net.bytebuddy.dynamic.scaffold.InstrumentedType;
 import net.bytebuddy.implementation.bytecode.ByteCodeAppender;
 import net.bytebuddy.implementation.bytecode.StackManipulation;
 import net.bytebuddy.implementation.bytecode.assign.Assigner;
+import net.bytebuddy.implementation.bytecode.constant.*;
 import net.bytebuddy.implementation.bytecode.member.FieldAccess;
 import net.bytebuddy.implementation.bytecode.member.MethodReturn;
 import net.bytebuddy.implementation.bytecode.member.MethodVariableAccess;
+import net.bytebuddy.utility.JavaConstant;
+import net.bytebuddy.utility.JavaType;
+import net.bytebuddy.utility.RandomString;
+import net.bytebuddy.utility.nullability.AlwaysNull;
+import net.bytebuddy.utility.nullability.MaybeNull;
 import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.Type;
+
+import static net.bytebuddy.matcher.ElementMatchers.named;
 
 /**
  * <p>
@@ -35,7 +60,7 @@ import java.lang.reflect.Field;
  * value can be specified explicitly when {@code void} is not returned.
  * </p>
  */
-@EqualsAndHashCode
+@HashCodeAndEqualsPlugin.Enhance
 public abstract class FieldAccessor implements Implementation {
 
     /**
@@ -118,60 +143,6 @@ public abstract class FieldAccessor implements Implementation {
     }
 
     /**
-     * Creates a getter getter.
-     *
-     * @param fieldDescription   The field to read the value from.
-     * @param instrumentedMethod The getter method.
-     * @return A stack manipulation that gets the field's value.
-     */
-    protected StackManipulation getter(FieldDescription fieldDescription, MethodDescription instrumentedMethod) {
-        return access(fieldDescription, instrumentedMethod, new StackManipulation.Compound(FieldAccess.forField(fieldDescription).read(),
-                assigner.assign(fieldDescription.getType(), instrumentedMethod.getReturnType(), typing)));
-    }
-
-    /**
-     * Creates a setter instruction.
-     *
-     * @param fieldDescription     The field to set a value for.
-     * @param parameterDescription The parameter for what value is to be set.
-     * @return A stack manipulation that sets the field's value.
-     */
-    protected StackManipulation setter(FieldDescription fieldDescription, ParameterDescription parameterDescription) {
-        if (fieldDescription.isFinal() && parameterDescription.getDeclaringMethod().isMethod()) {
-            throw new IllegalArgumentException("Cannot set final field " + fieldDescription + " from " + parameterDescription.getDeclaringMethod());
-        }
-        return access(fieldDescription,
-                parameterDescription.getDeclaringMethod(),
-                new StackManipulation.Compound(MethodVariableAccess.load(parameterDescription),
-                        assigner.assign(parameterDescription.getType(), fieldDescription.getType(), typing),
-                        FieldAccess.forField(fieldDescription).write()));
-    }
-
-    /**
-     * Checks a field access and loads the {@code this} instance if necessary.
-     *
-     * @param fieldDescription   The field to get a value
-     * @param instrumentedMethod The instrumented method.
-     * @param fieldAccess        A stack manipulation describing the field access.
-     * @return An appropriate stack manipulation.
-     */
-    private StackManipulation access(FieldDescription fieldDescription, MethodDescription instrumentedMethod, StackManipulation fieldAccess) {
-        if (!fieldAccess.isValid()) {
-            throw new IllegalStateException("Incompatible type of " + fieldDescription + " and " + instrumentedMethod);
-        } else if (instrumentedMethod.isStatic() && !fieldDescription.isStatic()) {
-            throw new IllegalArgumentException("Cannot call instance field " + fieldDescription + " from static method " + instrumentedMethod);
-        }
-        return new StackManipulation.Compound(fieldDescription.isStatic()
-                ? StackManipulation.Trivial.INSTANCE
-                : MethodVariableAccess.loadThis(), fieldAccess);
-    }
-
-    @Override
-    public InstrumentedType prepare(InstrumentedType instrumentedType) {
-        return instrumentedType;
-    }
-
-    /**
      * A field location represents an identified field description which depends on the instrumented type and method.
      */
     protected interface FieldLocation {
@@ -209,7 +180,7 @@ public abstract class FieldAccessor implements Implementation {
         /**
          * An absolute field description representing a previously resolved field.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class Absolute implements FieldLocation, Prepared {
 
             /**
@@ -226,22 +197,29 @@ public abstract class FieldAccessor implements Implementation {
                 this.fieldDescription = fieldDescription;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public FieldLocation with(FieldLocator.Factory fieldLocatorFactory) {
                 throw new IllegalStateException("Cannot specify a field locator factory for an absolute field location");
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
+            @SuppressFBWarnings(value = "NP_NULL_ON_SOME_PATH_FROM_RETURN_VALUE", justification = "Assuming declaring type for type member.")
             public Prepared prepare(TypeDescription instrumentedType) {
-                if (!instrumentedType.isAssignableTo(fieldDescription.getDeclaringType().asErasure())) {
+                if (!fieldDescription.isStatic() && !instrumentedType.isAssignableTo(fieldDescription.getDeclaringType().asErasure())) {
                     throw new IllegalStateException(fieldDescription + " is not declared by " + instrumentedType);
-                } else if (!fieldDescription.isVisibleTo(instrumentedType)) {
+                } else if (!fieldDescription.isAccessibleTo(instrumentedType)) {
                     throw new IllegalStateException("Cannot access " + fieldDescription + " from " + instrumentedType);
                 }
                 return this;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public FieldDescription resolve(MethodDescription instrumentedMethod) {
                 return fieldDescription;
             }
@@ -250,7 +228,7 @@ public abstract class FieldAccessor implements Implementation {
         /**
          * A relative field location where a field is located dynamically.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class Relative implements FieldLocation {
 
             /**
@@ -283,12 +261,16 @@ public abstract class FieldAccessor implements Implementation {
                 this.fieldLocatorFactory = fieldLocatorFactory;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public FieldLocation with(FieldLocator.Factory fieldLocatorFactory) {
                 return new Relative(fieldNameExtractor, fieldLocatorFactory);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public FieldLocation.Prepared prepare(TypeDescription instrumentedType) {
                 return new Prepared(fieldNameExtractor, fieldLocatorFactory.make(instrumentedType));
             }
@@ -296,7 +278,7 @@ public abstract class FieldAccessor implements Implementation {
             /**
              * A prepared version of a field location.
              */
-            @EqualsAndHashCode
+            @HashCodeAndEqualsPlugin.Enhance
             protected static class Prepared implements FieldLocation.Prepared {
 
                 /**
@@ -320,7 +302,9 @@ public abstract class FieldAccessor implements Implementation {
                     this.fieldLocator = fieldLocator;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public FieldDescription resolve(MethodDescription instrumentedMethod) {
                     FieldLocator.Resolution resolution = fieldLocator.locate(fieldNameExtractor.resolve(instrumentedMethod));
                     if (!resolution.isResolved()) {
@@ -357,7 +341,9 @@ public abstract class FieldAccessor implements Implementation {
              */
             INSTANCE;
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public String resolve(MethodDescription methodDescription) {
                 String name = methodDescription.getInternalName();
                 int crop;
@@ -379,7 +365,7 @@ public abstract class FieldAccessor implements Implementation {
         /**
          * A field name extractor that returns a fixed value.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class ForFixedValue implements FieldNameExtractor {
 
             /**
@@ -396,7 +382,9 @@ public abstract class FieldAccessor implements Implementation {
                 this.name = name;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public String resolve(MethodDescription methodDescription) {
                 return name;
             }
@@ -409,13 +397,180 @@ public abstract class FieldAccessor implements Implementation {
     public interface PropertyConfigurable extends Implementation {
 
         /**
-         * Creates a field accessor for the described field that serves as a setter for the supplied parameter index. The instrumented
-         * method must return {@code void} or a chained instrumentation must be supplied.
+         * <p>
+         * Defines a setter of the specified parameter for the field being described.
+         * </p>
+         * <p>
+         * <b>Note</b>: If the instrumented method does not return {@code void}, a chained instrumentation must be supplied.
+         * </p>
          *
          * @param index The index of the parameter for which to set the field's value.
          * @return An instrumentation that sets the parameter's value to the described field.
          */
-        Implementation.Composable setsArgumentAt(int index);
+        Composable setsArgumentAt(int index);
+
+        /**
+         * <p>
+         * Defines a setter of the described field's default value, i.e. {@code null} or a primitive type's
+         * representation of {@code 0}.
+         * </p>
+         * <p>
+         * <b>Note</b>: If the instrumented method does not return {@code void}, a chained instrumentation must be supplied.
+         * </p>
+         *
+         * @return An instrumentation that sets the field's default value.
+         */
+        Composable setsDefaultValue();
+
+        /**
+         * <p>
+         * Defines a setter of a given value for the described field. If the value is a constant value, it will be
+         * defined as a constant assignment, otherwise it is defined as a reference value that is stored in a static
+         * field of the instrumented type.
+         * </p>
+         * <p>
+         * <b>Note</b>: If the instrumented method does not return {@code void}, a chained instrumentation must be supplied.
+         * </p>
+         *
+         * @param value The value to set.
+         * @return An instrumentation that sets the field's value as specified.
+         */
+        Composable setsValue(Object value);
+
+        /**
+         * <p>
+         * Defines a setter of a given class constant value for the described field.
+         * </p>
+         * <p>
+         * <b>Note</b>: If the instrumented method does not return {@code void}, a chained instrumentation must be supplied.
+         * </p>
+         *
+         * @param typeDescription The type to set to the described field.
+         * @return An instrumentation that sets the field's value to the given class constant.
+         */
+        Composable setsValue(TypeDescription typeDescription);
+
+        /**
+         * <p>
+         * Defines a setter of a given constant value for the described field.
+         * </p>
+         * <p>
+         * <b>Note</b>: If the instrumented method does not return {@code void}, a chained instrumentation must be supplied.
+         * </p>
+         *
+         * @param constant The constant to set as a value.
+         * @return An instrumentation that sets the field's value to the given constant.
+         */
+        Composable setsValue(JavaConstant constant);
+
+        /**
+         * <p>
+         * Defines a setter of a value that is represented by a stack manipulation.
+         * </p>
+         * <p>
+         * <b>Note</b>: If the instrumented method does not return {@code void}, a chained instrumentation must be supplied.
+         * </p>
+         *
+         * @param stackManipulation A stack manipulation to load the field's value.
+         * @param type              The field value's type.
+         * @return An instrumentation that sets the field's value to the given value.
+         */
+        Composable setsValue(StackManipulation stackManipulation, Type type);
+
+        /**
+         * <p>
+         * Defines a setter of a value that is represented by a stack manipulation.
+         * </p>
+         * <p>
+         * <b>Note</b>: If the instrumented method does not return {@code void}, a chained instrumentation must be supplied.
+         * </p>
+         *
+         * @param stackManipulation A stack manipulation to load the field's value.
+         * @param typeDescription   The field value's type.
+         * @return An instrumentation that sets the field's value to the given value.
+         */
+        Composable setsValue(StackManipulation stackManipulation, TypeDescription.Generic typeDescription);
+
+        /**
+         * <p>
+         * Defines a setter of a given value for the described field. The value is kept as a referenced that is stored
+         * in a static field of the instrumented type. The field name is chosen based on the value's hash code.
+         * </p>
+         * <p>
+         * <b>Note</b>: If the instrumented method does not return {@code void}, a chained instrumentation must be supplied.
+         * </p>
+         *
+         * @param value The value to set.
+         * @return An instrumentation that sets the field's value as specified.
+         */
+        Composable setsReference(Object value);
+
+        /**
+         * <p>
+         * Defines a setter of a given value for the described field. The value is kept as a referenced that is stored
+         * in a static field of the instrumented type.
+         * </p>
+         * <p>
+         * <b>Note</b>: If the instrumented method does not return {@code void}, a chained instrumentation must be supplied.
+         * </p>
+         *
+         * @param value The value to set.
+         * @param name  The name of the field.
+         * @return An instrumentation that sets the field's value as specified.
+         */
+        Composable setsReference(Object value, String name);
+
+        /**
+         * <p>
+         * Defines a setter of a value that sets another field's value.
+         * </p>
+         * <p>
+         * <b>Note</b>: If the instrumented method does not return {@code void}, a chained instrumentation must be supplied.
+         * </p>
+         *
+         * @param field The field that holds the value to be set.
+         * @return An instrumentation that sets the field's value to the specified field's value.
+         */
+        Composable setsFieldValueOf(Field field);
+
+        /**
+         * <p>
+         * Defines a setter of a value that sets another field's value.
+         * </p>
+         * <p>
+         * <b>Note</b>: If the instrumented method does not return {@code void}, a chained instrumentation must be supplied.
+         * </p>
+         *
+         * @param fieldDescription The field that holds the value to be set.
+         * @return An instrumentation that sets the field's value to the specified field's value.
+         */
+        Composable setsFieldValueOf(FieldDescription fieldDescription);
+
+        /**
+         * <p>
+         * Defines a setter of a value that sets another field's value.
+         * </p>
+         * <p>
+         * <b>Note</b>: If the instrumented method does not return {@code void}, a chained instrumentation must be supplied.
+         * </p>
+         *
+         * @param fieldName The name of the field that is specified by the instrumented type.
+         * @return An instrumentation that sets the field's value to the specified field's value.
+         */
+        Composable setsFieldValueOf(String fieldName);
+
+        /**
+         * <p>
+         * Defines a setter of a value that sets another field's value.
+         * </p>
+         * <p>
+         * <b>Note</b>: If the instrumented method does not return {@code void}, a chained instrumentation must be supplied.
+         * </p>
+         *
+         * @param fieldNameExtractor A field name extractor for the field that is specified by the instrumented type.
+         * @return An instrumentation that sets the field's value to the specified field's value.
+         */
+        Composable setsFieldValueOf(FieldNameExtractor fieldNameExtractor);
     }
 
     /**
@@ -491,35 +646,190 @@ public abstract class FieldAccessor implements Implementation {
             super(fieldLocation, assigner, typing);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
+        public InstrumentedType prepare(InstrumentedType instrumentedType) {
+            return instrumentedType;
+        }
+
+        /**
+         * {@inheritDoc}
+         */
         public ByteCodeAppender appender(Target implementationTarget) {
             return new Appender(fieldLocation.prepare(implementationTarget.getInstrumentedType()));
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Composable setsArgumentAt(int index) {
             if (index < 0) {
                 throw new IllegalArgumentException("A parameter index cannot be negative: " + index);
             }
-            return new ForParameterSetter(fieldLocation, assigner, typing, index);
+            return new ForSetter.OfParameterValue(fieldLocation,
+                    assigner,
+                    typing,
+                    ForSetter.TerminationHandler.RETURNING,
+                    index);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
+        public Composable setsDefaultValue() {
+            return new ForSetter.OfDefaultValue(fieldLocation, assigner, typing, ForSetter.TerminationHandler.RETURNING);
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public Composable setsValue(@MaybeNull Object value) {
+            if (value == null) {
+                return setsDefaultValue();
+            }
+            Class<?> type = value.getClass();
+            if (type == String.class) {
+                return setsValue(new TextConstant((String) value), String.class);
+            } else if (type == Class.class) {
+                return setsValue(ClassConstant.of(TypeDescription.ForLoadedType.of((Class<?>) value)), Class.class);
+            } else if (type == Boolean.class) {
+                return setsValue(IntegerConstant.forValue((Boolean) value), boolean.class);
+            } else if (type == Byte.class) {
+                return setsValue(IntegerConstant.forValue((Byte) value), byte.class);
+            } else if (type == Short.class) {
+                return setsValue(IntegerConstant.forValue((Short) value), short.class);
+            } else if (type == Character.class) {
+                return setsValue(IntegerConstant.forValue((Character) value), char.class);
+            } else if (type == Integer.class) {
+                return setsValue(IntegerConstant.forValue((Integer) value), int.class);
+            } else if (type == Long.class) {
+                return setsValue(LongConstant.forValue((Long) value), long.class);
+            } else if (type == Float.class) {
+                return setsValue(FloatConstant.forValue((Float) value), float.class);
+            } else if (type == Double.class) {
+                return setsValue(DoubleConstant.forValue((Double) value), double.class);
+            } else if (JavaType.METHOD_HANDLE.getTypeStub().isAssignableFrom(type)) {
+                return setsValue(new JavaConstantValue(JavaConstant.MethodHandle.ofLoaded(value)), type);
+            } else if (JavaType.METHOD_TYPE.getTypeStub().represents(type)) {
+                return setsValue(new JavaConstantValue(JavaConstant.MethodType.ofLoaded(value)), type);
+            } else {
+                return setsReference(value);
+            }
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public Composable setsValue(TypeDescription typeDescription) {
+            return setsValue(ClassConstant.of(typeDescription), Class.class);
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public Composable setsValue(JavaConstant constant) {
+            return setsValue(new JavaConstantValue(constant), constant.getTypeDescription().asGenericType());
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public Composable setsValue(StackManipulation stackManipulation, Type type) {
+            return setsValue(stackManipulation, TypeDescription.Generic.Sort.describe(type));
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public Composable setsValue(StackManipulation stackManipulation, TypeDescription.Generic typeDescription) {
+            return new ForSetter.OfConstantValue(fieldLocation,
+                    assigner,
+                    typing,
+                    ForSetter.TerminationHandler.RETURNING,
+                    typeDescription,
+                    stackManipulation);
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public Composable setsReference(Object value) {
+            return setsReference(value, ForSetter.OfReferenceValue.PREFIX + "$" + RandomString.hashOf(value));
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public Composable setsReference(Object value, String name) {
+            return new ForSetter.OfReferenceValue(fieldLocation,
+                    assigner,
+                    typing,
+                    ForSetter.TerminationHandler.RETURNING,
+                    value,
+                    name);
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public Composable setsFieldValueOf(Field field) {
+            return setsFieldValueOf(new FieldDescription.ForLoadedField(field));
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public Composable setsFieldValueOf(FieldDescription fieldDescription) {
+            return new ForSetter.OfFieldValue(fieldLocation,
+                    assigner,
+                    typing,
+                    ForSetter.TerminationHandler.RETURNING,
+                    new FieldLocation.Absolute(fieldDescription));
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public Composable setsFieldValueOf(String fieldName) {
+            return setsFieldValueOf(new FieldNameExtractor.ForFixedValue(fieldName));
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public Composable setsFieldValueOf(FieldNameExtractor fieldNameExtractor) {
+            return new ForSetter.OfFieldValue(fieldLocation,
+                    assigner,
+                    typing,
+                    ForSetter.TerminationHandler.RETURNING,
+                    new FieldLocation.Relative(fieldNameExtractor));
+        }
+
+        /**
+         * {@inheritDoc}
+         */
         public PropertyConfigurable withAssigner(Assigner assigner, Assigner.Typing typing) {
             return new ForImplicitProperty(fieldLocation, assigner, typing);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public AssignerConfigurable in(Class<?> type) {
-            return in(new TypeDescription.ForLoadedType(type));
+            return in(TypeDescription.ForLoadedType.of(type));
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public AssignerConfigurable in(TypeDescription typeDescription) {
             return in(new FieldLocator.ForExactType.Factory(typeDescription));
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public AssignerConfigurable in(FieldLocator.Factory fieldLocatorFactory) {
             return new ForImplicitProperty(fieldLocation.with(fieldLocatorFactory), assigner, typing);
         }
@@ -527,6 +837,7 @@ public abstract class FieldAccessor implements Implementation {
         /**
          * An byte code appender for an field accessor implementation.
          */
+        @HashCodeAndEqualsPlugin.Enhance(includeSyntheticFields = true)
         protected class Appender implements ByteCodeAppender {
 
             /**
@@ -543,57 +854,56 @@ public abstract class FieldAccessor implements Implementation {
                 this.fieldLocation = fieldLocation;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext, MethodDescription instrumentedMethod) {
                 if (!instrumentedMethod.isMethod()) {
                     throw new IllegalArgumentException(instrumentedMethod + " does not describe a field getter or setter");
                 }
                 FieldDescription fieldDescription = fieldLocation.resolve(instrumentedMethod);
-                StackManipulation implementation;
+                if (!fieldDescription.isStatic() && instrumentedMethod.isStatic()) {
+                    throw new IllegalStateException("Cannot set instance field " + fieldDescription + " from " + instrumentedMethod);
+                }
+                StackManipulation implementation, initialization = fieldDescription.isStatic()
+                        ? StackManipulation.Trivial.INSTANCE
+                        : MethodVariableAccess.loadThis();
                 if (!instrumentedMethod.getReturnType().represents(void.class)) {
-                    implementation = new StackManipulation.Compound(getter(fieldDescription, instrumentedMethod), MethodReturn.of(instrumentedMethod.getReturnType()));
+                    implementation = new StackManipulation.Compound(
+                            initialization,
+                            FieldAccess.forField(fieldDescription).read(),
+                            assigner.assign(fieldDescription.getType(), instrumentedMethod.getReturnType(), typing),
+                            MethodReturn.of(instrumentedMethod.getReturnType())
+                    );
                 } else if (instrumentedMethod.getReturnType().represents(void.class) && instrumentedMethod.getParameters().size() == 1) {
-                    implementation = new StackManipulation.Compound(setter(fieldDescription, instrumentedMethod.getParameters().get(0)), MethodReturn.VOID);
+                    if (fieldDescription.isFinal() && instrumentedMethod.isMethod()) {
+                        throw new IllegalStateException("Cannot set final field " + fieldDescription + " from " + instrumentedMethod);
+                    }
+                    implementation = new StackManipulation.Compound(
+                            initialization,
+                            MethodVariableAccess.load(instrumentedMethod.getParameters().get(0)),
+                            assigner.assign(instrumentedMethod.getParameters().get(0).getType(), fieldDescription.getType(), typing),
+                            FieldAccess.forField(fieldDescription).write(),
+                            MethodReturn.VOID
+                    );
                 } else {
-                    throw new IllegalArgumentException("Method " + implementationContext + " is no bean property");
+                    throw new IllegalArgumentException("Method " + instrumentedMethod + " is no bean accessor");
+                }
+                if (!implementation.isValid()) {
+                    throw new IllegalStateException("Cannot set or get value of " + instrumentedMethod + " using " + fieldDescription);
                 }
                 return new Size(implementation.apply(methodVisitor, implementationContext).getMaximalSize(), instrumentedMethod.getStackSize());
-            }
-
-            /**
-             * Returns the outer instance.
-             *
-             * @return The outer instance.
-             */
-            private ForImplicitProperty getOuter() {
-                return ForImplicitProperty.this;
-            }
-
-            @Override // HE: Remove when Lombok support for getOuter is added.
-            public boolean equals(Object object) {
-                if (this == object) return true;
-                if (object == null || getClass() != object.getClass()) return false;
-                Appender appender = (Appender) object;
-                return fieldLocation.equals(appender.fieldLocation) && ForImplicitProperty.this.equals(appender.getOuter());
-            }
-
-            @Override // HE: Remove when Lombok support for getOuter is added.
-            public int hashCode() {
-                return fieldLocation.hashCode() + 31 * ForImplicitProperty.this.hashCode();
             }
         }
     }
 
     /**
-     * A field accessor that sets a parameters value of a given index.
+     * A field accessor for a field setter.
+     *
+     * @param <T> The type of the value that is initialized per instrumented type.
      */
-    @EqualsAndHashCode(callSuper = true)
-    protected static class ForParameterSetter extends FieldAccessor implements Implementation.Composable {
-
-        /**
-         * The targeted parameter index.
-         */
-        private final int index;
+    @HashCodeAndEqualsPlugin.Enhance
+    protected abstract static class ForSetter<T> extends FieldAccessor implements Implementation.Composable {
 
         /**
          * The termination handler to apply.
@@ -601,44 +911,49 @@ public abstract class FieldAccessor implements Implementation {
         private final TerminationHandler terminationHandler;
 
         /**
-         * Creates a new field accessor.
-         *
-         * @param fieldLocation The field's location.
-         * @param assigner      The assigner to use.
-         * @param typing        Indicates if dynamic type castings should be attempted for incompatible assignments.
-         * @param index         The targeted parameter index.
-         */
-        protected ForParameterSetter(FieldLocation fieldLocation, Assigner assigner, Assigner.Typing typing, int index) {
-            this(fieldLocation, assigner, typing, index, TerminationHandler.RETURNING);
-        }
-
-        /**
-         * Creates a new field accessor.
+         * Creates a new field accessor for a setter instrumentation.
          *
          * @param fieldLocation      The field's location.
          * @param assigner           The assigner to use.
          * @param typing             Indicates if dynamic type castings should be attempted for incompatible assignments.
-         * @param index              The targeted parameter index.
          * @param terminationHandler The termination handler to apply.
          */
-        private ForParameterSetter(FieldLocation fieldLocation, Assigner assigner, Assigner.Typing typing, int index, TerminationHandler terminationHandler) {
+        protected ForSetter(FieldLocation fieldLocation, Assigner assigner, Assigner.Typing typing, TerminationHandler terminationHandler) {
             super(fieldLocation, assigner, typing);
-            this.index = index;
             this.terminationHandler = terminationHandler;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public ByteCodeAppender appender(Target implementationTarget) {
-            return new Appender(fieldLocation.prepare(implementationTarget.getInstrumentedType()));
+            return new Appender(implementationTarget.getInstrumentedType(),
+                    initialize(implementationTarget.getInstrumentedType()),
+                    fieldLocation.prepare(implementationTarget.getInstrumentedType()));
         }
 
-        @Override
-        public Implementation andThen(Implementation implementation) {
-            return new Compound(new ForParameterSetter(fieldLocation,
-                    assigner,
-                    typing,
-                    index, TerminationHandler.NON_OPERATIONAL), implementation);
-        }
+        /**
+         * Initializes a value to be used during method instrumentation.
+         *
+         * @param instrumentedType The instrumented type.
+         * @return The initialized value.
+         */
+        @MaybeNull
+        protected abstract T initialize(TypeDescription instrumentedType);
+
+        /**
+         * Resolves the stack manipulation to load the value being set.
+         *
+         * @param initialized        The method that was initialized for the instrumented type.
+         * @param fieldDescription   The field to set the value for.
+         * @param instrumentedType   The instrumented type.
+         * @param instrumentedMethod The instrumented method.
+         * @return The stack manipulation to apply.
+         */
+        protected abstract StackManipulation resolve(@MaybeNull T initialized,
+                                                     FieldDescription fieldDescription,
+                                                     TypeDescription instrumentedType,
+                                                     MethodDescription instrumentedMethod);
 
         /**
          * A termination handler is responsible for handling a field accessor's return.
@@ -678,56 +993,484 @@ public abstract class FieldAccessor implements Implementation {
         }
 
         /**
-         * An appender for a field accessor that sets a parameter of a given index.
+         * A setter instrumentation for a parameter value.
          */
-        protected class Appender implements ByteCodeAppender {
+        @HashCodeAndEqualsPlugin.Enhance
+        protected static class OfParameterValue extends ForSetter<Void> {
 
             /**
-             * The field's location.
+             * The parameter's index.
              */
-            private final FieldLocation.Prepared fieldLocation;
+            private final int index;
 
             /**
-             * Creates a new byte code appender for a field accessor implementation.
+             * Creates a new setter instrumentation for a parameter value.
              *
-             * @param fieldLocation The field's location.
+             * @param fieldLocation      The field's location.
+             * @param assigner           The assigner to use.
+             * @param typing             Indicates if dynamic type castings should be attempted for incompatible assignments.
+             * @param terminationHandler The termination handler to apply.
+             * @param index              The parameter's index.
              */
-            protected Appender(FieldLocation.Prepared fieldLocation) {
-                this.fieldLocation = fieldLocation;
+            protected OfParameterValue(FieldLocation fieldLocation,
+                                       Assigner assigner,
+                                       Assigner.Typing typing,
+                                       TerminationHandler terminationHandler,
+                                       int index) {
+                super(fieldLocation, assigner, typing, terminationHandler);
+                this.index = index;
             }
 
-            @Override
-            public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext, MethodDescription instrumentedMethod) {
+            /**
+             * {@inheritDoc}
+             */
+            public InstrumentedType prepare(InstrumentedType instrumentedType) {
+                return instrumentedType;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            @AlwaysNull
+            protected Void initialize(TypeDescription instrumentedType) {
+                return null;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            protected StackManipulation resolve(@MaybeNull Void unused,
+                                                FieldDescription fieldDescription,
+                                                TypeDescription instrumentedType,
+                                                MethodDescription instrumentedMethod) {
                 if (instrumentedMethod.getParameters().size() <= index) {
                     throw new IllegalStateException(instrumentedMethod + " does not define a parameter with index " + index);
                 } else {
-                    return new Size(new StackManipulation.Compound(
-                            setter(fieldLocation.resolve(instrumentedMethod), instrumentedMethod.getParameters().get(index)),
-                            terminationHandler.resolve(instrumentedMethod)
-                    ).apply(methodVisitor, implementationContext).getMaximalSize(), instrumentedMethod.getStackSize());
+                    return new StackManipulation.Compound(
+                            MethodVariableAccess.load(instrumentedMethod.getParameters().get(index)),
+                            assigner.assign(instrumentedMethod.getParameters().get(index).getType(), fieldDescription.getType(), typing)
+                    );
                 }
             }
 
             /**
-             * Returns the outer instance.
-             *
-             * @return The outer instance.
+             * {@inheritDoc}
              */
-            private ForParameterSetter getOuter() {
-                return ForParameterSetter.this;
+            public Implementation andThen(Implementation implementation) {
+                return new Compound(new OfParameterValue(fieldLocation,
+                        assigner,
+                        typing,
+                        TerminationHandler.NON_OPERATIONAL,
+                        index), implementation);
             }
 
-            @Override // HE: Remove when Lombok support for getOuter is added.
-            public boolean equals(Object object) {
-                if (this == object) return true;
-                if (object == null || getClass() != object.getClass()) return false;
-                ForParameterSetter.Appender appender = (ForParameterSetter.Appender) object;
-                return fieldLocation.equals(appender.fieldLocation) && ForParameterSetter.this.equals(appender.getOuter());
+            /**
+             * {@inheritDoc}
+             */
+            public Composable andThen(Composable implementation) {
+                return new Compound.Composable(new OfParameterValue(fieldLocation,
+                        assigner,
+                        typing,
+                        TerminationHandler.NON_OPERATIONAL,
+                        index), implementation);
+            }
+        }
+
+        /**
+         * A setter instrumentation that sets a {@code null} or a primitive type's default value.
+         */
+        protected static class OfDefaultValue extends ForSetter<Void> {
+
+            /**
+             * Creates an intrumentation that sets a field's default value.
+             *
+             * @param fieldLocation      The field's location.
+             * @param assigner           The assigner to use.
+             * @param typing             Indicates if dynamic type castings should be attempted for incompatible assignments.
+             * @param terminationHandler The termination handler to apply.
+             */
+            protected OfDefaultValue(FieldLocation fieldLocation, Assigner assigner, Assigner.Typing typing, TerminationHandler terminationHandler) {
+                super(fieldLocation, assigner, typing, terminationHandler);
             }
 
-            @Override // HE: Remove when Lombok support for getOuter is added.
-            public int hashCode() {
-                return fieldLocation.hashCode() + 31 * ForParameterSetter.this.hashCode();
+            /**
+             * {@inheritDoc}
+             */
+            public InstrumentedType prepare(InstrumentedType instrumentedType) {
+                return instrumentedType;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            @AlwaysNull
+            protected Void initialize(TypeDescription instrumentedType) {
+                return null;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            protected StackManipulation resolve(@MaybeNull Void initialized,
+                                                FieldDescription fieldDescription,
+                                                TypeDescription instrumentedType,
+                                                MethodDescription instrumentedMethod) {
+                return DefaultValue.of(fieldDescription.getType());
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public Implementation andThen(Implementation implementation) {
+                return new Compound(new OfDefaultValue(fieldLocation,
+                        assigner,
+                        typing,
+                        TerminationHandler.NON_OPERATIONAL), implementation);
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public Composable andThen(Composable implementation) {
+                return new Compound.Composable(new OfDefaultValue(fieldLocation,
+                        assigner,
+                        typing,
+                        TerminationHandler.NON_OPERATIONAL), implementation);
+            }
+        }
+
+        /**
+         * An instrumentation that sets a constant value to a field.
+         */
+        @HashCodeAndEqualsPlugin.Enhance
+        protected static class OfConstantValue extends ForSetter<Void> {
+
+            /**
+             * The value's type.
+             */
+            private final TypeDescription.Generic typeDescription;
+
+            /**
+             * A stack manipulation to load the constant value.
+             */
+            private final StackManipulation stackManipulation;
+
+            /**
+             * Creates a setter instrumentation for setting a constant value.
+             *
+             * @param fieldLocation      The field's location.
+             * @param assigner           The assigner to use.
+             * @param typing             Indicates if dynamic type castings should be attempted for incompatible assignments.
+             * @param terminationHandler The termination handler to apply.
+             * @param typeDescription    The value's type.
+             * @param stackManipulation  A stack manipulation to load the constant value.
+             */
+            protected OfConstantValue(FieldLocation fieldLocation,
+                                      Assigner assigner,
+                                      Assigner.Typing typing,
+                                      TerminationHandler terminationHandler,
+                                      TypeDescription.Generic typeDescription,
+                                      StackManipulation stackManipulation) {
+                super(fieldLocation, assigner, typing, terminationHandler);
+                this.typeDescription = typeDescription;
+                this.stackManipulation = stackManipulation;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public InstrumentedType prepare(InstrumentedType instrumentedType) {
+                return instrumentedType;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            @AlwaysNull
+            protected Void initialize(TypeDescription instrumentedType) {
+                return null;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            protected StackManipulation resolve(@MaybeNull Void unused,
+                                                FieldDescription fieldDescription,
+                                                TypeDescription instrumentedType,
+                                                MethodDescription instrumentedMethod) {
+                return new StackManipulation.Compound(stackManipulation, assigner.assign(typeDescription, fieldDescription.getType(), typing));
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public Implementation andThen(Implementation implementation) {
+                return new Compound(new OfConstantValue(fieldLocation,
+                        assigner,
+                        typing,
+                        TerminationHandler.NON_OPERATIONAL,
+                        typeDescription,
+                        stackManipulation), implementation);
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public Composable andThen(Composable implementation) {
+                return new Compound.Composable(new OfConstantValue(fieldLocation,
+                        assigner,
+                        typing,
+                        TerminationHandler.NON_OPERATIONAL,
+                        typeDescription,
+                        stackManipulation), implementation);
+            }
+        }
+
+        /**
+         * An instrumentation that sets a field to a reference value that is stored in a static field of the instrumented type.
+         */
+        @HashCodeAndEqualsPlugin.Enhance
+        protected static class OfReferenceValue extends ForSetter<FieldDescription.InDefinedShape> {
+
+            /**
+             * The prefix used for implicitly named cached fields.
+             */
+            protected static final String PREFIX = "fixedFieldValue";
+
+            /**
+             * The value to store.
+             */
+            private final Object value;
+
+            /**
+             * The name of the field to store the reference in.
+             */
+            private final String name;
+
+            /**
+             * Creates a setter instrumentation for setting a value stored in a static field of the instrumented type.
+             *
+             * @param fieldLocation      The field's location.
+             * @param assigner           The assigner to use.
+             * @param typing             Indicates if dynamic type castings should be attempted for incompatible assignments.
+             * @param terminationHandler The termination handler to apply.
+             * @param value              The value to store.
+             * @param name               The name of the field to store the reference in.
+             */
+            protected OfReferenceValue(FieldLocation fieldLocation,
+                                       Assigner assigner,
+                                       Assigner.Typing typing,
+                                       TerminationHandler terminationHandler,
+                                       Object value,
+                                       String name) {
+                super(fieldLocation, assigner, typing, terminationHandler);
+                this.value = value;
+                this.name = name;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public InstrumentedType prepare(InstrumentedType instrumentedType) {
+                return instrumentedType.withAuxiliaryField(new FieldDescription.Token(name,
+                        Opcodes.ACC_SYNTHETIC | Opcodes.ACC_STATIC | Opcodes.ACC_PUBLIC,
+                        TypeDescription.ForLoadedType.of(value.getClass()).asGenericType()), value);
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            protected FieldDescription.InDefinedShape initialize(TypeDescription instrumentedType) {
+                return instrumentedType.getDeclaredFields().filter(named(name)).getOnly();
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            @SuppressFBWarnings(value = "NP_NULL_ON_SOME_PATH_FROM_RETURN_VALUE", justification = "Expects its own initialized value as argument")
+            protected StackManipulation resolve(@MaybeNull FieldDescription.InDefinedShape target,
+                                                FieldDescription fieldDescription,
+                                                TypeDescription instrumentedType,
+                                                MethodDescription instrumentedMethod) {
+                if (fieldDescription.isFinal() && instrumentedMethod.isMethod()) {
+                    throw new IllegalArgumentException("Cannot set final field " + fieldDescription + " from " + instrumentedMethod);
+                }
+                return new StackManipulation.Compound(
+                        FieldAccess.forField(target).read(),
+                        assigner.assign(TypeDescription.ForLoadedType.of(value.getClass()).asGenericType(), fieldDescription.getType(), typing)
+                );
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public Implementation andThen(Implementation implementation) {
+                return new Compound(new OfReferenceValue(fieldLocation,
+                        assigner,
+                        typing,
+                        TerminationHandler.NON_OPERATIONAL,
+                        value,
+                        name), implementation);
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public Composable andThen(Composable implementation) {
+                return new Compound.Composable(new OfReferenceValue(fieldLocation,
+                        assigner,
+                        typing,
+                        TerminationHandler.NON_OPERATIONAL,
+                        value,
+                        name), implementation);
+            }
+        }
+
+        /**
+         * A setter that reads a value of another field and sets this value.
+         */
+        @HashCodeAndEqualsPlugin.Enhance
+        protected static class OfFieldValue extends ForSetter<FieldLocation.Prepared> {
+
+            /**
+             * The target field locator.
+             */
+            private final FieldLocation target;
+
+            /**
+             * Creates a setter that sets another field value.
+             *
+             * @param fieldLocation      The field's location.
+             * @param assigner           The assigner to use.
+             * @param typing             Indicates if dynamic type castings should be attempted for incompatible assignments.
+             * @param terminationHandler The termination handler to apply.
+             * @param target             The target field locator.
+             */
+            protected OfFieldValue(FieldLocation fieldLocation,
+                                   Assigner assigner,
+                                   Assigner.Typing typing,
+                                   TerminationHandler terminationHandler,
+                                   FieldLocation target) {
+                super(fieldLocation, assigner, typing, terminationHandler);
+                this.target = target;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public InstrumentedType prepare(InstrumentedType instrumentedType) {
+                return instrumentedType;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            protected FieldLocation.Prepared initialize(TypeDescription instrumentedType) {
+                return target.prepare(instrumentedType);
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            @SuppressFBWarnings(value = "NP_PARAMETER_MUST_BE_NONNULL_BUT_MARKED_AS_NULLABLE", justification = "Expects its own initialized value as argument")
+            protected StackManipulation resolve(@MaybeNull FieldLocation.Prepared target,
+                                                FieldDescription fieldDescription,
+                                                TypeDescription instrumentedType,
+                                                MethodDescription instrumentedMethod) {
+                FieldDescription resolved = target.resolve(instrumentedMethod);
+                if (!resolved.isStatic() && instrumentedMethod.isStatic()) {
+                    throw new IllegalStateException("Cannot set instance field " + fieldDescription + " from " + instrumentedMethod);
+                }
+                return new StackManipulation.Compound(
+                        resolved.isStatic()
+                                ? StackManipulation.Trivial.INSTANCE
+                                : MethodVariableAccess.loadThis(),
+                        FieldAccess.forField(resolved).read(),
+                        assigner.assign(resolved.getType(), fieldDescription.getType(), typing)
+                );
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public Implementation andThen(Implementation implementation) {
+                return new Compound(new OfFieldValue(fieldLocation,
+                        assigner,
+                        typing,
+                        TerminationHandler.NON_OPERATIONAL,
+                        target), implementation);
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public Composable andThen(Composable implementation) {
+                return new Compound.Composable(new OfFieldValue(fieldLocation,
+                        assigner,
+                        typing,
+                        TerminationHandler.NON_OPERATIONAL,
+                        target), implementation);
+            }
+        }
+
+        /**
+         * An appender to implement a field setter.
+         */
+        @HashCodeAndEqualsPlugin.Enhance(includeSyntheticFields = true)
+        protected class Appender implements ByteCodeAppender {
+
+            /**
+             * The instrumented type.
+             */
+            private final TypeDescription instrumentedType;
+
+            /**
+             * The initialized value which might be {@code null}.
+             */
+            @MaybeNull
+            @HashCodeAndEqualsPlugin.ValueHandling(HashCodeAndEqualsPlugin.ValueHandling.Sort.REVERSE_NULLABILITY)
+            private final T initialized;
+
+            /**
+             * The set field's prepared location.
+             */
+            private final FieldLocation.Prepared fieldLocation;
+
+            /**
+             * Creates a new appender for a field setter.
+             *
+             * @param instrumentedType The instrumented type.
+             * @param initialized      The initialized value which might be {@code null}.
+             * @param fieldLocation    The set field's prepared location.
+             */
+            protected Appender(TypeDescription instrumentedType, @MaybeNull T initialized, FieldLocation.Prepared fieldLocation) {
+                this.instrumentedType = instrumentedType;
+                this.initialized = initialized;
+                this.fieldLocation = fieldLocation;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public Size apply(MethodVisitor methodVisitor, Context implementationContext, MethodDescription instrumentedMethod) {
+                FieldDescription fieldDescription = fieldLocation.resolve(instrumentedMethod);
+                if (!fieldDescription.isStatic() && instrumentedMethod.isStatic()) {
+                    throw new IllegalStateException("Cannot set instance field " + fieldDescription + " from " + instrumentedMethod);
+                } else if (fieldDescription.isFinal() && instrumentedMethod.isMethod()) {
+                    throw new IllegalStateException("Cannot set final field " + fieldDescription + " from " + instrumentedMethod);
+                }
+                StackManipulation stackManipulation = resolve(initialized, fieldDescription, instrumentedType, instrumentedMethod);
+                if (!stackManipulation.isValid()) {
+                    throw new IllegalStateException("Set value cannot be assigned to " + fieldDescription);
+                }
+                return new Size(new StackManipulation.Compound(
+                        instrumentedMethod.isStatic()
+                                ? StackManipulation.Trivial.INSTANCE
+                                : MethodVariableAccess.loadThis(),
+                        stackManipulation,
+                        FieldAccess.forField(fieldDescription).write(),
+                        terminationHandler.resolve(instrumentedMethod)
+                ).apply(methodVisitor, implementationContext).getMaximalSize(), instrumentedMethod.getStackSize());
             }
         }
     }

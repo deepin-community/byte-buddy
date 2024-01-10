@@ -1,6 +1,27 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.matcher;
 
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
+import net.bytebuddy.utility.nullability.MaybeNull;
+import net.bytebuddy.utility.nullability.UnknownNull;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 
 /**
  * An element matcher is used as a predicate for identifying code elements such as types, methods, fields or
@@ -15,10 +36,10 @@ public interface ElementMatcher<T> {
     /**
      * Matches a target against this element matcher.
      *
-     * @param target The instance to be matched.
+     * @param target The instance to be matched or {@code null}.
      * @return {@code true} if the given element is matched by this matcher or {@code false} otherwise.
      */
-    boolean matches(T target);
+    boolean matches(@UnknownNull T target);
 
     /**
      * A junctions allows to chain different {@link net.bytebuddy.matcher.ElementMatcher}s in a readable manner.
@@ -60,12 +81,18 @@ public interface ElementMatcher<T> {
          */
         abstract class AbstractBase<V> implements Junction<V> {
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
+            @SuppressWarnings("unchecked") // In absence of @SafeVarargs
             public <U extends V> Junction<U> and(ElementMatcher<? super U> other) {
                 return new Conjunction<U>(this, other);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
+            @SuppressWarnings("unchecked") // In absence of @SafeVarargs
             public <U extends V> Junction<U> or(ElementMatcher<? super U> other) {
                 return new Disjunction<U>(this, other);
             }
@@ -76,71 +103,159 @@ public interface ElementMatcher<T> {
          *
          * @param <W> The type of the object that is being matched.
          */
-        @EqualsAndHashCode(callSuper = false)
+        @HashCodeAndEqualsPlugin.Enhance
         class Conjunction<W> extends AbstractBase<W> {
 
             /**
              * The element matchers that constitute this conjunction.
              */
-            private final ElementMatcher<? super W> left, right;
+            private final List<ElementMatcher<? super W>> matchers;
 
             /**
              * Creates a new conjunction matcher.
              *
-             * @param left  The first matcher to consult for a match.
-             * @param right The second matcher to consult for a match. This matcher is only consulted
-             *              if the {@code first} matcher constituted a match.
+             * @param matcher The represented matchers in application order.
              */
-            public Conjunction(ElementMatcher<? super W> left, ElementMatcher<? super W> right) {
-                this.left = left;
-                this.right = right;
+            @SuppressWarnings("unchecked") // In absence of @SafeVarargs
+            public Conjunction(ElementMatcher<? super W>... matcher) {
+                this(Arrays.asList(matcher));
             }
 
-            @Override
-            public boolean matches(W target) {
-                return left.matches(target) && right.matches(target);
+            /**
+             * Creates a new conjunction matcher.
+             *
+             * @param matchers The represented matchers in application order.
+             */
+            @SuppressWarnings("unchecked")
+            public Conjunction(List<ElementMatcher<? super W>> matchers) {
+                this.matchers = new ArrayList<ElementMatcher<? super W>>(matchers.size());
+                for (ElementMatcher<? super W> matcher : matchers) {
+                    if (matcher instanceof Conjunction<?>) {
+                        this.matchers.addAll(((Conjunction<Object>) matcher).matchers);
+                    } else {
+                        this.matchers.add(matcher);
+                    }
+                }
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public boolean matches(@UnknownNull W target) {
+                for (ElementMatcher<? super W> matcher : matchers) {
+                    if (!matcher.matches(target)) {
+                        return false;
+                    }
+                }
+                return true;
             }
 
             @Override
             public String toString() {
-                return "(" + left + " and " + right + ')';
+                StringBuilder stringBuilder = new StringBuilder("(");
+                boolean first = true;
+                for (ElementMatcher<? super W> matcher : matchers) {
+                    if (first) {
+                        first = false;
+                    } else {
+                        stringBuilder.append(" and ");
+                    }
+                    stringBuilder.append(matcher);
+                }
+                return stringBuilder.append(")").toString();
             }
         }
 
         /**
-         * A disjunction matcher which only matches an element if both represented matchers constitute a match.
+         * A disjunction matcher which matches an element against matchers in order to constitute a successful match.
          *
          * @param <W> The type of the object that is being matched.
          */
-        @EqualsAndHashCode(callSuper = false)
+        @HashCodeAndEqualsPlugin.Enhance
         class Disjunction<W> extends AbstractBase<W> {
 
             /**
              * The element matchers that constitute this disjunction.
              */
-            private final ElementMatcher<? super W> left, right;
+            private final List<ElementMatcher<? super W>> matchers;
 
             /**
              * Creates a new disjunction matcher.
              *
-             * @param left  The first matcher to consult for a match.
-             * @param right The second matcher to consult for a match. This matcher is only consulted
-             *              if the {@code first} matcher did not already constitute a match.
+             * @param matcher The represented matchers in application order.
              */
-            public Disjunction(ElementMatcher<? super W> left, ElementMatcher<? super W> right) {
-                this.left = left;
-                this.right = right;
+            @SuppressWarnings("unchecked") // In absence of @SafeVarargs
+            public Disjunction(ElementMatcher<? super W>... matcher) {
+                this(Arrays.asList(matcher));
             }
 
-            @Override
-            public boolean matches(W target) {
-                return left.matches(target) || right.matches(target);
+            /**
+             * Creates a new disjunction matcher.
+             *
+             * @param matchers The represented matchers in application order.
+             */
+            @SuppressWarnings("unchecked")
+            public Disjunction(List<ElementMatcher<? super W>> matchers) {
+                this.matchers = new ArrayList<ElementMatcher<? super W>>(matchers.size());
+                for (ElementMatcher<? super W> matcher : matchers) {
+                    if (matcher instanceof Disjunction<?>) {
+                        this.matchers.addAll(((Disjunction<Object>) matcher).matchers);
+                    } else {
+                        this.matchers.add(matcher);
+                    }
+                }
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public boolean matches(@UnknownNull W target) {
+                for (ElementMatcher<? super W> matcher : matchers) {
+                    if (matcher.matches(target)) {
+                        return true;
+                    }
+                }
+                return false;
             }
 
             @Override
             public String toString() {
-                return "(" + left + " or " + right + ')';
+                StringBuilder stringBuilder = new StringBuilder("(");
+                boolean first = true;
+                for (ElementMatcher<? super W> matcher : matchers) {
+                    if (first) {
+                        first = false;
+                    } else {
+                        stringBuilder.append(" or ");
+                    }
+                    stringBuilder.append(matcher);
+                }
+                return stringBuilder.append(")").toString();
             }
+        }
+
+        /**
+         * An abstract base implementation that rejects null values.
+         *
+         * @param <W> The type of the object that is being matched.
+         */
+        @HashCodeAndEqualsPlugin.Enhance
+        abstract class ForNonNullValues<W> extends AbstractBase<W> {
+
+            /**
+             * {@inheritDoc}
+             */
+            public boolean matches(@MaybeNull W target) {
+                return target != null && doMatch(target);
+            }
+
+            /**
+             * Matches the supplied value if it was found not to be {@code null}.
+             *
+             * @param target The instance to be matched.
+             * @return {@code true} if the given element is matched by this matcher or {@code false} otherwise.
+             */
+            protected abstract boolean doMatch(W target);
         }
     }
 }

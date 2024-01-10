@@ -5,22 +5,23 @@ import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.type.TypeDefinition;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.description.type.TypeList;
-import net.bytebuddy.test.utility.MockitoRule;
 import org.junit.Before;
 import org.junit.Rule;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 
 import java.lang.annotation.Annotation;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.when;
 
 public abstract class AbstractAttributeAppenderTest {
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     @Mock
     protected TypeDescription instrumentedType, typeErasure;
@@ -59,7 +60,6 @@ public abstract class AbstractAttributeAppenderTest {
 
         class Instance implements Qux {
 
-            @Override
             public Class<? extends Annotation> annotationType() {
                 return Qux.class;
             }
@@ -71,7 +71,6 @@ public abstract class AbstractAttributeAppenderTest {
 
         class Instance implements Baz {
 
-            @Override
             public Class<? extends Annotation> annotationType() {
                 return Baz.class;
             }
@@ -83,7 +82,6 @@ public abstract class AbstractAttributeAppenderTest {
 
         class Instance implements QuxBaz {
 
-            @Override
             public Class<? extends Annotation> annotationType() {
                 return QuxBaz.class;
             }

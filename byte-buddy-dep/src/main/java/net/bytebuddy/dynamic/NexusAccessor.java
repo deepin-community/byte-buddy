@@ -1,7 +1,23 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.dynamic;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.AccessControllerPlugin;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.dynamic.loading.ClassInjector;
@@ -17,13 +33,14 @@ import net.bytebuddy.implementation.bytecode.constant.IntegerConstant;
 import net.bytebuddy.implementation.bytecode.constant.NullConstant;
 import net.bytebuddy.implementation.bytecode.constant.TextConstant;
 import net.bytebuddy.implementation.bytecode.member.MethodInvocation;
+import net.bytebuddy.utility.JavaModule;
+import net.bytebuddy.utility.nullability.MaybeNull;
 import org.objectweb.asm.MethodVisitor;
 
 import java.lang.ref.Reference;
 import java.lang.ref.ReferenceQueue;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
-import java.security.AccessController;
 import java.security.PrivilegedAction;
 import java.util.Arrays;
 import java.util.Collections;
@@ -32,24 +49,26 @@ import java.util.Collections;
  * The Nexus accessor is creating a VM-global singleton {@link Nexus} such that it can be seen by all class loaders of
  * a virtual machine. Furthermore, it provides an API to access this global instance.
  */
-@EqualsAndHashCode
+@HashCodeAndEqualsPlugin.Enhance
 public class NexusAccessor {
 
     /**
      * The dispatcher to use.
      */
-    private static final Dispatcher DISPATCHER = AccessController.doPrivileged(Dispatcher.CreationAction.INSTANCE);
+    private static final Dispatcher DISPATCHER = doPrivileged(Dispatcher.CreationAction.INSTANCE);
 
     /**
      * The reference queue that is notified upon a GC eligible {@link Nexus} entry or {@code null} if no such queue should be notified.
      */
+    @MaybeNull
+    @HashCodeAndEqualsPlugin.ValueHandling(HashCodeAndEqualsPlugin.ValueHandling.Sort.REVERSE_NULLABILITY)
     private final ReferenceQueue<? super ClassLoader> referenceQueue;
 
     /**
      * Creates a new accessor for the {@link Nexus} without any active management of stale references within a nexus.
      */
     public NexusAccessor() {
-        this(Nexus.NO_QUEUE);
+        this(null);
     }
 
     /**
@@ -60,8 +79,20 @@ public class NexusAccessor {
      * @param referenceQueue The reference queue onto which stale references should be enqueued or {@code null} if no reference queue
      *                       should be notified.
      */
-    public NexusAccessor(ReferenceQueue<? super ClassLoader> referenceQueue) {
+    public NexusAccessor(@MaybeNull ReferenceQueue<? super ClassLoader> referenceQueue) {
         this.referenceQueue = referenceQueue;
+    }
+
+    /**
+     * A proxy for {@code java.security.AccessController#doPrivileged} that is activated if available.
+     *
+     * @param action The action to execute from a privileged context.
+     * @param <T>    The type of the action's resolved value.
+     * @return The action's resolved value.
+     */
+    @AccessControllerPlugin.Enhance
+    private static <T> T doPrivileged(PrivilegedAction<T> action) {
+        return action.run();
     }
 
     /**
@@ -92,7 +123,7 @@ public class NexusAccessor {
      * @param identification        The id used for identifying the loaded type initializer that was added to the {@link Nexus}.
      * @param loadedTypeInitializer The loaded type initializer to make available via the {@link Nexus}.
      */
-    public void register(String name, ClassLoader classLoader, int identification, LoadedTypeInitializer loadedTypeInitializer) {
+    public void register(String name, @MaybeNull ClassLoader classLoader, int identification, LoadedTypeInitializer loadedTypeInitializer) {
         if (loadedTypeInitializer.isAlive()) {
             DISPATCHER.register(name, classLoader, referenceQueue, identification, loadedTypeInitializer);
         }
@@ -101,7 +132,7 @@ public class NexusAccessor {
     /**
      * An initialization appender that looks up a loaded type initializer from Byte Buddy's {@link Nexus}.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     public static class InitializationAppender implements ByteCodeAppender {
 
         /**
@@ -118,7 +149,9 @@ public class NexusAccessor {
             this.identification = identification;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext, MethodDescription instrumentedMethod) {
             try {
                 return new ByteCodeAppender.Simple(new StackManipulation.Compound(
@@ -126,13 +159,13 @@ public class NexusAccessor {
                         new TextConstant(Nexus.class.getName()),
                         MethodInvocation.invoke(new MethodDescription.ForLoadedMethod(ClassLoader.class.getMethod("loadClass", String.class))),
                         new TextConstant("initialize"),
-                        ArrayFactory.forType(new TypeDescription.Generic.OfNonGenericType.ForLoadedType(Class.class))
+                        ArrayFactory.forType(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Class.class))
                                 .withValues(Arrays.asList(
-                                        ClassConstant.of(TypeDescription.CLASS),
-                                        ClassConstant.of(new TypeDescription.ForLoadedType(int.class)))),
+                                        ClassConstant.of(TypeDescription.ForLoadedType.of(Class.class)),
+                                        ClassConstant.of(TypeDescription.ForLoadedType.of(int.class)))),
                         MethodInvocation.invoke(new MethodDescription.ForLoadedMethod(Class.class.getMethod("getMethod", String.class, Class[].class))),
                         NullConstant.INSTANCE,
-                        ArrayFactory.forType(TypeDescription.Generic.OBJECT)
+                        ArrayFactory.forType(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class))
                                 .withValues(Arrays.asList(
                                         ClassConstant.of(instrumentedMethod.getDeclaringType().asErasure()),
                                         new StackManipulation.Compound(
@@ -176,8 +209,8 @@ public class NexusAccessor {
          * @param loadedTypeInitializer The loaded type initializer to be registered.
          */
         void register(String name,
-                      ClassLoader classLoader,
-                      ReferenceQueue<? super ClassLoader> referenceQueue,
+                      @MaybeNull ClassLoader classLoader,
+                      @MaybeNull ReferenceQueue<? super ClassLoader> referenceQueue,
                       int identification,
                       LoadedTypeInitializer loadedTypeInitializer);
 
@@ -191,26 +224,39 @@ public class NexusAccessor {
              */
             INSTANCE;
 
-            @Override
-            @SuppressFBWarnings(value = "REC_CATCH_EXCEPTION", justification = "Exception should not be rethrown but trigger a fallback")
+            /**
+             * {@inheritDoc}
+             */
+            @SuppressFBWarnings(value = "REC_CATCH_EXCEPTION", justification = "Exception should not be rethrown but trigger a fallback.")
             public Dispatcher run() {
                 if (Boolean.getBoolean(Nexus.PROPERTY)) {
-                    return new Unavailable(new IllegalStateException("Nexus injection was explicitly disabled"));
+                    return new Unavailable("Nexus injection was explicitly disabled");
                 } else {
+                    Class<?> nexusType;
                     try {
-                        Class<?> nexusType = new ClassInjector.UsingReflection(ClassLoader.getSystemClassLoader(), ClassLoadingStrategy.NO_PROTECTION_DOMAIN)
-                                .inject(Collections.singletonMap(new TypeDescription.ForLoadedType(Nexus.class), ClassFileLocator.ForClassLoader.read(Nexus.class).resolve()))
-                                .get(new TypeDescription.ForLoadedType(Nexus.class));
+                        nexusType = new ClassInjector.UsingReflection(ClassLoader.getSystemClassLoader(), ClassLoadingStrategy.NO_PROTECTION_DOMAIN)
+                                .inject(Collections.singletonMap(TypeDescription.ForLoadedType.of(Nexus.class), ClassFileLocator.ForClassLoader.read(Nexus.class)))
+                                .get(TypeDescription.ForLoadedType.of(Nexus.class));
                         return new Dispatcher.Available(nexusType.getMethod("register", String.class, ClassLoader.class, ReferenceQueue.class, int.class, Object.class),
                                 nexusType.getMethod("clean", Reference.class));
                     } catch (Exception exception) {
                         try {
-                            Class<?> nexusType = ClassLoader.getSystemClassLoader().loadClass(Nexus.class.getName());
-                            return new Dispatcher.Available(nexusType.getMethod("register", String.class, ClassLoader.class, ReferenceQueue.class, int.class, Object.class),
-                                    nexusType.getMethod("clean", Reference.class));
+                            nexusType = ClassLoader.getSystemClassLoader().loadClass(Nexus.class.getName());
                         } catch (Exception ignored) {
-                            return new Dispatcher.Unavailable(exception);
+                            return new Dispatcher.Unavailable(exception.toString());
                         }
+                    }
+                    try {
+                        JavaModule source = JavaModule.ofType(NexusAccessor.class), target = JavaModule.ofType(nexusType);
+                        if (source != null && !source.canRead(target)) {
+                            Class<?> module = Class.forName("java.lang.Module");
+                            module.getMethod("addReads", module).invoke(source.unwrap(), target.unwrap());
+                        }
+                        return new Dispatcher.Available(
+                                nexusType.getMethod("register", String.class, ClassLoader.class, ReferenceQueue.class, int.class, Object.class),
+                                nexusType.getMethod("clean", Reference.class));
+                    } catch (Exception exception) {
+                        return new Dispatcher.Unavailable(exception.toString());
                     }
                 }
             }
@@ -219,13 +265,8 @@ public class NexusAccessor {
         /**
          * An enabled dispatcher for registering a type initializer in a {@link Nexus}.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class Available implements Dispatcher {
-
-            /**
-             * Indicates that a static method is invoked by reflection.
-             */
-            private static final Object STATIC_METHOD = null;
 
             /**
              * The {@link Nexus#register(String, ClassLoader, ReferenceQueue, int, Object)} method.
@@ -248,34 +289,40 @@ public class NexusAccessor {
                 this.clean = clean;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public boolean isAlive() {
                 return true;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public void clean(Reference<? extends ClassLoader> reference) {
                 try {
-                    clean.invoke(STATIC_METHOD, reference);
+                    clean.invoke(null, reference);
                 } catch (IllegalAccessException exception) {
-                    throw new IllegalStateException("Cannot access: " + clean, exception);
+                    throw new IllegalStateException(exception);
                 } catch (InvocationTargetException exception) {
-                    throw new IllegalStateException("Cannot invoke: " + clean, exception.getCause());
+                    throw new IllegalStateException(exception.getTargetException());
                 }
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public void register(String name,
-                                 ClassLoader classLoader,
-                                 ReferenceQueue<? super ClassLoader> referenceQueue,
+                                 @MaybeNull ClassLoader classLoader,
+                                 @MaybeNull ReferenceQueue<? super ClassLoader> referenceQueue,
                                  int identification,
                                  LoadedTypeInitializer loadedTypeInitializer) {
                 try {
-                    register.invoke(STATIC_METHOD, name, classLoader, referenceQueue, identification, loadedTypeInitializer);
+                    register.invoke(null, name, classLoader, referenceQueue, identification, loadedTypeInitializer);
                 } catch (IllegalAccessException exception) {
-                    throw new IllegalStateException("Cannot access: " + register, exception);
+                    throw new IllegalStateException(exception);
                 } catch (InvocationTargetException exception) {
-                    throw new IllegalStateException("Cannot invoke: " + register, exception.getCause());
+                    throw new IllegalStateException(exception.getTargetException());
                 }
             }
         }
@@ -283,40 +330,46 @@ public class NexusAccessor {
         /**
          * A disabled dispatcher where a {@link Nexus} is not available.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class Unavailable implements Dispatcher {
 
             /**
-             * The exception that was raised during the dispatcher initialization.
+             * The reason for the dispatcher being unavailable.
              */
-            private final Exception exception;
+            private final String message;
 
             /**
-             * Creates a new disabled dispatcher.
+             * Creates a new unavailable dispatcher.
              *
-             * @param exception The exception that was raised during the dispatcher initialization.
+             * @param message The reason for the dispatcher being unavailable.
              */
-            protected Unavailable(Exception exception) {
-                this.exception = exception;
+            protected Unavailable(String message) {
+                this.message = message;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public boolean isAlive() {
                 return false;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public void clean(Reference<? extends ClassLoader> reference) {
-                throw new IllegalStateException("Could not initialize Nexus accessor", exception);
+                throw new UnsupportedOperationException("Could not initialize Nexus accessor: " + message);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public void register(String name,
-                                 ClassLoader classLoader,
-                                 ReferenceQueue<? super ClassLoader> referenceQueue,
+                                 @MaybeNull ClassLoader classLoader,
+                                 @MaybeNull ReferenceQueue<? super ClassLoader> referenceQueue,
                                  int identification,
                                  LoadedTypeInitializer loadedTypeInitializer) {
-                throw new IllegalStateException("Could not initialize Nexus accessor", exception);
+                throw new UnsupportedOperationException("Could not initialize Nexus accessor: " + message);
             }
         }
     }

@@ -6,13 +6,12 @@ import net.bytebuddy.description.method.MethodList;
 import net.bytebuddy.description.type.TypeDefinition;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.dynamic.scaffold.MethodGraph;
-import net.bytebuddy.test.utility.MockitoRule;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 
 import static org.hamcrest.CoreMatchers.instanceOf;
 import static org.hamcrest.CoreMatchers.is;
@@ -22,7 +21,7 @@ import static org.mockito.Mockito.when;
 public class SubclassImplementationTargetFactoryTest {
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     @Mock
     private MethodGraph.Linked methodGraph;
@@ -57,10 +56,5 @@ public class SubclassImplementationTargetFactoryTest {
     @Test
     public void testOriginTypeLevelType() throws Exception {
         assertThat(SubclassImplementationTarget.Factory.LEVEL_TYPE.make(instrumentedType, methodGraph, classFileVersion).getOriginType(), is((TypeDefinition) instrumentedType));
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(SubclassImplementationTarget.Factory.class).apply();
     }
 }

@@ -1,5 +1,21 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation.bytecode.collection;
 
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.type.TypeDefinition;
 import net.bytebuddy.implementation.Implementation;
 import net.bytebuddy.implementation.bytecode.Duplication;
@@ -92,7 +108,9 @@ public enum ArrayAccess {
      * @return An array accessor for the given type.
      */
     public static ArrayAccess of(TypeDefinition componentType) {
-        if (componentType.represents(boolean.class) || componentType.represents(byte.class)) {
+        if (!componentType.isPrimitive()) {
+            return REFERENCE;
+        } else if (componentType.represents(boolean.class) || componentType.represents(byte.class)) {
             return BYTE;
         } else if (componentType.represents(short.class)) {
             return SHORT;
@@ -106,10 +124,8 @@ public enum ArrayAccess {
             return FLOAT;
         } else if (componentType.represents(double.class)) {
             return DOUBLE;
-        } else if (componentType.represents(void.class)) {
-            throw new IllegalArgumentException("void is no legal array type");
         } else {
-            return REFERENCE;
+            throw new IllegalArgumentException("Not a legal array type: " + componentType);
         }
     }
 
@@ -154,74 +170,30 @@ public enum ArrayAccess {
     /**
      * A stack manipulation for loading an array's value.
      */
-    protected class Loader implements StackManipulation {
+    @HashCodeAndEqualsPlugin.Enhance(includeSyntheticFields = true)
+    protected class Loader extends StackManipulation.AbstractBase {
 
-        @Override
-        public boolean isValid() {
-            return true;
-        }
-
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext) {
             methodVisitor.visitInsn(loadOpcode);
             return stackSize.toIncreasingSize().aggregate(new Size(-2, 0));
-        }
-
-        /**
-         * Returns the outer instance.
-         *
-         * @return The outer instance.
-         */
-        private ArrayAccess getArrayAccess() {
-            return ArrayAccess.this;
-        }
-
-        @Override // HE: Remove when Lombok support for getOuter is added.
-        public int hashCode() {
-            return ArrayAccess.this.hashCode();
-        }
-
-        @Override // HE: Remove when Lombok support for getOuter is added.
-        public boolean equals(Object other) {
-            return this == other || (other != null && other.getClass() == getClass()
-                    && getArrayAccess() == ((Loader) other).getArrayAccess());
         }
     }
 
     /**
      * A stack manipulation for storing an array's value.
      */
-    protected class Putter implements StackManipulation {
+    @HashCodeAndEqualsPlugin.Enhance(includeSyntheticFields = true)
+    protected class Putter extends StackManipulation.AbstractBase {
 
-        @Override
-        public boolean isValid() {
-            return true;
-        }
-
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext) {
             methodVisitor.visitInsn(storeOpcode);
             return stackSize.toDecreasingSize().aggregate(new Size(-2, 0));
-        }
-
-        /**
-         * Returns the outer instance.
-         *
-         * @return The outer instance.
-         */
-        private ArrayAccess getArrayAccess() {
-            return ArrayAccess.this;
-        }
-
-        @Override // HE: Remove when Lombok support for getOuter is added.
-        public int hashCode() {
-            return ArrayAccess.this.hashCode();
-        }
-
-        @Override // HE: Remove when Lombok support for getOuter is added.
-        public boolean equals(Object other) {
-            return this == other || (other != null && other.getClass() == getClass()
-                    && getArrayAccess() == ((Putter) other).getArrayAccess());
         }
     }
 }

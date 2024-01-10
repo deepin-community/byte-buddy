@@ -1,0 +1,20 @@
+include "mavenBridge"
+// Gradle cannot process all version strings such that JavaVersion.current() fails.
+def raw = System.getProperty("java.version")
+def current
+if (!raw.startsWith("1.") && raw.contains(".")) {
+    current = JavaVersion.toVersion(raw.substring(0, raw.indexOf('.')))
+} else {
+    current = JavaVersion.toVersion(raw)
+}
+// The Android plugin requires at least Java 8 and does not work with Java 9 for an obscure error.
+if (current > JavaVersion.VERSION_1_7 && current != JavaVersion.VERSION_1_9) {
+    include "android-plugin"
+    if (Boolean.getBoolean("net.bytebuddy.build.gradle.android.test")) {
+        include "android-plugin-test"
+        include "android-plugin-test:app"
+        include "android-plugin-test:aar-bytebuddy-target"
+        include "android-plugin-test:aar-bytebuddy-plugin"
+        include "android-plugin-test:jar-bytebuddy-plugin"
+    }
+}

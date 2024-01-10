@@ -1,9 +1,26 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.description.type;
 
+import net.bytebuddy.build.CachedReturnPlugin;
 import net.bytebuddy.description.ByteCodeElement;
 import net.bytebuddy.description.annotation.AnnotationDescription;
 import net.bytebuddy.description.annotation.AnnotationList;
 import net.bytebuddy.matcher.ElementMatcher;
+import net.bytebuddy.utility.nullability.MaybeNull;
 
 import java.util.Collections;
 import java.util.List;
@@ -91,27 +108,33 @@ public class TypeVariableToken implements ByteCodeElement.Token<TypeVariableToke
         return new AnnotationList.Explicit(annotations);
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public TypeVariableToken accept(TypeDescription.Generic.Visitor<? extends TypeDescription.Generic> visitor) {
         return new TypeVariableToken(symbol, getBounds().accept(visitor), annotations);
     }
 
     @Override
-    public boolean equals(Object other) {
-        if (this == other) return true;
-        if (!(other instanceof TypeVariableToken)) return false;
-        TypeVariableToken that = (TypeVariableToken) other;
-        return symbol.equals(that.symbol)
-                && bounds.equals(that.bounds)
-                && annotations.equals(that.annotations);
-    }
-
-    @Override
+    @CachedReturnPlugin.Enhance("hashCode")
     public int hashCode() {
         int result = symbol.hashCode();
         result = 31 * result + bounds.hashCode();
         result = 31 * result + annotations.hashCode();
         return result;
+    }
+
+    @Override
+    public boolean equals(@MaybeNull Object other) {
+        if (this == other) {
+            return true;
+        } else if (!(other instanceof TypeVariableToken)) {
+            return false;
+        }
+        TypeVariableToken typeVariableToken = (TypeVariableToken) other;
+        return symbol.equals(typeVariableToken.symbol)
+                && bounds.equals(typeVariableToken.bounds)
+                && annotations.equals(typeVariableToken.annotations);
     }
 
     @Override

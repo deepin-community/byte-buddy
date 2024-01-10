@@ -1,6 +1,21 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.asm;
 
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.field.FieldDescription;
 import net.bytebuddy.description.field.FieldList;
 import net.bytebuddy.description.method.MethodDescription;
@@ -11,10 +26,11 @@ import net.bytebuddy.implementation.Implementation;
 import net.bytebuddy.matcher.ElementMatcher;
 import net.bytebuddy.pool.TypePool;
 import net.bytebuddy.utility.CompoundList;
+import net.bytebuddy.utility.OpenedClassReader;
+import net.bytebuddy.utility.nullability.MaybeNull;
 import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.FieldVisitor;
 import org.objectweb.asm.MethodVisitor;
-import org.objectweb.asm.Opcodes;
 
 import java.util.*;
 
@@ -26,13 +42,13 @@ import static net.bytebuddy.matcher.ElementMatchers.*;
  * </p>
  * <p>
  * <b>Important</b>: The removal of the method is not reflected in the created {@link net.bytebuddy.dynamic.DynamicType}'s
- * type description of the instrumented type.
+ * type description of the instrumented type. The modifier changes are neither visible to element matchers during an instrumentation.
  * </p>
  *
  * @see net.bytebuddy.dynamic.Transformer.ForField#withModifiers(ModifierContributor.ForField...)
  * @see net.bytebuddy.dynamic.Transformer.ForMethod#withModifiers(ModifierContributor.ForMethod...)
  */
-@EqualsAndHashCode(callSuper = false)
+@HashCodeAndEqualsPlugin.Enhance
 public class ModifierAdjustment extends AsmVisitorWrapper.AbstractBase {
 
     /**
@@ -115,8 +131,8 @@ public class ModifierAdjustment extends AsmVisitorWrapper.AbstractBase {
      */
     public ModifierAdjustment withTypeModifiers(ElementMatcher<? super TypeDescription> matcher,
                                                 List<? extends ModifierContributor.ForType> modifierContributors) {
-        return new ModifierAdjustment(CompoundList.of(typeAdjustments, new Adjustment<TypeDescription>(matcher,
-                ModifierContributor.Resolver.of(modifierContributors))), fieldAdjustments, methodAdjustments);
+        return new ModifierAdjustment(CompoundList.of(new Adjustment<TypeDescription>(matcher,
+                ModifierContributor.Resolver.of(modifierContributors)), typeAdjustments), fieldAdjustments, methodAdjustments);
     }
 
     /**
@@ -160,8 +176,8 @@ public class ModifierAdjustment extends AsmVisitorWrapper.AbstractBase {
      */
     public ModifierAdjustment withFieldModifiers(ElementMatcher<? super FieldDescription.InDefinedShape> matcher,
                                                  List<? extends ModifierContributor.ForField> modifierContributors) {
-        return new ModifierAdjustment(typeAdjustments, CompoundList.of(fieldAdjustments, new Adjustment<FieldDescription.InDefinedShape>(matcher,
-                ModifierContributor.Resolver.of(modifierContributors))), methodAdjustments);
+        return new ModifierAdjustment(typeAdjustments, CompoundList.of(new Adjustment<FieldDescription.InDefinedShape>(matcher,
+                ModifierContributor.Resolver.of(modifierContributors)), fieldAdjustments), methodAdjustments);
     }
 
     /**
@@ -293,11 +309,13 @@ public class ModifierAdjustment extends AsmVisitorWrapper.AbstractBase {
      */
     public ModifierAdjustment withInvokableModifiers(ElementMatcher<? super MethodDescription> matcher,
                                                      List<? extends ModifierContributor.ForMethod> modifierContributors) {
-        return new ModifierAdjustment(typeAdjustments, fieldAdjustments, CompoundList.of(methodAdjustments, new Adjustment<MethodDescription>(matcher,
-                ModifierContributor.Resolver.of(modifierContributors))));
+        return new ModifierAdjustment(typeAdjustments, fieldAdjustments, CompoundList.of(new Adjustment<MethodDescription>(matcher,
+                ModifierContributor.Resolver.of(modifierContributors)), methodAdjustments));
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public ModifierAdjustingClassVisitor wrap(TypeDescription instrumentedType,
                                               ClassVisitor classVisitor,
                                               Implementation.Context implementationContext,
@@ -328,7 +346,7 @@ public class ModifierAdjustment extends AsmVisitorWrapper.AbstractBase {
      *
      * @param <T> The type of the adjusted element's description.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     protected static class Adjustment<T> implements ElementMatcher<T> {
 
         /**
@@ -352,8 +370,10 @@ public class ModifierAdjustment extends AsmVisitorWrapper.AbstractBase {
             this.resolver = resolver;
         }
 
-        @Override
-        public boolean matches(T target) {
+        /**
+         * {@inheritDoc}
+         */
+        public boolean matches(@MaybeNull T target) {
             return matcher.matches(target);
         }
 
@@ -421,7 +441,7 @@ public class ModifierAdjustment extends AsmVisitorWrapper.AbstractBase {
                                                 TypeDescription instrumentedType,
                                                 Map<String, FieldDescription.InDefinedShape> fields,
                                                 Map<String, MethodDescription> methods) {
-            super(Opcodes.ASM6, classVisitor);
+            super(OpenedClassReader.ASM_API, classVisitor);
             this.typeAdjustments = typeAdjustments;
             this.fieldAdjustments = fieldAdjustments;
             this.methodAdjustments = methodAdjustments;
@@ -431,21 +451,23 @@ public class ModifierAdjustment extends AsmVisitorWrapper.AbstractBase {
         }
 
         @Override
-        public void visit(int version, int modifiers, String internalName, String signature, String superClassName, String[] interfaceName) {
+        public void visit(int version, int modifiers, String internalName, @MaybeNull String signature, @MaybeNull String superClassName, @MaybeNull String[] interfaceName) {
             for (Adjustment<TypeDescription> adjustment : typeAdjustments) {
                 if (adjustment.matches(instrumentedType)) {
                     modifiers = adjustment.resolve(modifiers);
+                    break;
                 }
             }
             super.visit(version, modifiers, internalName, signature, superClassName, interfaceName);
         }
 
         @Override
-        public void visitInnerClass(String internalName, String outerName, String innerName, int modifiers) {
+        public void visitInnerClass(String internalName, @MaybeNull String outerName, @MaybeNull String innerName, int modifiers) {
             if (instrumentedType.getInternalName().equals(internalName)) {
                 for (Adjustment<TypeDescription> adjustment : typeAdjustments) {
                     if (adjustment.matches(instrumentedType)) {
                         modifiers = adjustment.resolve(modifiers);
+                        break;
                     }
                 }
             }
@@ -453,12 +475,14 @@ public class ModifierAdjustment extends AsmVisitorWrapper.AbstractBase {
         }
 
         @Override
-        public FieldVisitor visitField(int modifiers, String internalName, String descriptor, String signature, Object value) {
+        @MaybeNull
+        public FieldVisitor visitField(int modifiers, String internalName, String descriptor, @MaybeNull String signature, @MaybeNull Object value) {
             FieldDescription.InDefinedShape fieldDescription = fields.get(internalName + descriptor);
             if (fieldDescription != null) {
                 for (Adjustment<FieldDescription.InDefinedShape> adjustment : fieldAdjustments) {
                     if (adjustment.matches(fieldDescription)) {
                         modifiers = adjustment.resolve(modifiers);
+                        break;
                     }
                 }
             }
@@ -466,12 +490,14 @@ public class ModifierAdjustment extends AsmVisitorWrapper.AbstractBase {
         }
 
         @Override
-        public MethodVisitor visitMethod(int modifiers, String internalName, String descriptor, String signature, String[] exception) {
+        @MaybeNull
+        public MethodVisitor visitMethod(int modifiers, String internalName, String descriptor, @MaybeNull String signature, @MaybeNull String[] exception) {
             MethodDescription methodDescription = methods.get(internalName + descriptor);
             if (methodDescription != null) {
                 for (Adjustment<MethodDescription> adjustment : methodAdjustments) {
                     if (adjustment.matches(methodDescription)) {
                         modifiers = adjustment.resolve(modifiers);
+                        break;
                     }
                 }
             }

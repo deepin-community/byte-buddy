@@ -1,7 +1,6 @@
 package net.bytebuddy.description.type;
 
 import net.bytebuddy.description.annotation.AnnotationDescription;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -87,17 +86,12 @@ public class TypeDescriptionGenericVisitorAnnotationStripperTest {
 
     @Test
     public void testParameterized() throws Exception {
-        TypeDescription.Generic typeDescription = TypeDescription.Generic.Builder.parameterizedType(new TypeDescription.ForLoadedType(Collection.class),
+        TypeDescription.Generic typeDescription = TypeDescription.Generic.Builder.parameterizedType(TypeDescription.ForLoadedType.of(Collection.class),
                 TypeDescription.Generic.Builder.rawType(Object.class).annotate(annotationDescription).build()).annotate(annotationDescription).build();
         assertThat(TypeDescription.Generic.Visitor.AnnotationStripper.INSTANCE.onParameterizedType(typeDescription), is(typeDescription));
         assertThat(TypeDescription.Generic.Visitor.AnnotationStripper.INSTANCE.onParameterizedType(typeDescription).getDeclaredAnnotations().size(), is(0));
         assertThat(TypeDescription.Generic.Visitor.AnnotationStripper.INSTANCE.onParameterizedType(typeDescription).getTypeArguments()
                 .getOnly().getDeclaredAnnotations().size(), is(0));
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(TypeDescription.Generic.Visitor.AnnotationStripper.class).apply();
     }
 
     private @interface Foo {

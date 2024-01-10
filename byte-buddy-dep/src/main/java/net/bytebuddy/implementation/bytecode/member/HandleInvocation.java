@@ -1,6 +1,21 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation.bytecode.member;
 
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.implementation.Implementation;
 import net.bytebuddy.implementation.bytecode.StackManipulation;
 import net.bytebuddy.utility.JavaConstant;
@@ -10,8 +25,8 @@ import org.objectweb.asm.Opcodes;
 /**
  * An exact invocation of a method handle with a polymorphic signature.
  */
-@EqualsAndHashCode
-public class HandleInvocation implements StackManipulation {
+@HashCodeAndEqualsPlugin.Enhance
+public class HandleInvocation extends StackManipulation.AbstractBase {
 
     /**
      * The name of the {@code java.lang.invoke.MethodHandle} type.
@@ -37,12 +52,9 @@ public class HandleInvocation implements StackManipulation {
         this.methodType = methodType;
     }
 
-    @Override
-    public boolean isValid() {
-        return true;
-    }
-
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext) {
         methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, METHOD_HANDLE_NAME, INVOKE_EXACT, methodType.getDescriptor(), false);
         int size = methodType.getReturnType().getStackSize().getSize() - methodType.getParameterTypes().getStackSize();

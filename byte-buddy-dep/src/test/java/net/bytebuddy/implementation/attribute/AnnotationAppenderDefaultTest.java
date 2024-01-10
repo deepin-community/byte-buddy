@@ -6,23 +6,19 @@ import net.bytebuddy.description.annotation.AnnotationDescription;
 import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.dynamic.loading.ByteArrayClassLoader;
-import net.bytebuddy.dynamic.loading.PackageDefinitionStrategy;
 import net.bytebuddy.test.utility.JavaVersionRule;
-import net.bytebuddy.test.utility.MockitoRule;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.hamcrest.CoreMatchers;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.MethodRule;
-import org.junit.rules.TestRule;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 import org.objectweb.asm.*;
 
 import java.lang.annotation.Annotation;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
-import java.security.ProtectionDomain;
 import java.util.Collections;
 
 import static org.hamcrest.CoreMatchers.is;
@@ -36,7 +32,7 @@ public class AnnotationAppenderDefaultTest {
     private static final String FOOBAR = "foobar";
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     @Rule
     public MethodRule javaVersionRule = new JavaVersionRule();
@@ -104,7 +100,7 @@ public class AnnotationAppenderDefaultTest {
     @JavaVersionRule.Enforce(8)
     public void testNoArgumentTypeAnnotation() throws Exception {
         Class<?> bar = makeTypeWithSuperClassAnnotation(new Foo.Instance());
-        TypeDescription.Generic.AnnotationReader annotationReader = TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveSuperClassType(bar);
+        TypeDescription.Generic.AnnotationReader annotationReader = new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedSuperClass(bar);
         assertThat(annotationReader.asList().size(), is(1));
         assertThat(annotationReader.asList().isAnnotationPresent(Foo.class), is(true));
     }
@@ -113,7 +109,7 @@ public class AnnotationAppenderDefaultTest {
     @JavaVersionRule.Enforce(8)
     public void testNoArgumentTypeAnnotationSourceCodeRetention() throws Exception {
         Class<?> bar = makeTypeWithSuperClassAnnotation(new FooSourceCodeRetention.Instance());
-        TypeDescription.Generic.AnnotationReader annotationReader = TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveSuperClassType(bar);
+        TypeDescription.Generic.AnnotationReader annotationReader = new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedSuperClass(bar);
         assertThat(annotationReader.asList().size(), is(0));
     }
 
@@ -121,7 +117,7 @@ public class AnnotationAppenderDefaultTest {
     @JavaVersionRule.Enforce(8)
     public void testNoArgumentTypeAnnotationByteCodeRetention() throws Exception {
         Class<?> bar = makeTypeWithSuperClassAnnotation(new FooByteCodeRetention.Instance());
-        TypeDescription.Generic.AnnotationReader annotationReader = TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveSuperClassType(bar);
+        TypeDescription.Generic.AnnotationReader annotationReader = new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedSuperClass(bar);
         assertThat(annotationReader.asList().size(), is(0));
     }
 
@@ -129,7 +125,7 @@ public class AnnotationAppenderDefaultTest {
     @JavaVersionRule.Enforce(8)
     public void testNoArgumentTypeAnnotationNoRetention() throws Exception {
         Class<?> bar = makeTypeWithSuperClassAnnotation(new FooNoRetention.Instance());
-        TypeDescription.Generic.AnnotationReader annotationReader = TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveSuperClassType(bar);
+        TypeDescription.Generic.AnnotationReader annotationReader = new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedSuperClass(bar);
         assertThat(annotationReader.asList().size(), is(0));
     }
 
@@ -137,7 +133,7 @@ public class AnnotationAppenderDefaultTest {
     @JavaVersionRule.Enforce(8)
     public void testSingleTypeArgumentAnnotation() throws Exception {
         Class<?> bar = makeTypeWithSuperClassAnnotation(new Qux.Instance(FOOBAR));
-        TypeDescription.Generic.AnnotationReader annotationReader = TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveSuperClassType(bar);
+        TypeDescription.Generic.AnnotationReader annotationReader = new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedSuperClass(bar);
         assertThat(annotationReader.asList().size(), is(1));
         assertThat(annotationReader.asList().isAnnotationPresent(Qux.class), is(true));
         assertThat(annotationReader.asList().ofType(Qux.class).load().value(), is(FOOBAR));
@@ -148,7 +144,7 @@ public class AnnotationAppenderDefaultTest {
     public void testMultipleTypeArgumentAnnotation() throws Exception {
         int[] array = {2, 3, 4};
         Class<?> bar = makeTypeWithSuperClassAnnotation(new Baz.Instance(FOOBAR, array, new Foo.Instance(), Baz.Enum.VALUE, Void.class));
-        TypeDescription.Generic.AnnotationReader annotationReader = TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveSuperClassType(bar);
+        TypeDescription.Generic.AnnotationReader annotationReader = new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedSuperClass(bar);
         assertThat(annotationReader.asList().size(), is(1));
         assertThat(annotationReader.asList().isAnnotationPresent(Baz.class), is(true));
         assertThat(annotationReader.asList().ofType(Baz.class).load().value(), is(FOOBAR));
@@ -208,8 +204,8 @@ public class AnnotationAppenderDefaultTest {
         AnnotationDescription annotationDescription = mock(AnnotationDescription.class);
         when(annotationDescription.getRetention()).thenReturn(RetentionPolicy.SOURCE);
         annotationAppender.append(annotationDescription, valueFilter);
-        verifyZeroInteractions(valueFilter);
-        verifyZeroInteractions(annotationVisitor);
+        verifyNoMoreInteractions(valueFilter);
+        verifyNoMoreInteractions(annotationVisitor);
     }
 
     @Test
@@ -219,13 +215,8 @@ public class AnnotationAppenderDefaultTest {
         AnnotationDescription annotationDescription = mock(AnnotationDescription.class);
         when(annotationDescription.getRetention()).thenReturn(RetentionPolicy.SOURCE);
         annotationAppender.append(annotationDescription, valueFilter, 0, null);
-        verifyZeroInteractions(valueFilter);
-        verifyZeroInteractions(annotationVisitor);
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(AnnotationAppender.Default.class).apply();
+        verifyNoMoreInteractions(valueFilter);
+        verifyNoMoreInteractions(annotationVisitor);
     }
 
     @Retention(RetentionPolicy.RUNTIME)
@@ -234,7 +225,6 @@ public class AnnotationAppenderDefaultTest {
         @SuppressWarnings("all")
         class Instance implements Foo {
 
-            @Override
             public Class<? extends Annotation> annotationType() {
                 return Foo.class;
             }
@@ -247,7 +237,6 @@ public class AnnotationAppenderDefaultTest {
         @SuppressWarnings("all")
         class Instance implements FooSourceCodeRetention {
 
-            @Override
             public Class<? extends Annotation> annotationType() {
                 return FooSourceCodeRetention.class;
             }
@@ -260,7 +249,6 @@ public class AnnotationAppenderDefaultTest {
         @SuppressWarnings("all")
         class Instance implements FooByteCodeRetention {
 
-            @Override
             public Class<? extends Annotation> annotationType() {
                 return FooByteCodeRetention.class;
             }
@@ -272,7 +260,6 @@ public class AnnotationAppenderDefaultTest {
         @SuppressWarnings("all")
         class Instance implements FooNoRetention {
 
-            @Override
             public Class<? extends Annotation> annotationType() {
                 return FooNoRetention.class;
             }
@@ -293,12 +280,10 @@ public class AnnotationAppenderDefaultTest {
                 this.value = value;
             }
 
-            @Override
             public String value() {
                 return value;
             }
 
-            @Override
             public Class<? extends Annotation> annotationType() {
                 return Qux.class;
             }
@@ -343,32 +328,26 @@ public class AnnotationAppenderDefaultTest {
                 this.type = type;
             }
 
-            @Override
             public String value() {
                 return value;
             }
 
-            @Override
             public int[] array() {
                 return array;
             }
 
-            @Override
             public Foo annotation() {
                 return annotation;
             }
 
-            @Override
             public Enum enumeration() {
                 return enumeration;
             }
 
-            @Override
             public Class<?> type() {
                 return type;
             }
 
-            @Override
             public Class<? extends Annotation> annotationType() {
                 return Baz.class;
             }

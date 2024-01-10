@@ -33,7 +33,7 @@ public class EmptyBinderTest extends AbstractAnnotationBinderTest<Empty> {
 
     public EmptyBinderTest(Class<?> type, int opcode) {
         super(Empty.class);
-        typeDescription = new TypeDescription.Generic.OfNonGenericType.ForLoadedType(type);
+        typeDescription = TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(type);
         this.opcode = opcode;
     }
 
@@ -52,7 +52,6 @@ public class EmptyBinderTest extends AbstractAnnotationBinderTest<Empty> {
         });
     }
 
-    @Override
     protected TargetMethodAnnotationDrivenBinder.ParameterBinder<Empty> getSimpleBinder() {
         return Empty.Binder.INSTANCE;
     }
@@ -73,6 +72,6 @@ public class EmptyBinderTest extends AbstractAnnotationBinderTest<Empty> {
         assertThat(size.getMaximalSize(), is(typeDescription.getStackSize().getSize()));
         verify(methodVisitor).visitInsn(opcode);
         verifyNoMoreInteractions(methodVisitor);
-        verifyZeroInteractions(implementationContext);
+        verifyNoMoreInteractions(implementationContext);
     }
 }

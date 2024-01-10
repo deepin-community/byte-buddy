@@ -1,6 +1,21 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation.bind.annotation;
 
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.annotation.AnnotationDescription;
 import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.method.MethodList;
@@ -44,6 +59,13 @@ public @interface DefaultMethod {
     boolean cached() default true;
 
     /**
+     * Indicates if the instance assigned to this parameter should be looked up using an {@code java.security.AccessController}.
+     *
+     * @return {@code true} if this method should be looked up using an {@code java.security.AccessController}.
+     */
+    boolean privileged() default false;
+
+    /**
      * Specifies an explicit type that declares the default method to invoke.
      *
      * @return The type declaring the method to invoke or {@link TargetType} to indicate that the instrumented method declared the method.
@@ -73,6 +95,11 @@ public @interface DefaultMethod {
         private static final MethodDescription.InDefinedShape CACHED;
 
         /**
+         * The {@link DefaultMethod#privileged()} property.
+         */
+        private static final MethodDescription.InDefinedShape PRIVILEGED;
+
+        /**
          * The {@link DefaultMethod#targetType()} property.
          */
         private static final MethodDescription.InDefinedShape TARGET_TYPE;
@@ -86,18 +113,23 @@ public @interface DefaultMethod {
          * Locates method constants for properties of the default method annotation.
          */
         static {
-            MethodList<MethodDescription.InDefinedShape> methodList = new TypeDescription.ForLoadedType(DefaultMethod.class).getDeclaredMethods();
+            MethodList<MethodDescription.InDefinedShape> methodList = TypeDescription.ForLoadedType.of(DefaultMethod.class).getDeclaredMethods();
             CACHED = methodList.filter(named("cached")).getOnly();
+            PRIVILEGED = methodList.filter(named("privileged")).getOnly();
             TARGET_TYPE = methodList.filter(named("targetType")).getOnly();
             NULL_IF_IMPOSSIBLE = methodList.filter(named("nullIfImpossible")).getOnly();
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Class<DefaultMethod> getHandledType() {
             return DefaultMethod.class;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public MethodDelegationBinder.ParameterBinding<?> bind(final AnnotationDescription.Loadable<DefaultMethod> annotation,
                                                                MethodDescription source,
                                                                ParameterDescription target,
@@ -110,9 +142,11 @@ public @interface DefaultMethod {
                 TypeDescription typeDescription = annotation.getValue(TARGET_TYPE).resolve(TypeDescription.class);
                 Implementation.SpecialMethodInvocation specialMethodInvocation = (typeDescription.represents(void.class)
                         ? MethodLocator.ForImplicitType.INSTANCE
-                        : new MethodLocator.ForExplicitType(typeDescription)).resolve(implementationTarget, source);
+                        : new MethodLocator.ForExplicitType(typeDescription)).resolve(implementationTarget, source).withCheckedCompatibilityTo(source.asTypeToken());
                 if (specialMethodInvocation.isValid()) {
-                    return new MethodDelegationBinder.ParameterBinding.Anonymous(new DelegationMethod(specialMethodInvocation, annotation.getValue(CACHED).resolve(Boolean.class)));
+                    return new MethodDelegationBinder.ParameterBinding.Anonymous(new DelegationMethod(specialMethodInvocation,
+                            annotation.getValue(CACHED).resolve(Boolean.class),
+                            annotation.getValue(PRIVILEGED).resolve(Boolean.class)));
                 } else if (annotation.getValue(NULL_IF_IMPOSSIBLE).resolve(Boolean.class)) {
                     return new MethodDelegationBinder.ParameterBinding.Anonymous(NullConstant.INSTANCE);
                 } else {
@@ -149,7 +183,9 @@ public @interface DefaultMethod {
                  */
                 INSTANCE;
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public Implementation.SpecialMethodInvocation resolve(Implementation.Target implementationTarget, MethodDescription source) {
                     return implementationTarget.invokeDefault(source.asSignatureToken());
                 }
@@ -158,7 +194,7 @@ public @interface DefaultMethod {
             /**
              * A method locator for an explicit target type.
              */
-            @EqualsAndHashCode
+            @HashCodeAndEqualsPlugin.Enhance
             class ForExplicitType implements MethodLocator {
 
                 /**
@@ -175,7 +211,9 @@ public @interface DefaultMethod {
                     this.typeDescription = typeDescription;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public Implementation.SpecialMethodInvocation resolve(Implementation.Target implementationTarget, MethodDescription source) {
                     if (!typeDescription.isInterface()) {
                         throw new IllegalStateException(source + " method carries default method call parameter on non-interface type");
@@ -188,7 +226,7 @@ public @interface DefaultMethod {
         /**
          * Loads the delegation method constant onto the stack.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         protected static class DelegationMethod implements StackManipulation {
 
             /**
@@ -202,28 +240,40 @@ public @interface DefaultMethod {
             private final boolean cached;
 
             /**
+             * {@code true} if the method should be looked up using an {@code java.security.AccessController}.
+             */
+            private final boolean privileged;
+
+            /**
              * Creates a new delegation method.
              *
              * @param specialMethodInvocation The special method invocation that represents the super method call.
              * @param cached                  {@code true} if the method constant should be cached.
+             * @param privileged              {@code true} if the method should be looked up using an {@code java.security.AccessController}.
              */
-            protected DelegationMethod(Implementation.SpecialMethodInvocation specialMethodInvocation, boolean cached) {
+            protected DelegationMethod(Implementation.SpecialMethodInvocation specialMethodInvocation, boolean cached, boolean privileged) {
                 this.specialMethodInvocation = specialMethodInvocation;
                 this.cached = cached;
+                this.privileged = privileged;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public boolean isValid() {
                 return specialMethodInvocation.isValid();
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext) {
-                StackManipulation stackManipulation = MethodConstant.forMethod(implementationContext.registerAccessorFor(specialMethodInvocation,
-                        MethodAccessorFactory.AccessType.PUBLIC));
+                StackManipulation methodConstant = privileged
+                        ? MethodConstant.ofPrivileged(implementationContext.registerAccessorFor(specialMethodInvocation, MethodAccessorFactory.AccessType.PUBLIC))
+                        : MethodConstant.of(implementationContext.registerAccessorFor(specialMethodInvocation, MethodAccessorFactory.AccessType.PUBLIC));
                 return (cached
-                        ? FieldAccess.forField(implementationContext.cache(stackManipulation, new TypeDescription.ForLoadedType(Method.class))).read()
-                        : stackManipulation).apply(methodVisitor, implementationContext);
+                        ? FieldAccess.forField(implementationContext.cache(methodConstant, TypeDescription.ForLoadedType.of(Method.class))).read()
+                        : methodConstant).apply(methodVisitor, implementationContext);
             }
         }
     }

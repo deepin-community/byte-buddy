@@ -1,22 +1,19 @@
 package net.bytebuddy.description.type;
 
-import net.bytebuddy.test.utility.MockitoRule;
-import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 
-import static org.hamcrest.CoreMatchers.is;
-import static org.hamcrest.CoreMatchers.not;
-import static org.hamcrest.CoreMatchers.sameInstance;
-import static org.junit.Assert.assertThat;
+import static org.hamcrest.CoreMatchers.*;
+import static org.hamcrest.MatcherAssert.assertThat;
 import static org.mockito.Mockito.when;
 
 public class TypeDescriptionGenericVisitorReifyingTest {
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     @Mock
     private TypeDescription.Generic generic;
@@ -28,13 +25,13 @@ public class TypeDescriptionGenericVisitorReifyingTest {
 
     @Test
     public void testInitiatingGenerifiedNonGenericType() throws Exception {
-        when(generic.asErasure()).thenReturn(TypeDescription.OBJECT);
+        when(generic.asErasure()).thenReturn(TypeDescription.ForLoadedType.of(Object.class));
         assertThat(TypeDescription.Generic.Visitor.Reifying.INITIATING.onNonGenericType(generic), sameInstance(generic));
     }
 
     @Test
     public void testInitiatingNonGenerifiedNonGenericType() throws Exception {
-        when(generic.asErasure()).thenReturn(new TypeDescription.ForLoadedType(Foo.class));
+        when(generic.asErasure()).thenReturn(TypeDescription.ForLoadedType.of(Foo.class));
         assertThat(TypeDescription.Generic.Visitor.Reifying.INITIATING.onNonGenericType(generic), not(sameInstance(generic)));
         assertThat(TypeDescription.Generic.Visitor.Reifying.INITIATING.onNonGenericType(generic).getSort(), is(TypeDefinition.Sort.NON_GENERIC));
     }
@@ -61,13 +58,13 @@ public class TypeDescriptionGenericVisitorReifyingTest {
 
     @Test
     public void testInheritingGenerifiedNonGenericType() throws Exception {
-        when(generic.asErasure()).thenReturn(TypeDescription.OBJECT);
+        when(generic.asErasure()).thenReturn(TypeDescription.ForLoadedType.of(Object.class));
         assertThat(TypeDescription.Generic.Visitor.Reifying.INHERITING.onNonGenericType(generic), sameInstance(generic));
     }
 
     @Test
     public void testInheritingNonGenerifiedNonGenericType() throws Exception {
-        when(generic.asErasure()).thenReturn(new TypeDescription.ForLoadedType(Foo.class));
+        when(generic.asErasure()).thenReturn(TypeDescription.ForLoadedType.of(Foo.class));
         assertThat(TypeDescription.Generic.Visitor.Reifying.INHERITING.onNonGenericType(generic), not(sameInstance(generic)));
         assertThat(TypeDescription.Generic.Visitor.Reifying.INHERITING.onNonGenericType(generic).getSort(), is(TypeDefinition.Sort.NON_GENERIC));
     }

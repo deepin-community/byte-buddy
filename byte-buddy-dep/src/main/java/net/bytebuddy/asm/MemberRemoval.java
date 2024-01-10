@@ -1,6 +1,21 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.asm;
 
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.field.FieldDescription;
 import net.bytebuddy.description.field.FieldList;
 import net.bytebuddy.description.method.MethodDescription;
@@ -11,10 +26,12 @@ import net.bytebuddy.matcher.ElementMatcher;
 import net.bytebuddy.matcher.ElementMatchers;
 import net.bytebuddy.pool.TypePool;
 import net.bytebuddy.utility.CompoundList;
+import net.bytebuddy.utility.OpenedClassReader;
+import net.bytebuddy.utility.nullability.AlwaysNull;
+import net.bytebuddy.utility.nullability.MaybeNull;
 import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.FieldVisitor;
 import org.objectweb.asm.MethodVisitor;
-import org.objectweb.asm.Opcodes;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -36,7 +53,7 @@ import static net.bytebuddy.matcher.ElementMatchers.isMethod;
  * type description of the instrumented type.
  * </p>
  */
-@EqualsAndHashCode(callSuper = false)
+@HashCodeAndEqualsPlugin.Enhance
 public class MemberRemoval extends AsmVisitorWrapper.AbstractBase {
 
     /**
@@ -79,7 +96,8 @@ public class MemberRemoval extends AsmVisitorWrapper.AbstractBase {
     }
 
     /**
-     * Specifies that any method that matches the specified matcher should be removed.
+     * Specifies that any method that matches the specified matcher should be removed. Note that this implementation will
+     * not strip bridge methods for virtual overrides of generic methods.
      *
      * @param matcher The matcher that decides upon method removal.
      * @return A new member removal instance that removes all previously specified members and any method that matches the specified matcher.
@@ -99,7 +117,8 @@ public class MemberRemoval extends AsmVisitorWrapper.AbstractBase {
     }
 
     /**
-     * Specifies that any method or constructor that matches the specified matcher should be removed.
+     * Specifies that any method or constructor that matches the specified matcher should be removed. Note that this implementation will
+     * not strip bridge methods for virtual overrides of generic methods.
      *
      * @param matcher The matcher that decides upon method and constructor removal.
      * @return A new member removal instance that removes all previously specified members and any method or constructor that matches the specified matcher.
@@ -108,7 +127,9 @@ public class MemberRemoval extends AsmVisitorWrapper.AbstractBase {
         return new MemberRemoval(fieldMatcher, methodMatcher.or(matcher));
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public ClassVisitor wrap(TypeDescription instrumentedType,
                              ClassVisitor classVisitor,
                              Implementation.Context implementationContext,
@@ -136,11 +157,13 @@ public class MemberRemoval extends AsmVisitorWrapper.AbstractBase {
         /**
          * Indicates the removal of a field.
          */
+        @javax.annotation.Nonnull(when = javax.annotation.meta.When.NEVER)
         private static final FieldVisitor REMOVE_FIELD = null;
 
         /**
          * Indicates the removal of a method.
          */
+        @AlwaysNull
         private static final MethodVisitor REMOVE_METHOD = null;
 
         /**
@@ -177,7 +200,7 @@ public class MemberRemoval extends AsmVisitorWrapper.AbstractBase {
                                              ElementMatcher.Junction<MethodDescription> methodMatcher,
                                              Map<String, FieldDescription.InDefinedShape> fields,
                                              Map<String, MethodDescription> methods) {
-            super(Opcodes.ASM6, classVisitor);
+            super(OpenedClassReader.ASM_API, classVisitor);
             this.fieldMatcher = fieldMatcher;
             this.methodMatcher = methodMatcher;
             this.fields = fields;
@@ -185,7 +208,8 @@ public class MemberRemoval extends AsmVisitorWrapper.AbstractBase {
         }
 
         @Override
-        public FieldVisitor visitField(int modifiers, String internalName, String descriptor, String signature, Object value) {
+        @MaybeNull
+        public FieldVisitor visitField(int modifiers, String internalName, String descriptor, @MaybeNull String signature, @MaybeNull Object value) {
             FieldDescription.InDefinedShape fieldDescription = fields.get(internalName + descriptor);
             return fieldDescription != null && fieldMatcher.matches(fieldDescription)
                     ? REMOVE_FIELD
@@ -193,7 +217,8 @@ public class MemberRemoval extends AsmVisitorWrapper.AbstractBase {
         }
 
         @Override
-        public MethodVisitor visitMethod(int modifiers, String internalName, String descriptor, String signature, String[] exception) {
+        @MaybeNull
+        public MethodVisitor visitMethod(int modifiers, String internalName, String descriptor, @MaybeNull String signature, @MaybeNull String[] exception) {
             MethodDescription methodDescription = methods.get(internalName + descriptor);
             return methodDescription != null && methodMatcher.matches(methodDescription)
                     ? REMOVE_METHOD

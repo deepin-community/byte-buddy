@@ -9,7 +9,9 @@ import org.mockito.Mock;
 import org.mockito.invocation.InvocationOnMock;
 import org.mockito.stubbing.Answer;
 
-import java.util.*;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
 
 import static org.mockito.Mockito.anyInt;
 import static org.mockito.Mockito.when;
@@ -30,7 +32,6 @@ public class AbstractArgumentTypeResolverTest extends AbstractAmbiguityResolverT
 
     protected static ArgumentMatcher<? super ArgumentTypeResolver.ParameterIndexToken> describesArgument(final int... index) {
         return new ArgumentMatcher<ArgumentTypeResolver.ParameterIndexToken>() {
-            @Override
             public boolean matches(ArgumentTypeResolver.ParameterIndexToken parameterIndexToken) {
                 for (int anIndex : index) {
                     if (parameterIndexToken.equals(new ArgumentTypeResolver.ParameterIndexToken(anIndex))) {
@@ -42,8 +43,8 @@ public class AbstractArgumentTypeResolverTest extends AbstractAmbiguityResolverT
         };
     }
 
-    @Override
     @Before
+    @Override
     @SuppressWarnings("unchecked")
     public void setUp() throws Exception {
         super.setUp();
@@ -71,7 +72,6 @@ public class AbstractArgumentTypeResolverTest extends AbstractAmbiguityResolverT
             this.indexMapping = Collections.unmodifiableMap(indexMapping);
         }
 
-        @Override
         public Integer answer(InvocationOnMock invocation) throws Throwable {
             assert invocation.getArguments().length == 1;
             return indexMapping.get((ArgumentTypeResolver.ParameterIndexToken) invocation.getArguments()[0]);

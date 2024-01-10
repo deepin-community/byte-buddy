@@ -1,3 +1,18 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.asm;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -8,6 +23,8 @@ import net.bytebuddy.description.method.MethodList;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.implementation.Implementation;
 import net.bytebuddy.pool.TypePool;
+import net.bytebuddy.utility.OpenedClassReader;
+import net.bytebuddy.utility.nullability.MaybeNull;
 import org.objectweb.asm.*;
 
 /**
@@ -30,17 +47,23 @@ public enum TypeConstantAdjustment implements AsmVisitorWrapper {
      */
     INSTANCE;
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public int mergeWriter(int flags) {
         return flags;
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public int mergeReader(int flags) {
         return flags;
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public ClassVisitor wrap(TypeDescription instrumentedType,
                              ClassVisitor classVisitor,
                              Implementation.Context implementationContext,
@@ -69,17 +92,18 @@ public enum TypeConstantAdjustment implements AsmVisitorWrapper {
          * @param classVisitor The underlying class visitor.
          */
         protected TypeConstantDissolvingClassVisitor(ClassVisitor classVisitor) {
-            super(Opcodes.ASM6, classVisitor);
+            super(OpenedClassReader.ASM_API, classVisitor);
         }
 
         @Override
-        public void visit(int version, int modifiers, String name, String signature, String superClassName, String[] interfaceName) {
+        public void visit(int version, int modifiers, String name, @MaybeNull String signature, @MaybeNull String superClassName, @MaybeNull String[] interfaceName) {
             supportsTypeConstants = ClassFileVersion.ofMinorMajor(version).isAtLeast(ClassFileVersion.JAVA_V5);
             super.visit(version, modifiers, name, signature, superClassName, interfaceName);
         }
 
         @Override
-        public MethodVisitor visitMethod(int modifiers, String name, String descriptor, String signature, String[] exception) {
+        @MaybeNull
+        public MethodVisitor visitMethod(int modifiers, String name, String descriptor, @MaybeNull String signature, @MaybeNull String[] exception) {
             MethodVisitor methodVisitor = super.visitMethod(modifiers, name, descriptor, signature, exception);
             return supportsTypeConstants || methodVisitor == null
                     ? methodVisitor
@@ -112,14 +136,14 @@ public enum TypeConstantAdjustment implements AsmVisitorWrapper {
              * @param methodVisitor The underlying method visitor.
              */
             protected TypeConstantDissolvingMethodVisitor(MethodVisitor methodVisitor) {
-                super(Opcodes.ASM6, methodVisitor);
+                super(OpenedClassReader.ASM_API, methodVisitor);
             }
 
             @Override
-            @SuppressFBWarnings(value = "SF_SWITCH_NO_DEFAULT", justification = "Fall through to default case is intentional")
-            public void visitLdcInsn(Object constant) {
-                if (constant instanceof Type) {
-                    Type type = (Type) constant;
+            @SuppressFBWarnings(value = "SF_SWITCH_NO_DEFAULT", justification = "Fall through to default case is intentional.")
+            public void visitLdcInsn(Object value) {
+                if (value instanceof Type) {
+                    Type type = (Type) value;
                     switch (type.getSort()) {
                         case Type.OBJECT:
                         case Type.ARRAY:
@@ -128,7 +152,7 @@ public enum TypeConstantAdjustment implements AsmVisitorWrapper {
                             return;
                     }
                 }
-                super.visitLdcInsn(constant);
+                super.visitLdcInsn(value);
             }
         }
     }

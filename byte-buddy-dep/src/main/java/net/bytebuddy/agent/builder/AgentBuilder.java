@@ -1,26 +1,42 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.agent.builder;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import lombok.EqualsAndHashCode;
 import net.bytebuddy.ByteBuddy;
 import net.bytebuddy.ClassFileVersion;
+import net.bytebuddy.NamingStrategy;
 import net.bytebuddy.asm.Advice;
 import net.bytebuddy.asm.AsmVisitorWrapper;
+import net.bytebuddy.build.AccessControllerPlugin;
 import net.bytebuddy.build.EntryPoint;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.build.Plugin;
 import net.bytebuddy.description.field.FieldDescription;
 import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.method.ParameterDescription;
 import net.bytebuddy.description.modifier.*;
+import net.bytebuddy.description.type.PackageDescription;
 import net.bytebuddy.description.type.TypeDescription;
-import net.bytebuddy.dynamic.ClassFileLocator;
-import net.bytebuddy.dynamic.DynamicType;
-import net.bytebuddy.dynamic.NexusAccessor;
-import net.bytebuddy.dynamic.TypeResolutionStrategy;
+import net.bytebuddy.dynamic.*;
 import net.bytebuddy.dynamic.loading.ClassInjector;
 import net.bytebuddy.dynamic.loading.ClassLoadingStrategy;
 import net.bytebuddy.dynamic.loading.ClassReloadingStrategy;
 import net.bytebuddy.dynamic.scaffold.InstrumentedType;
+import net.bytebuddy.dynamic.scaffold.TypeValidation;
 import net.bytebuddy.dynamic.scaffold.inline.MethodNameTransformer;
 import net.bytebuddy.dynamic.scaffold.subclass.ConstructorStrategy;
 import net.bytebuddy.implementation.ExceptionMethod;
@@ -28,7 +44,10 @@ import net.bytebuddy.implementation.Implementation;
 import net.bytebuddy.implementation.LoadedTypeInitializer;
 import net.bytebuddy.implementation.MethodCall;
 import net.bytebuddy.implementation.auxiliary.AuxiliaryType;
-import net.bytebuddy.implementation.bytecode.*;
+import net.bytebuddy.implementation.bytecode.ByteCodeAppender;
+import net.bytebuddy.implementation.bytecode.Duplication;
+import net.bytebuddy.implementation.bytecode.StackManipulation;
+import net.bytebuddy.implementation.bytecode.TypeCreation;
 import net.bytebuddy.implementation.bytecode.assign.Assigner;
 import net.bytebuddy.implementation.bytecode.assign.TypeCasting;
 import net.bytebuddy.implementation.bytecode.collection.ArrayFactory;
@@ -40,27 +59,23 @@ import net.bytebuddy.implementation.bytecode.member.MethodInvocation;
 import net.bytebuddy.implementation.bytecode.member.MethodReturn;
 import net.bytebuddy.implementation.bytecode.member.MethodVariableAccess;
 import net.bytebuddy.matcher.ElementMatcher;
+import net.bytebuddy.matcher.ElementMatchers;
 import net.bytebuddy.matcher.LatentMatcher;
 import net.bytebuddy.pool.TypePool;
 import net.bytebuddy.utility.CompoundList;
 import net.bytebuddy.utility.JavaConstant;
 import net.bytebuddy.utility.JavaModule;
 import net.bytebuddy.utility.JavaType;
-import org.objectweb.asm.Label;
-import org.objectweb.asm.MethodVisitor;
-import org.objectweb.asm.Opcodes;
-import org.objectweb.asm.Type;
+import net.bytebuddy.utility.dispatcher.JavaDispatcher;
+import net.bytebuddy.utility.nullability.AlwaysNull;
+import net.bytebuddy.utility.nullability.MaybeNull;
+import org.objectweb.asm.*;
 
 import java.io.*;
-import java.lang.instrument.ClassDefinition;
-import java.lang.instrument.ClassFileTransformer;
-import java.lang.instrument.Instrumentation;
-import java.lang.instrument.UnmodifiableClassException;
+import java.lang.instrument.*;
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
-import java.security.AccessControlContext;
-import java.security.AccessController;
 import java.security.PrivilegedAction;
 import java.security.ProtectionDomain;
 import java.util.*;
@@ -85,7 +100,7 @@ import static net.bytebuddy.matcher.ElementMatchers.*;
  * should be defined first.
  * </p>
  * <p>
- * <b>Note</b>: Any transformation is performed using the {@link AccessControlContext} of an agent's creator.
+ * <b>Note</b>: Any transformation is performed using the {@code java.security.AccessControlContext} of an agent's creator.
  * </p>
  * <p>
  * <b>Important</b>: Types that implement lambda expressions (functional interfaces) are not instrumented by default but
@@ -138,7 +153,17 @@ public interface AgentBuilder {
      * @param locationStrategy The location strategy to use.
      * @return A new instance of this agent builder which uses the given location strategy for looking up class files.
      */
+    @SuppressWarnings("overloads")
     AgentBuilder with(LocationStrategy locationStrategy);
+
+    /**
+     * Registers an additional class file locator for types that are globally available but cannot be located
+     * otherwise. Typically, those types are injected classes into the boot loader.
+     *
+     * @param classFileLocator The class file locator to add.
+     * @return A new instance of this agent builder which uses the given class file locator for global type lookup.
+     */
+    AgentBuilder with(ClassFileLocator classFileLocator);
 
     /**
      * Defines how types should be transformed, e.g. if they should be rebased or redefined by the created agent.
@@ -216,7 +241,16 @@ public interface AgentBuilder {
      * @param fallbackStrategy The fallback strategy to be used.
      * @return A new agent builder that applies the supplied fallback strategy.
      */
+    @SuppressWarnings("overloads")
     AgentBuilder with(FallbackStrategy fallbackStrategy);
+
+    /**
+     * Specifies a class file buffer strategy that determines the use of the buffer supplied to a class file transformer.
+     *
+     * @param classFileBufferStrategy The class file buffer strategy to use.
+     * @return A new agent builder that applies the supplied class file buffer strategy.
+     */
+    AgentBuilder with(ClassFileBufferStrategy classFileBufferStrategy);
 
     /**
      * Adds an installation listener that is notified during installation events. Installation listeners are only invoked if
@@ -229,21 +263,21 @@ public interface AgentBuilder {
     AgentBuilder with(InstallationListener installationListener);
 
     /**
-     * Enables class injection of auxiliary classes into the bootstrap class loader.
+     * Defines a strategy for injecting auxiliary types into the target class loader.
      *
-     * @param instrumentation The instrumentation instance that is used for appending jar files to the
-     *                        bootstrap class path.
-     * @param folder          The folder in which jar files of the injected classes are to be stored.
-     * @return An agent builder with bootstrap class loader class injection enabled.
+     * @param injectionStrategy The injection strategy to use.
+     * @return A new agent builder with the supplied injection strategy configured.
      */
-    AgentBuilder enableBootstrapInjection(Instrumentation instrumentation, File folder);
+    @SuppressWarnings("overloads")
+    AgentBuilder with(InjectionStrategy injectionStrategy);
 
     /**
-     * Enables class injection of auxiliary classes into the bootstrap class loader which relies on {@code sun.misc.Unsafe}.
+     * Adds a decorator for the created class file transformer.
      *
-     * @return An agent builder with bootstrap class loader class injection enabled.
+     * @param transformerDecorator A decorator to wrap the created class file transformer.
+     * @return A new agent builder that applies the supplied transformer decorator.
      */
-    AgentBuilder enableUnsafeBootstrapInjection();
+    AgentBuilder with(TransformerDecorator transformerDecorator);
 
     /**
      * Enables the use of the given native method prefix for instrumented methods. Note that this prefix is also
@@ -263,13 +297,6 @@ public interface AgentBuilder {
     AgentBuilder disableNativeMethodPrefix();
 
     /**
-     * Disables injection of auxiliary classes into the bootstrap class path.
-     *
-     * @return A new instance of this agent builder which does not apply bootstrap class loader injection.
-     */
-    AgentBuilder disableBootstrapInjection();
-
-    /**
      * <p>
      * Disables all implicit changes on a class file that Byte Buddy would apply for certain instrumentations. When
      * using this option, it is no longer possible to rebase a method, i.e. intercepted methods are fully replaced. Furthermore,
@@ -277,6 +304,7 @@ public interface AgentBuilder {
      * </p>
      * <p>
      * This is equivalent to setting {@link InitializationStrategy.NoOp} and {@link TypeStrategy.Default#REDEFINE_FROZEN}
+     * (unless it is configured as {@link TypeStrategy.Default#DECORATE} where this strategy is retained)
      * as well as configuring the underlying {@link ByteBuddy} instance to use a {@link net.bytebuddy.implementation.Implementation.Context.Disabled}.
      * Using this strategy also configures Byte Buddy to create frozen instrumented types and discards any explicit configuration.
      * </p>
@@ -284,6 +312,44 @@ public interface AgentBuilder {
      * @return A new instance of this agent builder that does not apply any implicit changes to the received class file.
      */
     AgentBuilder disableClassFormatChanges();
+
+    /**
+     * <p>
+     * Warms up the generated {@link ClassFileTransformer} to trigger class loading of classes used by the transformer
+     * prior to its actual use. Ideally, warmup should include classes that cause a transformation and classes that
+     * are ignored. Warming up can be especially useful when transforming classes on the boot path, where circularity
+     * errors are more likely. At the same time, warming up might load classes that are expected to be unloaded
+     * when this agent is installed.
+     * </p>
+     * <p>
+     * <b>Important</b>: Warming up is applied just as a regular transformation and will also invoke the {@link Listener}.
+     * This is done to avoid that listener classes can cause circularities. It is the users responsibility to suppress
+     * such log output, if necessary.
+     * </p>
+     *
+     * @param type The types to include in the warmup.
+     * @return A new agent builder that considers the supplied classes in its warmup.
+     */
+    AgentBuilder warmUp(Class<?>... type);
+
+    /**
+     * <p>
+     * Warms up the generated {@link ClassFileTransformer} to trigger class loading of classes used by the transformer
+     * prior to its actual use. Ideally, warmup should include classes that cause a transformation and classes that
+     * are ignored. Warming up can be especially useful when transforming classes on the boot path, where circularity
+     * errors are more likely. At the same time, warming up might load classes that are expected to be unloaded
+     * when this agent is installed.
+     * </p>
+     * <p>
+     * <b>Important</b>: Warming up is applied just as a regular transformation and will also invoke the {@link Listener}.
+     * This is done to avoid that listener classes can cause circularities. It is the users responsibility to suppress
+     * such log output, if necessary.
+     * </p>
+     *
+     * @param types The types to include in the warmup.
+     * @return A new agent builder that considers the supplied classes in its warmup.
+     */
+    AgentBuilder warmUp(Collection<Class<?>> types);
 
     /**
      * Assures that all modules of the supplied types are read by the module of any instrumented type. If the current VM does not support
@@ -319,6 +385,7 @@ public interface AgentBuilder {
     /**
      * Assures that all modules of the supplied types are read by the module of any instrumented type and vice versa.
      * If the current VM does not support the Java module system, calling this method has no effect and this instance is returned.
+     * Setting this option will also ensure that the instrumented type's package is opened to the target module, if applicable.
      *
      * @param instrumentation The instrumentation instance that is used for adding a module read-dependency.
      * @param type            The types for which to assure their module-visibility from and to any instrumented class.
@@ -329,6 +396,7 @@ public interface AgentBuilder {
 
     /**
      * Assures that all supplied modules are read by the module of any instrumented type and vice versa.
+     * Setting this option will also ensure that the instrumented type's package is opened to the target module.
      *
      * @param instrumentation The instrumentation instance that is used for adding a module read-dependency.
      * @param module          The modules for which to assure their module-visibility from and to any instrumented class.
@@ -339,6 +407,7 @@ public interface AgentBuilder {
 
     /**
      * Assures that all supplied modules are read by the module of any instrumented type and vice versa.
+     * Setting this option will also ensure that the instrumented type's package is opened to the target module.
      *
      * @param instrumentation The instrumentation instance that is used for adding a module read-dependency.
      * @param modules         The modules for which to assure their module-visibility from and to any instrumented class.
@@ -353,9 +422,10 @@ public interface AgentBuilder {
      * If several matchers positively match a type only the latest registered matcher is considered for transformation.
      * </p>
      * <p>
-     * If this matcher is chained with additional subsequent matchers, this matcher is always executed first whereas the following matchers are
-     * executed in the order of their execution. If any matcher indicates that a type is to be matched, none of the following matchers is still queried.
-     * This behavior can be changed by {@link Identified.Extendable#asDecorator()} where subsequent type matchers are also applied.
+     * If this matcher is chained with additional subsequent matchers, any matcher is executed in registration order with matchers that were registered
+     * first being executed first. Doing so, later transformations can override transformations that are applied by this matcher. To avoid this, it is
+     * possible to register this transformation as terminal via {@link Identified.Extendable#asTerminalTransformation()} where no subsequent matchers
+     * are applied if this matcher matched a given type.
      * </p>
      * <p>
      * <b>Note</b>: When applying a matcher, regard the performance implications by {@link AgentBuilder#ignore(ElementMatcher)}. The former
@@ -379,9 +449,10 @@ public interface AgentBuilder {
      * If several matchers positively match a type only the latest registered matcher is considered for transformation.
      * </p>
      * <p>
-     * If this matcher is chained with additional subsequent matchers, this matcher is always executed first whereas the following matchers are
-     * executed in the order of their execution. If any matcher indicates that a type is to be matched, none of the following matchers is still queried.
-     * This behavior can be changed by {@link Identified.Extendable#asDecorator()} where subsequent type matchers are also applied.
+     * If this matcher is chained with additional subsequent matchers, any matcher is executed in registration order with matchers that were registered
+     * first being executed first. Doing so, later transformations can override transformations that are applied by this matcher. To avoid this, it is
+     * possible to register this transformation as terminal via {@link Identified.Extendable#asTerminalTransformation()} where no subsequent matchers
+     * are applied if this matcher matched a given type.
      * </p>
      * <p>
      * <b>Note</b>: When applying a matcher, regard the performance implications by {@link AgentBuilder#ignore(ElementMatcher)}. The former
@@ -409,9 +480,10 @@ public interface AgentBuilder {
      * If several matchers positively match a type only the latest registered matcher is considered for transformation.
      * </p>
      * <p>
-     * If this matcher is chained with additional subsequent matchers, this matcher is always executed first whereas the following matchers are
-     * executed in the order of their execution. If any matcher indicates that a type is to be matched, none of the following matchers is still queried.
-     * This behavior can be changed by {@link Identified.Extendable#asDecorator()} where subsequent type matchers are also applied.
+     * If this matcher is chained with additional subsequent matchers, any matcher is executed in registration order with matchers that were registered
+     * first being executed first. Doing so, later transformations can override transformations that are applied by this matcher. To avoid this, it is
+     * possible to register this transformation as terminal via {@link Identified.Extendable#asTerminalTransformation()} where no subsequent matchers
+     * are applied if this matcher matched a given type.
      * </p>
      * <p>
      * <b>Note</b>: When applying a matcher, regard the performance implications by {@link AgentBuilder#ignore(ElementMatcher)}. The former
@@ -445,8 +517,10 @@ public interface AgentBuilder {
      * If several matchers positively match a type only the latest registered matcher is considered for transformation.
      * </p>
      * <p>
-     * If this matcher is chained with additional subsequent matchers, this matcher is always executed first whereas the following matchers are
-     * executed in the order of their execution. If any matcher indicates that a type is to be matched, none of the following matchers is still queried.
+     * If this matcher is chained with additional subsequent matchers, any matcher is executed in registration order with matchers that were registered
+     * first being executed first. Doing so, later transformations can override transformations that are applied by this matcher. To avoid this, it is
+     * possible to register this transformation as terminal via {@link Identified.Extendable#asTerminalTransformation()} where no subsequent matchers
+     * are applied if this matcher matched a given type.
      * </p>
      * <p>
      * <b>Note</b>: When applying a matcher, regard the performance implications by {@link AgentBuilder#ignore(ElementMatcher)}. The former
@@ -595,7 +669,7 @@ public interface AgentBuilder {
     Ignored ignore(RawMatcher rawMatcher);
 
     /**
-     * Creates a {@link java.lang.instrument.ClassFileTransformer} that implements the configuration of this
+     * Creates a {@link ResettableClassFileTransformer} that implements the configuration of this
      * agent builder. When using a raw class file transformer, the {@link InstallationListener} callbacks are
      * not invoked and the set {@link RedefinitionStrategy} is not applied onto currently loaded classes.
      *
@@ -605,7 +679,7 @@ public interface AgentBuilder {
 
     /**
      * <p>
-     * Creates and installs a {@link java.lang.instrument.ClassFileTransformer} that implements the configuration of
+     * Creates and installs a {@link ResettableClassFileTransformer} that implements the configuration of
      * this agent builder with a given {@link java.lang.instrument.Instrumentation}. If retransformation is enabled,
      * the installation also causes all loaded types to be retransformed.
      * </p>
@@ -620,13 +694,94 @@ public interface AgentBuilder {
     ResettableClassFileTransformer installOn(Instrumentation instrumentation);
 
     /**
-     * Creates and installs a {@link java.lang.instrument.ClassFileTransformer} that implements the configuration of
-     * this agent builder with the Byte Buddy-agent which must be installed prior to calling this method.
+     * <p>
+     * Creates and installs a {@link ResettableClassFileTransformer} that implements the configuration of
+     * this agent builder with the Byte Buddy-agent which must be installed prior to calling this method. If retransformation
+     * is enabled, the installation also causes all loaded types to be retransformed.
+     * </p>
+     * <p>
+     * In order to assure the correct handling of the {@link InstallationListener}, an uninstallation should be applied
+     * via the {@link ResettableClassFileTransformer}'s {@code reset} methods.
+     * </p>
      *
      * @return The installed class file transformer.
      * @see AgentBuilder#installOn(Instrumentation)
      */
     ResettableClassFileTransformer installOnByteBuddyAgent();
+
+    /**
+     * <p>
+     * Creates and installs a {@link ResettableClassFileTransformer} that implements the configuration of
+     * this agent builder with a given {@link java.lang.instrument.Instrumentation}. If retransformation is enabled,
+     * the installation also causes all loaded types to be retransformed which have changed compared to the previous
+     * class file transformer that is provided as an argument. Without specification, {@link PatchMode#OVERLAP} is used.
+     * </p>
+     * <p>
+     * In order to assure the correct handling of the {@link InstallationListener}, an uninstallation should be applied
+     * via the {@link ResettableClassFileTransformer}'s {@code reset} methods.
+     * </p>
+     *
+     * @param instrumentation      The instrumentation on which this agent builder's configuration is to be installed.
+     * @param classFileTransformer The class file transformer that is being patched.
+     * @return The installed class file transformer.
+     */
+    ResettableClassFileTransformer patchOn(Instrumentation instrumentation, ResettableClassFileTransformer classFileTransformer);
+
+    /**
+     * <p>
+     * Creates and installs a {@link ResettableClassFileTransformer} that implements the configuration of
+     * this agent builder with a given {@link java.lang.instrument.Instrumentation}. If retransformation is enabled,
+     * the installation also causes all loaded types to be retransformed which have changed compared to the previous
+     * class file transformer that is provided as an argument.
+     * </p>
+     * <p>
+     * In order to assure the correct handling of the {@link InstallationListener}, an uninstallation should be applied
+     * via the {@link ResettableClassFileTransformer}'s {@code reset} methods.
+     * </p>
+     *
+     * @param instrumentation      The instrumentation on which this agent builder's configuration is to be installed.
+     * @param classFileTransformer The class file transformer that is being patched.
+     * @param patchMode            The patch mode to apply.
+     * @return The installed class file transformer.
+     */
+    ResettableClassFileTransformer patchOn(Instrumentation instrumentation, ResettableClassFileTransformer classFileTransformer, PatchMode patchMode);
+
+    /**
+     * <p>
+     * Creates and installs a {@link ResettableClassFileTransformer} that implements the configuration of
+     * this agent builder with the Byte Buddy-agent which must be installed prior to calling this method. If retransformation
+     * is enabled, the installation also causes all loaded types to be retransformed which have changed compared to the previous
+     * class file transformer that is provided as an argument. Without specification, {@link PatchMode#OVERLAP} is used.
+     * </p>
+     * <p>
+     * In order to assure the correct handling of the {@link InstallationListener}, an uninstallation should be applied
+     * via the {@link ResettableClassFileTransformer}'s {@code reset} methods.
+     * </p>
+     *
+     * @param classFileTransformer The class file transformer that is being patched.
+     * @return The installed class file transformer.
+     * @see AgentBuilder#patchOn(Instrumentation, ResettableClassFileTransformer)
+     */
+    ResettableClassFileTransformer patchOnByteBuddyAgent(ResettableClassFileTransformer classFileTransformer);
+
+    /**
+     * <p>
+     * Creates and installs a {@link ResettableClassFileTransformer} that implements the configuration of
+     * this agent builder with the Byte Buddy-agent which must be installed prior to calling this method. If retransformation
+     * is enabled, the installation also causes all loaded types to be retransformed which have changed compared to the previous
+     * class file transformer that is provided as an argument.
+     * </p>
+     * <p>
+     * In order to assure the correct handling of the {@link InstallationListener}, an uninstallation should be applied
+     * via the {@link ResettableClassFileTransformer}'s {@code reset} methods.
+     * </p>
+     *
+     * @param classFileTransformer The class file transformer that is being patched.
+     * @param patchMode            The patch mode to apply.
+     * @return The installed class file transformer.
+     * @see AgentBuilder#patchOn(Instrumentation, ResettableClassFileTransformer, PatchMode)
+     */
+    ResettableClassFileTransformer patchOnByteBuddyAgent(ResettableClassFileTransformer classFileTransformer, PatchMode patchMode);
 
     /**
      * An abstraction for extending a matcher.
@@ -710,48 +865,6 @@ public interface AgentBuilder {
          * @return A chained matcher.
          */
         T or(RawMatcher rawMatcher);
-
-        /**
-         * An abstract base implementation of a matchable.
-         *
-         * @param <S> The type that is produced by chaining a matcher.
-         */
-        abstract class AbstractBase<S extends Matchable<S>> implements Matchable<S> {
-
-            @Override
-            public S and(ElementMatcher<? super TypeDescription> typeMatcher) {
-                return and(typeMatcher, any());
-            }
-
-            @Override
-            public S and(ElementMatcher<? super TypeDescription> typeMatcher, ElementMatcher<? super ClassLoader> classLoaderMatcher) {
-                return and(typeMatcher, classLoaderMatcher, any());
-            }
-
-            @Override
-            public S and(ElementMatcher<? super TypeDescription> typeMatcher,
-                         ElementMatcher<? super ClassLoader> classLoaderMatcher,
-                         ElementMatcher<? super JavaModule> moduleMatcher) {
-                return and(new RawMatcher.ForElementMatchers(typeMatcher, classLoaderMatcher, moduleMatcher));
-            }
-
-            @Override
-            public S or(ElementMatcher<? super TypeDescription> typeMatcher) {
-                return or(typeMatcher, any());
-            }
-
-            @Override
-            public S or(ElementMatcher<? super TypeDescription> typeMatcher, ElementMatcher<? super ClassLoader> classLoaderMatcher) {
-                return or(typeMatcher, classLoaderMatcher, any());
-            }
-
-            @Override
-            public S or(ElementMatcher<? super TypeDescription> typeMatcher,
-                        ElementMatcher<? super ClassLoader> classLoaderMatcher,
-                        ElementMatcher<? super JavaModule> moduleMatcher) {
-                return or(new RawMatcher.ForElementMatchers(typeMatcher, classLoaderMatcher, moduleMatcher));
-            }
-        }
     }
 
     /**
@@ -783,23 +896,544 @@ public interface AgentBuilder {
         RedefinitionListenable with(RedefinitionStrategy.Listener redefinitionListener);
 
         /**
-         * Enables resubmission of failed transformations by applying a retransformation of the loaded type. This can be meaningful if
-         * class files cannot be located from the class loader as a resource where the loaded type becomes available.
+         * Specifies resubmission for given unloaded types or types that fail upon an exception during instrumentation.
          *
-         * @param resubmissionScheduler A scheduler which is responsible for scheduling the resubmission job.
-         * @return A new instance of this agent builder that applies resubmission.
+         * @param resubmissionScheduler The resubmission scheduler to use.
+         * @return A new builder to determine what types should be resubmitted given the supplied resubmission scheduler.
          */
-        AgentBuilder withResubmission(RedefinitionStrategy.ResubmissionScheduler resubmissionScheduler);
+        WithoutResubmissionSpecification withResubmission(RedefinitionStrategy.ResubmissionScheduler resubmissionScheduler);
 
         /**
-         * Enables resubmission of failed transformations by applying a retransformation of the loaded type. This can be meaningful if
-         * class files cannot be located from the class loader as a resource where the loaded type becomes available.
-         *
-         * @param resubmissionScheduler A scheduler which is responsible for scheduling the resubmission job.
-         * @param matcher               A matcher that filters throwable instances where non-matched throwables are not triggering a resubmission.
-         * @return A new instance of this agent builder that applies resubmission.
+         * A matcher that determines if types should be resubmitted if it is not yet loaded and if an exception is raised.
          */
-        AgentBuilder withResubmission(RedefinitionStrategy.ResubmissionScheduler resubmissionScheduler, ElementMatcher<? super Throwable> matcher);
+        interface ResubmissionOnErrorMatcher {
+
+            /**
+             * Returns {@code true} if a type should be resubmitted if it is not yet loaded and an exception occurs during instrumentation.
+             *
+             * @param throwable   The exception being raised.
+             * @param typeName    The name of the instrumented type.
+             * @param classLoader The class loader of the instrumented type or {@code null} if the type is loaded by the bootstrap class loader.
+             * @param module      The module of the instrumented type or {@code null} if the current VM does not support modules.
+             * @return {@code true} if the type should be resubmitted.
+             */
+            boolean matches(Throwable throwable, String typeName, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module);
+
+            /**
+             * A trivial matcher for resubmission upon an exception.
+             */
+            enum Trivial implements ResubmissionOnErrorMatcher {
+
+                /**
+                 * Always matches a type.
+                 */
+                MATCHING(true),
+
+                /**
+                 * Never matches a type.
+                 */
+                NON_MATCHING(false);
+
+                /**
+                 * {@code true} if this matcher is matching.
+                 */
+                private final boolean matching;
+
+                /**
+                 * Creates a new trivial matcher for a resubmission upon an exception.
+                 *
+                 * @param matching {@code true} if this matcher is matching.
+                 */
+                Trivial(boolean matching) {
+                    this.matching = matching;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public boolean matches(Throwable throwable, String typeName, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module) {
+                    return matching;
+                }
+            }
+
+            /**
+             * A matcher for resubmission upon an error that matches both of the supplied delegate matchers.
+             */
+            @HashCodeAndEqualsPlugin.Enhance
+            class Conjunction implements ResubmissionOnErrorMatcher {
+
+                /**
+                 * The represented matchers in their application order.
+                 */
+                private final List<ResubmissionOnErrorMatcher> matchers;
+
+                /**
+                 * Creates a new conjunction for a resubmission matcher upon an error.
+                 *
+                 * @param matcher The represented matchers in their application order.
+                 */
+                public Conjunction(ResubmissionOnErrorMatcher... matcher) {
+                    this(Arrays.asList(matcher));
+                }
+
+                /**
+                 * Creates a new conjunction for a resubmission matcher upon an error.
+                 *
+                 * @param matchers The represented matchers in their application order.
+                 */
+                public Conjunction(List<? extends ResubmissionOnErrorMatcher> matchers) {
+                    this.matchers = new ArrayList<ResubmissionOnErrorMatcher>(matchers.size());
+                    for (ResubmissionOnErrorMatcher matcher : matchers) {
+                        if (matcher instanceof Conjunction) {
+                            this.matchers.addAll(((Conjunction) matcher).matchers);
+                        } else if (matcher != Trivial.MATCHING) {
+                            this.matchers.add(matcher);
+                        }
+                    }
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public boolean matches(Throwable throwable, String typeName, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module) {
+                    for (ResubmissionOnErrorMatcher matcher : matchers) {
+                        if (!matcher.matches(throwable, typeName, classLoader, module)) {
+                            return false;
+                        }
+                    }
+                    return true;
+                }
+            }
+
+            /**
+             * A matcher for resubmission upon an error that matches either of the supplied delegate matchers.
+             */
+            @HashCodeAndEqualsPlugin.Enhance
+            class Disjunction implements ResubmissionOnErrorMatcher {
+
+                /**
+                 * The represented matchers in their application order.
+                 */
+                private final List<ResubmissionOnErrorMatcher> matchers;
+
+                /**
+                 * Creates a new disjunction for a resubmission matcher upon an error.
+                 *
+                 * @param matcher The represented matchers in their application order.
+                 */
+                public Disjunction(ResubmissionOnErrorMatcher... matcher) {
+                    this(Arrays.asList(matcher));
+                }
+
+                /**
+                 * Creates a new conjunction for a resubmission matcher upon an error.
+                 *
+                 * @param matchers The represented matchers in their application order.
+                 */
+                public Disjunction(List<? extends ResubmissionOnErrorMatcher> matchers) {
+                    this.matchers = new ArrayList<ResubmissionOnErrorMatcher>(matchers.size());
+                    for (ResubmissionOnErrorMatcher matcher : matchers) {
+                        if (matcher instanceof Disjunction) {
+                            this.matchers.addAll(((Disjunction) matcher).matchers);
+                        } else if (matcher != Trivial.NON_MATCHING) {
+                            this.matchers.add(matcher);
+                        }
+                    }
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public boolean matches(Throwable throwable, String typeName, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module) {
+                    for (ResubmissionOnErrorMatcher matcher : matchers) {
+                        if (matcher.matches(throwable, typeName, classLoader, module)) {
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+            }
+
+            /**
+             * A matcher for resubmission upon error that uses element matchers for each argument to determine a resubmission.
+             */
+            @HashCodeAndEqualsPlugin.Enhance
+            class ForElementMatchers implements ResubmissionOnErrorMatcher {
+
+                /**
+                 * The matcher to use for the exception that was caused.
+                 */
+                private final ElementMatcher<? super Throwable> exceptionMatcher;
+
+                /**
+                 * The matcher to use for the instrumented type's name.
+                 */
+                private final ElementMatcher<String> typeNameMatcher;
+
+                /**
+                 * The matcher to use for the instrumented type's class loader.
+                 */
+                private final ElementMatcher<? super ClassLoader> classLoaderMatcher;
+
+                /**
+                 * The matcher to use for the instrumented type's module.
+                 */
+                private final ElementMatcher<? super JavaModule> moduleMatcher;
+
+                /**
+                 * Creates a new matcher for resubmission upon an exception that is using element matchers.
+                 *
+                 * @param exceptionMatcher   The matcher to use for the exception that was caused.
+                 * @param typeNameMatcher    The matcher to use for the instrumented type's name.
+                 * @param classLoaderMatcher The matcher to use for the instrumented type's class loader.
+                 * @param moduleMatcher      The matcher to use for the instrumented type's module.
+                 */
+                public ForElementMatchers(ElementMatcher<? super Throwable> exceptionMatcher,
+                                          ElementMatcher<String> typeNameMatcher,
+                                          ElementMatcher<? super ClassLoader> classLoaderMatcher,
+                                          ElementMatcher<? super JavaModule> moduleMatcher) {
+                    this.exceptionMatcher = exceptionMatcher;
+                    this.typeNameMatcher = typeNameMatcher;
+                    this.classLoaderMatcher = classLoaderMatcher;
+                    this.moduleMatcher = moduleMatcher;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public boolean matches(Throwable throwable, String typeName, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module) {
+                    return exceptionMatcher.matches(throwable)
+                            && typeNameMatcher.matches(typeName)
+                            && classLoaderMatcher.matches(classLoader)
+                            && moduleMatcher.matches(module);
+                }
+            }
+        }
+
+        /**
+         * A matcher that determines if types should be resubmitted if it is not yet loaded.
+         */
+        interface ResubmissionImmediateMatcher {
+
+            /**
+             * Returns {@code true} if a type should be resubmitted if it is not yet loaded.
+             *
+             * @param typeName    The name of the instrumented type.
+             * @param classLoader The class loader of the instrumented type or {@code null} if the type is loaded by the bootstrap class loader.
+             * @param module      The module of the instrumented type or {@code null} if the current VM does not support modules.
+             * @return {@code true} if the type should be resubmitted.
+             */
+            boolean matches(String typeName, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module);
+
+            /**
+             * A trivial matcher for immediate resubmission.
+             */
+            enum Trivial implements ResubmissionImmediateMatcher {
+
+                /**
+                 * Always matches a type.
+                 */
+                MATCHING(true),
+
+                /**
+                 * Never matches a type.
+                 */
+                NON_MATCHING(false);
+
+                /**
+                 * {@code true} if this matcher is matching.
+                 */
+                private final boolean matching;
+
+                /**
+                 * Creates a new trivial matcher for immediate resubmission.
+                 *
+                 * @param matching {@code true} if this matcher is matching.
+                 */
+                Trivial(boolean matching) {
+                    this.matching = matching;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public boolean matches(String typeName, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module) {
+                    return matching;
+                }
+            }
+
+            /**
+             * A matcher for immediate resubmission that matches both of the supplied delegate matchers.
+             */
+            @HashCodeAndEqualsPlugin.Enhance
+            class Conjunction implements ResubmissionImmediateMatcher {
+
+                /**
+                 * The matchers in their application order.
+                 */
+                private final List<ResubmissionImmediateMatcher> matchers;
+
+                /**
+                 * Creates a new conjunction for an immediate resubmission matcher.
+                 *
+                 * @param matcher The matchers in their application order.
+                 */
+                public Conjunction(ResubmissionImmediateMatcher... matcher) {
+                    this(Arrays.asList(matcher));
+                }
+
+                /**
+                 * Creates a new conjunction for an immediate resubmission matcher.
+                 *
+                 * @param matchers The matchers in their application order.
+                 */
+                public Conjunction(List<? extends ResubmissionImmediateMatcher> matchers) {
+                    this.matchers = new ArrayList<ResubmissionImmediateMatcher>(matchers.size());
+                    for (ResubmissionImmediateMatcher matcher : matchers) {
+                        if (matcher instanceof Conjunction) {
+                            this.matchers.addAll(((Conjunction) matcher).matchers);
+                        } else if (matcher != Trivial.NON_MATCHING) {
+                            this.matchers.add(matcher);
+                        }
+                    }
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public boolean matches(String typeName, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module) {
+                    for (ResubmissionImmediateMatcher matcher : matchers) {
+                        if (!matcher.matches(typeName, classLoader, module)) {
+                            return false;
+                        }
+                    }
+                    return true;
+                }
+            }
+
+            /**
+             * A matcher for immediate resubmission that matches either of the supplied delegate matchers.
+             */
+            @HashCodeAndEqualsPlugin.Enhance
+            class Disjunction implements ResubmissionImmediateMatcher {
+
+                /**
+                 * The matchers in their application order.
+                 */
+                private final List<ResubmissionImmediateMatcher> matchers;
+
+                /**
+                 * Creates a new conjunction for an immediate resubmission matcher.
+                 *
+                 * @param matcher The matchers in their application order.
+                 */
+                public Disjunction(ResubmissionImmediateMatcher... matcher) {
+                    this(Arrays.asList(matcher));
+                }
+
+                /**
+                 * Creates a new disjunction for an immediate resubmission matcher.
+                 *
+                 * @param matchers The matchers in their application order.
+                 */
+                public Disjunction(List<? extends ResubmissionImmediateMatcher> matchers) {
+                    this.matchers = new ArrayList<ResubmissionImmediateMatcher>(matchers.size());
+                    for (ResubmissionImmediateMatcher matcher : matchers) {
+                        if (matcher instanceof Disjunction) {
+                            this.matchers.addAll(((Disjunction) matcher).matchers);
+                        } else if (matcher != Trivial.NON_MATCHING) {
+                            this.matchers.add(matcher);
+                        }
+                    }
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public boolean matches(String typeName, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module) {
+                    for (ResubmissionImmediateMatcher matcher : matchers) {
+                        if (matcher.matches(typeName, classLoader, module)) {
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+            }
+
+            /**
+             * A matcher for immediate resubmission that uses element matchers for each argument to determine a resubmission.
+             */
+            @HashCodeAndEqualsPlugin.Enhance
+            class ForElementMatchers implements ResubmissionImmediateMatcher {
+
+                /**
+                 * The matcher to use for the instrumented type's name.
+                 */
+                private final ElementMatcher<String> typeNameMatcher;
+
+                /**
+                 * The matcher to use for the instrumented type's class loader.
+                 */
+                private final ElementMatcher<? super ClassLoader> classLoaderMatcher;
+
+                /**
+                 * The matcher to use for the instrumented type's module.
+                 */
+                private final ElementMatcher<? super JavaModule> moduleMatcher;
+
+                /**
+                 * Creates a new matcher for immediate resubmission that is using element matchers.
+                 *
+                 * @param typeNameMatcher    The matcher to use for the instrumented type's name.
+                 * @param classLoaderMatcher The matcher to use for the instrumented type's class loader.
+                 * @param moduleMatcher      The matcher to use for the instrumented type's module.
+                 */
+                public ForElementMatchers(ElementMatcher<String> typeNameMatcher,
+                                          ElementMatcher<? super ClassLoader> classLoaderMatcher,
+                                          ElementMatcher<? super JavaModule> moduleMatcher) {
+                    this.typeNameMatcher = typeNameMatcher;
+                    this.classLoaderMatcher = classLoaderMatcher;
+                    this.moduleMatcher = moduleMatcher;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public boolean matches(String typeName, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module) {
+                    return typeNameMatcher.matches(typeName)
+                            && classLoaderMatcher.matches(classLoader)
+                            && moduleMatcher.matches(module);
+                }
+            }
+        }
+
+        /**
+         * An {@link AgentBuilder} specification that requires a resubmission specification.
+         */
+        interface WithoutResubmissionSpecification {
+
+            /**
+             * Specifies that transformations of unloaded types that yield an error are resubmitted as transformation of the
+             * loaded type.
+             *
+             * @return A new agent builder that allows for further resubmission specifications.
+             */
+            WithResubmissionSpecification resubmitOnError();
+
+            /**
+             * Specifies that transformations of unloaded types that yield an error are resubmitted as transformation of the
+             * loaded type, given that the specified matcher matches the type in question.
+             *
+             * @param exceptionMatcher Determines if a type should be resubmitted upon a given exception.
+             * @return A new agent builder that allows for further resubmission specifications.
+             */
+            WithResubmissionSpecification resubmitOnError(ElementMatcher<? super Throwable> exceptionMatcher);
+
+            /**
+             * Specifies that transformations of unloaded types that yield an error are resubmitted as transformation of the
+             * loaded type, given that the specified matchers match the type in question.
+             *
+             * @param exceptionMatcher Determines if a type should be resubmitted upon a given exception.
+             * @param typeNameMatcher  Determines if a type should be resubmitted if the type has a given name.
+             * @return A new agent builder that allows for further resubmission specifications.
+             */
+            WithResubmissionSpecification resubmitOnError(ElementMatcher<? super Throwable> exceptionMatcher,
+                                                          ElementMatcher<String> typeNameMatcher);
+
+            /**
+             * Specifies that transformations of unloaded types that yield an error are resubmitted as transformation of the
+             * loaded type, given that the specified matchers match the type in question.
+             *
+             * @param exceptionMatcher   Determines if a type should be resubmitted upon a given exception.
+             * @param typeNameMatcher    Determines if a type should be resubmitted if the type has a given name.
+             * @param classLoaderMatcher Determines if a type should be resubmitted upon being loaded by a given class loader.
+             * @return A new agent builder that allows for further resubmission specifications.
+             */
+            WithResubmissionSpecification resubmitOnError(ElementMatcher<? super Throwable> exceptionMatcher,
+                                                          ElementMatcher<String> typeNameMatcher,
+                                                          ElementMatcher<? super ClassLoader> classLoaderMatcher);
+
+            /**
+             * Specifies that transformations of unloaded types that yield an error are resubmitted as transformation of the
+             * loaded type, given that the specified matchers match the type in question.
+             *
+             * @param exceptionMatcher   Determines if a type should be resubmitted upon a given exception.
+             * @param typeNameMatcher    Determines if a type should be resubmitted if the type has a given name.
+             * @param classLoaderMatcher Determines if a type should be resubmitted upon being loaded by a given class loader.
+             * @param moduleMatcher      Determines if a type should be resubmitted upon a given Java module.
+             * @return A new agent builder that allows for further resubmission specifications.
+             */
+            WithResubmissionSpecification resubmitOnError(ElementMatcher<? super Throwable> exceptionMatcher,
+                                                          ElementMatcher<String> typeNameMatcher,
+                                                          ElementMatcher<? super ClassLoader> classLoaderMatcher,
+                                                          ElementMatcher<? super JavaModule> moduleMatcher);
+
+            /**
+             * Specifies that transformations of unloaded types that yield an error are resubmitted as transformation of the
+             * loaded type, given that the specified matcher matches the type in question.
+             *
+             * @param matcher Determines if a type should be resubmitted.
+             * @return A new agent builder that allows for further resubmission specifications.
+             */
+            WithResubmissionSpecification resubmitOnError(ResubmissionOnErrorMatcher matcher);
+
+            /**
+             * Specifies that transformations of unloaded types should not be transformed when they are loaded for the first
+             * time but should rather be resubmitted after they are loaded.
+             *
+             * @return A new agent builder that allows for further resubmission specifications.
+             */
+            WithResubmissionSpecification resubmitImmediate();
+
+            /**
+             * Specifies that transformations of unloaded types should not be transformed when they are loaded for the first
+             * time but should rather be resubmitted after they are loaded.
+             *
+             * @param typeNameMatcher Determines if a type should be resubmitted if the type has a given name.
+             * @return A new agent builder that allows for further resubmission specifications.
+             */
+            WithResubmissionSpecification resubmitImmediate(ElementMatcher<String> typeNameMatcher);
+
+            /**
+             * Specifies that transformations of unloaded types should not be transformed when they are loaded for the first
+             * time but should rather be resubmitted after they are loaded.
+             *
+             * @param typeNameMatcher    Determines if a type should be resubmitted if the type has a given name.
+             * @param classLoaderMatcher Determines if a type should be resubmitted upon being loaded by a given class loader.
+             * @return A new agent builder that allows for further resubmission specifications.
+             */
+            WithResubmissionSpecification resubmitImmediate(ElementMatcher<String> typeNameMatcher,
+                                                            ElementMatcher<? super ClassLoader> classLoaderMatcher);
+
+            /**
+             * Specifies that transformations of unloaded types should not be transformed when they are loaded for the first
+             * time but should rather be resubmitted after they are loaded.
+             *
+             * @param typeNameMatcher    Determines if a type should be resubmitted if the type has a given name.
+             * @param classLoaderMatcher Determines if a type should be resubmitted upon being loaded by a given class loader.
+             * @param moduleMatcher      Determines if a type should be resubmitted upon a given Java module.
+             * @return A new agent builder that allows for further resubmission specifications.
+             */
+            WithResubmissionSpecification resubmitImmediate(ElementMatcher<String> typeNameMatcher,
+                                                            ElementMatcher<? super ClassLoader> classLoaderMatcher,
+                                                            ElementMatcher<? super JavaModule> moduleMatcher);
+
+            /**
+             * Specifies that transformations of unloaded types should not be transformed when they are loaded for the first
+             * time but should rather be resubmitted after they are loaded.
+             *
+             * @param matcher Determines if a type should be resubmitted.
+             * @return A new agent builder that allows for further resubmission specifications.
+             */
+            WithResubmissionSpecification resubmitImmediate(ResubmissionImmediateMatcher matcher);
+        }
+
+        /**
+         * A complete but extendable resubmission specification.
+         */
+        interface WithResubmissionSpecification extends WithoutResubmissionSpecification, AgentBuilder {
+            /* union type */
+        }
 
         /**
          * An agent builder configuration strategy that allows the definition of a discovery strategy.
@@ -820,6 +1454,7 @@ public interface AgentBuilder {
              * @param redefinitionDiscoveryStrategy The redefinition discovery strategy to use.
              * @return A new instance of this agent builder which makes use of the specified discovery strategy.
              */
+            @SuppressWarnings("overloads")
             RedefinitionListenable with(RedefinitionStrategy.DiscoveryStrategy redefinitionDiscoveryStrategy);
         }
 
@@ -836,6 +1471,7 @@ public interface AgentBuilder {
              * @param redefinitionBatchAllocator The batch allocator to use.
              * @return A new instance of this agent builder which makes use of the specified batch allocator.
              */
+            @SuppressWarnings("overloads")
             WithImplicitDiscoveryStrategy with(RedefinitionStrategy.BatchAllocator redefinitionBatchAllocator);
         }
     }
@@ -871,20 +1507,14 @@ public interface AgentBuilder {
         interface Extendable extends AgentBuilder, Identified {
 
             /**
-             * <p>
-             * Applies the specified transformation as a decorative transformation. For a decorative transformation, the supplied
-             * transformer is prepended to any previous transformation that also matches the instrumented type, i.e. both transformations
-             * are supplied. This procedure is repeated until a transformer is reached that matches the instrumented type but is not
-             * defined as decorating after which no further transformations are considered. If all matching transformations are declared
-             * as decorating, all matching transformers are applied.
-             * </p>
-             * <p>
-             * <b>Note</b>: A decorating transformer is applied <b>after</b> previously registered transformers.
-             * </p>
+             * Applies the previously defined transformation as terminal such that no subsequent transformers are applied even
+             * if their matchers would include the type that was matched for applying this transformer. If this option is not set,
+             * subsequent transformations are applied after this transformation such that it is possible that they override non-additive
+             * type transformations.
              *
-             * @return A new instance of this agent builder with the specified transformation being applied as a decorator.
+             * @return A new agent builder that applies the previously configured transformer terminally.
              */
-            AgentBuilder asDecorator();
+            AgentBuilder asTerminalTransformation();
         }
     }
 
@@ -910,9 +1540,9 @@ public interface AgentBuilder {
          * be applied for the given {@code typeDescription}.
          */
         boolean matches(TypeDescription typeDescription,
-                        ClassLoader classLoader,
-                        JavaModule module,
-                        Class<?> classBeingRedefined,
+                        @MaybeNull ClassLoader classLoader,
+                        @MaybeNull JavaModule module,
+                        @MaybeNull Class<?> classBeingRedefined,
                         ProtectionDomain protectionDomain);
 
         /**
@@ -944,11 +1574,13 @@ public interface AgentBuilder {
                 this.matches = matches;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public boolean matches(TypeDescription typeDescription,
-                                   ClassLoader classLoader,
-                                   JavaModule module,
-                                   Class<?> classBeingRedefined,
+                                   @MaybeNull ClassLoader classLoader,
+                                   @MaybeNull JavaModule module,
+                                   @MaybeNull Class<?> classBeingRedefined,
                                    ProtectionDomain protectionDomain) {
                 return matches;
             }
@@ -983,11 +1615,13 @@ public interface AgentBuilder {
                 this.unloaded = unloaded;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public boolean matches(TypeDescription typeDescription,
-                                   ClassLoader classLoader,
-                                   JavaModule module,
-                                   Class<?> classBeingRedefined,
+                                   @MaybeNull ClassLoader classLoader,
+                                   @MaybeNull JavaModule module,
+                                   @MaybeNull Class<?> classBeingRedefined,
                                    ProtectionDomain protectionDomain) {
                 return classBeingRedefined == null == unloaded;
             }
@@ -1004,11 +1638,13 @@ public interface AgentBuilder {
              */
             INSTANCE;
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public boolean matches(TypeDescription typeDescription,
-                                   ClassLoader classLoader,
-                                   JavaModule module,
-                                   Class<?> classBeingRedefined,
+                                   @MaybeNull ClassLoader classLoader,
+                                   @MaybeNull JavaModule module,
+                                   @MaybeNull Class<?> classBeingRedefined,
                                    ProtectionDomain protectionDomain) {
                 if (classBeingRedefined != null) {
                     try {
@@ -1034,83 +1670,113 @@ public interface AgentBuilder {
         /**
          * A conjunction of two raw matchers.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class Conjunction implements RawMatcher {
 
             /**
-             * The left matcher which is applied first.
+             * The matchers to apply in their application order.
              */
-            private final RawMatcher left;
-
-            /**
-             * The right matcher which is applied second.
-             */
-            private final RawMatcher right;
+            private final List<RawMatcher> matchers;
 
             /**
              * Creates a new conjunction of two raw matchers.
              *
-             * @param left  The left matcher which is applied first.
-             * @param right The right matcher which is applied second.
+             * @param matcher The matchers to apply in their application order.
              */
-            protected Conjunction(RawMatcher left, RawMatcher right) {
-                this.left = left;
-                this.right = right;
+            protected Conjunction(RawMatcher... matcher) {
+                this(Arrays.asList(matcher));
             }
 
-            @Override
+            /**
+             * Creates a new conjunction of two raw matchers.
+             *
+             * @param matchers The matchers to apply in their application order.
+             */
+            protected Conjunction(List<? extends RawMatcher> matchers) {
+                this.matchers = new ArrayList<RawMatcher>(matchers.size());
+                for (RawMatcher matcher : matchers) {
+                    if (matcher instanceof Conjunction) {
+                        this.matchers.addAll(((Conjunction) matcher).matchers);
+                    } else if (matcher != Trivial.MATCHING) {
+                        this.matchers.add(matcher);
+                    }
+                }
+            }
+
+            /**
+             * {@inheritDoc}
+             */
             public boolean matches(TypeDescription typeDescription,
-                                   ClassLoader classLoader,
-                                   JavaModule module,
-                                   Class<?> classBeingRedefined,
+                                   @MaybeNull ClassLoader classLoader,
+                                   @MaybeNull JavaModule module,
+                                   @MaybeNull Class<?> classBeingRedefined,
                                    ProtectionDomain protectionDomain) {
-                return left.matches(typeDescription, classLoader, module, classBeingRedefined, protectionDomain)
-                        && right.matches(typeDescription, classLoader, module, classBeingRedefined, protectionDomain);
+                for (RawMatcher matcher : matchers) {
+                    if (!matcher.matches(typeDescription, classLoader, module, classBeingRedefined, protectionDomain)) {
+                        return false;
+                    }
+                }
+                return true;
             }
         }
 
         /**
          * A disjunction of two raw matchers.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class Disjunction implements RawMatcher {
 
             /**
-             * The left matcher which is applied first.
+             * The matchers to apply in their application order.
              */
-            private final RawMatcher left;
+            private final List<RawMatcher> matchers;
 
             /**
-             * The right matcher which is applied second.
-             */
-            private final RawMatcher right;
-
-            /**
-             * Creates a new disjunction of two raw matchers.
+             * Creates a new conjunction of two raw matchers.
              *
-             * @param left  The left matcher which is applied first.
-             * @param right The right matcher which is applied second.
+             * @param matcher The matchers to apply in their application order.
              */
-            protected Disjunction(RawMatcher left, RawMatcher right) {
-                this.left = left;
-                this.right = right;
+            protected Disjunction(RawMatcher... matcher) {
+                this(Arrays.asList(matcher));
             }
 
-            @Override
+            /**
+             * Creates a new conjunction of two raw matchers.
+             *
+             * @param matchers The matchers to apply in their application order.
+             */
+            protected Disjunction(List<? extends RawMatcher> matchers) {
+                this.matchers = new ArrayList<RawMatcher>(matchers.size());
+                for (RawMatcher matcher : matchers) {
+                    if (matcher instanceof Disjunction) {
+                        this.matchers.addAll(((Disjunction) matcher).matchers);
+                    } else if (matcher != Trivial.NON_MATCHING) {
+                        this.matchers.add(matcher);
+                    }
+                }
+            }
+
+            /**
+             * {@inheritDoc}
+             */
             public boolean matches(TypeDescription typeDescription,
-                                   ClassLoader classLoader,
-                                   JavaModule module,
-                                   Class<?> classBeingRedefined,
+                                   @MaybeNull ClassLoader classLoader,
+                                   @MaybeNull JavaModule module,
+                                   @MaybeNull Class<?> classBeingRedefined,
                                    ProtectionDomain protectionDomain) {
-                return left.matches(typeDescription, classLoader, module, classBeingRedefined, protectionDomain)
-                        || right.matches(typeDescription, classLoader, module, classBeingRedefined, protectionDomain);
+                for (RawMatcher matcher : matchers) {
+                    if (matcher.matches(typeDescription, classLoader, module, classBeingRedefined, protectionDomain)) {
+                        return true;
+                    }
+                }
+                return false;
             }
         }
 
         /**
          * A raw matcher that inverts a raw matcher's result.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class Inversion implements RawMatcher {
 
             /**
@@ -1127,11 +1793,13 @@ public interface AgentBuilder {
                 this.matcher = matcher;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public boolean matches(TypeDescription typeDescription,
-                                   ClassLoader classLoader,
-                                   JavaModule module,
-                                   Class<?> classBeingRedefined,
+                                   @MaybeNull ClassLoader classLoader,
+                                   @MaybeNull JavaModule module,
+                                   @MaybeNull Class<?> classBeingRedefined,
                                    ProtectionDomain protectionDomain) {
                 return !matcher.matches(typeDescription, classLoader, module, classBeingRedefined, protectionDomain);
             }
@@ -1142,7 +1810,7 @@ public interface AgentBuilder {
          * and its {@link java.lang.ClassLoader} against two suitable matchers in order to determine if the matched
          * type should be instrumented.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class ForElementMatchers implements RawMatcher {
 
             /**
@@ -1201,11 +1869,13 @@ public interface AgentBuilder {
                 this.moduleMatcher = moduleMatcher;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public boolean matches(TypeDescription typeDescription,
-                                   ClassLoader classLoader,
-                                   JavaModule module,
-                                   Class<?> classBeingRedefined,
+                                   @MaybeNull ClassLoader classLoader,
+                                   @MaybeNull JavaModule module,
+                                   @MaybeNull Class<?> classBeingRedefined,
                                    ProtectionDomain protectionDomain) {
                 return moduleMatcher.matches(module) && classLoaderMatcher.matches(classLoader) && typeMatcher.matches(typeDescription);
             }
@@ -1226,53 +1896,53 @@ public interface AgentBuilder {
          * Invoked upon a type being supplied to a transformer.
          *
          * @param typeName    The binary name of the instrumented type.
-         * @param classLoader The class loader which is loading this type.
+         * @param classLoader The class loader which is loading this type or {@code null} if loaded by the boots loader.
          * @param module      The instrumented type's module or {@code null} if the current VM does not support modules.
          * @param loaded      {@code true} if the type is already loaded.
          */
-        void onDiscovery(String typeName, ClassLoader classLoader, JavaModule module, boolean loaded);
+        void onDiscovery(String typeName, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module, boolean loaded);
 
         /**
          * Invoked prior to a successful transformation being applied.
          *
          * @param typeDescription The type that is being transformed.
-         * @param classLoader     The class loader which is loading this type.
+         * @param classLoader     The class loader which is loading this type or {@code null} if loaded by the boots loader.
          * @param module          The transformed type's module or {@code null} if the current VM does not support modules.
          * @param loaded          {@code true} if the type is already loaded.
          * @param dynamicType     The dynamic type that was created.
          */
-        void onTransformation(TypeDescription typeDescription, ClassLoader classLoader, JavaModule module, boolean loaded, DynamicType dynamicType);
+        void onTransformation(TypeDescription typeDescription, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module, boolean loaded, DynamicType dynamicType);
 
         /**
          * Invoked when a type is not transformed but ignored.
          *
          * @param typeDescription The type being ignored for transformation.
-         * @param classLoader     The class loader which is loading this type.
+         * @param classLoader     The class loader which is loading this type or {@code null} if loaded by the boots loader.
          * @param module          The ignored type's module or {@code null} if the current VM does not support modules.
          * @param loaded          {@code true} if the type is already loaded.
          */
-        void onIgnored(TypeDescription typeDescription, ClassLoader classLoader, JavaModule module, boolean loaded);
+        void onIgnored(TypeDescription typeDescription, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module, boolean loaded);
 
         /**
          * Invoked when an error has occurred during transformation.
          *
          * @param typeName    The binary name of the instrumented type.
-         * @param classLoader The class loader which is loading this type.
+         * @param classLoader The class loader which is loading this type or {@code null} if loaded by the boots loader.
          * @param module      The instrumented type's module or {@code null} if the current VM does not support modules.
          * @param loaded      {@code true} if the type is already loaded.
          * @param throwable   The occurred error.
          */
-        void onError(String typeName, ClassLoader classLoader, JavaModule module, boolean loaded, Throwable throwable);
+        void onError(String typeName, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module, boolean loaded, Throwable throwable);
 
         /**
          * Invoked after a class was attempted to be loaded, independently of its treatment.
          *
          * @param typeName    The binary name of the instrumented type.
-         * @param classLoader The class loader which is loading this type.
+         * @param classLoader The class loader which is loading this type or {@code null} if loaded by the boots loader.
          * @param module      The instrumented type's module or {@code null} if the current VM does not support modules.
          * @param loaded      {@code true} if the type is already loaded.
          */
-        void onComplete(String typeName, ClassLoader classLoader, JavaModule module, boolean loaded);
+        void onComplete(String typeName, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module, boolean loaded);
 
         /**
          * A no-op implementation of a {@link net.bytebuddy.agent.builder.AgentBuilder.Listener}.
@@ -1284,28 +1954,38 @@ public interface AgentBuilder {
              */
             INSTANCE;
 
-            @Override
-            public void onDiscovery(String typeName, ClassLoader classLoader, JavaModule module, boolean loaded) {
+            /**
+             * {@inheritDoc}
+             */
+            public void onDiscovery(String typeName, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module, boolean loaded) {
                 /* do nothing */
             }
 
-            @Override
-            public void onTransformation(TypeDescription typeDescription, ClassLoader classLoader, JavaModule module, boolean loaded, DynamicType dynamicType) {
+            /**
+             * {@inheritDoc}
+             */
+            public void onTransformation(TypeDescription typeDescription, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module, boolean loaded, DynamicType dynamicType) {
                 /* do nothing */
             }
 
-            @Override
-            public void onIgnored(TypeDescription typeDescription, ClassLoader classLoader, JavaModule module, boolean loaded) {
+            /**
+             * {@inheritDoc}
+             */
+            public void onIgnored(TypeDescription typeDescription, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module, boolean loaded) {
                 /* do nothing */
             }
 
-            @Override
-            public void onError(String typeName, ClassLoader classLoader, JavaModule module, boolean loaded, Throwable throwable) {
+            /**
+             * {@inheritDoc}
+             */
+            public void onError(String typeName, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module, boolean loaded, Throwable throwable) {
                 /* do nothing */
             }
 
-            @Override
-            public void onComplete(String typeName, ClassLoader classLoader, JavaModule module, boolean loaded) {
+            /**
+             * {@inheritDoc}
+             */
+            public void onComplete(String typeName, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module, boolean loaded) {
                 /* do nothing */
             }
         }
@@ -1315,28 +1995,38 @@ public interface AgentBuilder {
          */
         abstract class Adapter implements Listener {
 
-            @Override
-            public void onDiscovery(String typeName, ClassLoader classLoader, JavaModule module, boolean loaded) {
+            /**
+             * {@inheritDoc}
+             */
+            public void onDiscovery(String typeName, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module, boolean loaded) {
                 /* do nothing */
             }
 
-            @Override
-            public void onTransformation(TypeDescription typeDescription, ClassLoader classLoader, JavaModule module, boolean loaded, DynamicType dynamicType) {
+            /**
+             * {@inheritDoc}
+             */
+            public void onTransformation(TypeDescription typeDescription, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module, boolean loaded, DynamicType dynamicType) {
                 /* do nothing */
             }
 
-            @Override
-            public void onIgnored(TypeDescription typeDescription, ClassLoader classLoader, JavaModule module, boolean loaded) {
+            /**
+             * {@inheritDoc}
+             */
+            public void onIgnored(TypeDescription typeDescription, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module, boolean loaded) {
                 /* do nothing */
             }
 
-            @Override
-            public void onError(String typeName, ClassLoader classLoader, JavaModule module, boolean loaded, Throwable throwable) {
+            /**
+             * {@inheritDoc}
+             */
+            public void onError(String typeName, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module, boolean loaded, Throwable throwable) {
                 /* do nothing */
             }
 
-            @Override
-            public void onComplete(String typeName, ClassLoader classLoader, JavaModule module, boolean loaded) {
+            /**
+             * {@inheritDoc}
+             */
+            public void onComplete(String typeName, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module, boolean loaded) {
                 /* do nothing */
             }
         }
@@ -1345,7 +2035,7 @@ public interface AgentBuilder {
          * A listener that writes events to a {@link PrintStream}. This listener prints a line per event, including the event type and
          * the name of the type in question.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class StreamWriting implements Listener {
 
             /**
@@ -1403,39 +2093,49 @@ public interface AgentBuilder {
                 return new WithErrorsOnly(this);
             }
 
-            @Override
-            public void onDiscovery(String typeName, ClassLoader classLoader, JavaModule module, boolean loaded) {
-                printStream.printf(PREFIX + " DISCOVERY %s [%s, %s, loaded=%b]%n", typeName, classLoader, module, loaded);
+            /**
+             * {@inheritDoc}
+             */
+            public void onDiscovery(String typeName, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module, boolean loaded) {
+                printStream.printf(PREFIX + " DISCOVERY %s [%s, %s, %s, loaded=%b]%n", typeName, classLoader, module, Thread.currentThread(), loaded);
             }
 
-            @Override
-            public void onTransformation(TypeDescription typeDescription, ClassLoader classLoader, JavaModule module, boolean loaded, DynamicType dynamicType) {
-                printStream.printf(PREFIX + " TRANSFORM %s [%s, %s, loaded=%b]%n", typeDescription.getName(), classLoader, module, loaded);
+            /**
+             * {@inheritDoc}
+             */
+            public void onTransformation(TypeDescription typeDescription, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module, boolean loaded, DynamicType dynamicType) {
+                printStream.printf(PREFIX + " TRANSFORM %s [%s, %s, %s, loaded=%b]%n", typeDescription.getName(), classLoader, module, Thread.currentThread(), loaded);
             }
 
-            @Override
-            public void onIgnored(TypeDescription typeDescription, ClassLoader classLoader, JavaModule module, boolean loaded) {
-                printStream.printf(PREFIX + " IGNORE %s [%s, %s, loaded=%b]%n", typeDescription.getName(), classLoader, module, loaded);
+            /**
+             * {@inheritDoc}
+             */
+            public void onIgnored(TypeDescription typeDescription, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module, boolean loaded) {
+                printStream.printf(PREFIX + " IGNORE %s [%s, %s, %s, loaded=%b]%n", typeDescription.getName(), classLoader, module, Thread.currentThread(), loaded);
             }
 
-            @Override
-            public void onError(String typeName, ClassLoader classLoader, JavaModule module, boolean loaded, Throwable throwable) {
+            /**
+             * {@inheritDoc}
+             */
+            public void onError(String typeName, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module, boolean loaded, Throwable throwable) {
                 synchronized (printStream) {
-                    printStream.printf(PREFIX + " ERROR %s [%s, %s, loaded=%b]%n", typeName, classLoader, module, loaded);
+                    printStream.printf(PREFIX + " ERROR %s [%s, %s, %s, loaded=%b]%n", typeName, classLoader, module, Thread.currentThread(), loaded);
                     throwable.printStackTrace(printStream);
                 }
             }
 
-            @Override
-            public void onComplete(String typeName, ClassLoader classLoader, JavaModule module, boolean loaded) {
-                printStream.printf(PREFIX + " COMPLETE %s [%s, %s, loaded=%b]%n", typeName, classLoader, module, loaded);
+            /**
+             * {@inheritDoc}
+             */
+            public void onComplete(String typeName, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module, boolean loaded) {
+                printStream.printf(PREFIX + " COMPLETE %s [%s, %s, %s, loaded=%b]%n", typeName, classLoader, module, Thread.currentThread(), loaded);
             }
         }
 
         /**
          * A listener that filters types with a given name from being logged.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class Filtering implements Listener {
 
             /**
@@ -1459,36 +2159,46 @@ public interface AgentBuilder {
                 this.delegate = delegate;
             }
 
-            @Override
-            public void onDiscovery(String typeName, ClassLoader classLoader, JavaModule module, boolean loaded) {
+            /**
+             * {@inheritDoc}
+             */
+            public void onDiscovery(String typeName, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module, boolean loaded) {
                 if (matcher.matches(typeName)) {
                     delegate.onDiscovery(typeName, classLoader, module, loaded);
                 }
             }
 
-            @Override
-            public void onTransformation(TypeDescription typeDescription, ClassLoader classLoader, JavaModule module, boolean loaded, DynamicType dynamicType) {
+            /**
+             * {@inheritDoc}
+             */
+            public void onTransformation(TypeDescription typeDescription, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module, boolean loaded, DynamicType dynamicType) {
                 if (matcher.matches(typeDescription.getName())) {
                     delegate.onTransformation(typeDescription, classLoader, module, loaded, dynamicType);
                 }
             }
 
-            @Override
-            public void onIgnored(TypeDescription typeDescription, ClassLoader classLoader, JavaModule module, boolean loaded) {
+            /**
+             * {@inheritDoc}
+             */
+            public void onIgnored(TypeDescription typeDescription, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module, boolean loaded) {
                 if (matcher.matches(typeDescription.getName())) {
                     delegate.onIgnored(typeDescription, classLoader, module, loaded);
                 }
             }
 
-            @Override
-            public void onError(String typeName, ClassLoader classLoader, JavaModule module, boolean loaded, Throwable throwable) {
+            /**
+             * {@inheritDoc}
+             */
+            public void onError(String typeName, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module, boolean loaded, Throwable throwable) {
                 if (matcher.matches(typeName)) {
                     delegate.onError(typeName, classLoader, module, loaded, throwable);
                 }
             }
 
-            @Override
-            public void onComplete(String typeName, ClassLoader classLoader, JavaModule module, boolean loaded) {
+            /**
+             * {@inheritDoc}
+             */
+            public void onComplete(String typeName, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module, boolean loaded) {
                 if (matcher.matches(typeName)) {
                     delegate.onComplete(typeName, classLoader, module, loaded);
                 }
@@ -1498,8 +2208,8 @@ public interface AgentBuilder {
         /**
          * A listener that only delegates events if they are successful or failed transformations.
          */
-        @EqualsAndHashCode(callSuper = false)
-        class WithTransformationsOnly extends Listener.Adapter {
+        @HashCodeAndEqualsPlugin.Enhance
+        class WithTransformationsOnly extends Adapter {
 
             /**
              * The delegate listener.
@@ -1507,7 +2217,7 @@ public interface AgentBuilder {
             private final Listener delegate;
 
             /**
-             * Creates a new listener that only delegates events if they are succesful or failed transformations.
+             * Creates a new listener that only delegates events if they are successful or failed transformations.
              *
              * @param delegate The delegate listener.
              */
@@ -1516,12 +2226,12 @@ public interface AgentBuilder {
             }
 
             @Override
-            public void onTransformation(TypeDescription typeDescription, ClassLoader classLoader, JavaModule module, boolean loaded, DynamicType dynamicType) {
+            public void onTransformation(TypeDescription typeDescription, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module, boolean loaded, DynamicType dynamicType) {
                 delegate.onTransformation(typeDescription, classLoader, module, loaded, dynamicType);
             }
 
             @Override
-            public void onError(String typeName, ClassLoader classLoader, JavaModule module, boolean loaded, Throwable throwable) {
+            public void onError(String typeName, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module, boolean loaded, Throwable throwable) {
                 delegate.onError(typeName, classLoader, module, loaded, throwable);
             }
         }
@@ -1529,8 +2239,8 @@ public interface AgentBuilder {
         /**
          * A listener that only delegates events if they are failed transformations.
          */
-        @EqualsAndHashCode(callSuper = false)
-        class WithErrorsOnly extends Listener.Adapter {
+        @HashCodeAndEqualsPlugin.Enhance
+        class WithErrorsOnly extends Adapter {
 
             /**
              * The delegate listener.
@@ -1547,16 +2257,16 @@ public interface AgentBuilder {
             }
 
             @Override
-            public void onError(String typeName, ClassLoader classLoader, JavaModule module, boolean loaded, Throwable throwable) {
+            public void onError(String typeName, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module, boolean loaded, Throwable throwable) {
                 delegate.onError(typeName, classLoader, module, loaded, throwable);
             }
         }
 
         /**
-         * A listener that adds read-edges to any module of an instrumented class upon its transformation.
+         * A listener that adds read-edges to any module of an instrumented class upon its transformation and opens the class's package to the module.
          */
-        @EqualsAndHashCode(callSuper = false)
-        class ModuleReadEdgeCompleting extends Listener.Adapter {
+        @HashCodeAndEqualsPlugin.Enhance
+        class ModuleReadEdgeCompleting extends Adapter {
 
             /**
              * The instrumentation instance used for adding read edges.
@@ -1565,6 +2275,7 @@ public interface AgentBuilder {
 
             /**
              * {@code true} if the listener should also add a read-edge from the supplied modules to the instrumented type's module.
+             * This will also ensure that the package of the instrumented type is exported to the target module.
              */
             private final boolean addTargetEdge;
 
@@ -1577,8 +2288,9 @@ public interface AgentBuilder {
              * Creates a new module read-edge completing listener.
              *
              * @param instrumentation The instrumentation instance used for adding read edges.
-             * @param addTargetEdge   {@code true} if the listener should also add a read-edge from the supplied modules
-             *                        to the instrumented type's module.
+             * @param addTargetEdge   {@code true} if the listener should also add a read-edge from the supplied
+             *                        modules to the instrumented type's module. This will also ensure that the package
+             *                        of the instrumented type is exported to the target module.
              * @param modules         The modules to add as a read edge to any transformed class's module.
              */
             public ModuleReadEdgeCompleting(Instrumentation instrumentation, boolean addTargetEdge, Set<? extends JavaModule> modules) {
@@ -1592,17 +2304,15 @@ public interface AgentBuilder {
              *
              * @param instrumentation The instrumentation instance used for adding read edges.
              * @param addTargetEdge   {@code true} if the listener should also add a read-edge from the supplied
-             *                        modules to the instrumented type's module.
+             *                        modules to the instrumented type's module. This will also ensure that the package
+             *                        of the instrumented type is exported to the target module.
              * @param type            The types for which to extract the modules.
              * @return An appropriate listener.
              */
-            protected static Listener of(Instrumentation instrumentation, boolean addTargetEdge, Class<?>... type) {
+            public static Listener of(Instrumentation instrumentation, boolean addTargetEdge, Class<?>... type) {
                 Set<JavaModule> modules = new HashSet<JavaModule>();
                 for (Class<?> aType : type) {
-                    JavaModule module = JavaModule.ofType(aType);
-                    if (module.isNamed()) {
-                        modules.add(module);
-                    }
+                    modules.add(JavaModule.ofType(aType));
                 }
                 return modules.isEmpty()
                         ? Listener.NoOp.INSTANCE
@@ -1610,14 +2320,29 @@ public interface AgentBuilder {
             }
 
             @Override
-            public void onTransformation(TypeDescription typeDescription, ClassLoader classLoader, JavaModule module, boolean loaded, DynamicType dynamicType) {
+            public void onTransformation(TypeDescription typeDescription, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module, boolean loaded, DynamicType dynamicType) {
                 if (module != JavaModule.UNSUPPORTED && module.isNamed()) {
                     for (JavaModule target : modules) {
-                        if (!module.canRead(target)) {
-                            module.addReads(instrumentation, target);
+                        if (!module.canRead(target) || addTargetEdge && !module.isOpened(typeDescription.getPackage(), target)) {
+                            PackageDescription location = typeDescription.getPackage();
+                            ClassInjector.UsingInstrumentation.redefineModule(instrumentation,
+                                    module,
+                                    Collections.singleton(target),
+                                    Collections.<String, Set<JavaModule>>emptyMap(),
+                                    !addTargetEdge || location == null || location.isDefault()
+                                            ? Collections.<String, Set<JavaModule>>emptyMap()
+                                            : Collections.singletonMap(location.getName(), Collections.singleton(target)),
+                                    Collections.<Class<?>>emptySet(),
+                                    Collections.<Class<?>, List<Class<?>>>emptyMap());
                         }
                         if (addTargetEdge && !target.canRead(module)) {
-                            target.addReads(instrumentation, module);
+                            ClassInjector.UsingInstrumentation.redefineModule(instrumentation,
+                                    target,
+                                    Collections.singleton(module),
+                                    Collections.<String, Set<JavaModule>>emptyMap(),
+                                    Collections.<String, Set<JavaModule>>emptyMap(),
+                                    Collections.<Class<?>>emptySet(),
+                                    Collections.<Class<?>, List<Class<?>>>emptyMap());
                         }
                     }
                 }
@@ -1627,7 +2352,7 @@ public interface AgentBuilder {
         /**
          * A compound listener that allows to group several listeners in one instance.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class Compound implements Listener {
 
             /**
@@ -1660,36 +2385,46 @@ public interface AgentBuilder {
                 }
             }
 
-            @Override
-            public void onDiscovery(String typeName, ClassLoader classLoader, JavaModule module, boolean loaded) {
+            /**
+             * {@inheritDoc}
+             */
+            public void onDiscovery(String typeName, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module, boolean loaded) {
                 for (Listener listener : listeners) {
                     listener.onDiscovery(typeName, classLoader, module, loaded);
                 }
             }
 
-            @Override
-            public void onTransformation(TypeDescription typeDescription, ClassLoader classLoader, JavaModule module, boolean loaded, DynamicType dynamicType) {
+            /**
+             * {@inheritDoc}
+             */
+            public void onTransformation(TypeDescription typeDescription, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module, boolean loaded, DynamicType dynamicType) {
                 for (Listener listener : listeners) {
                     listener.onTransformation(typeDescription, classLoader, module, loaded, dynamicType);
                 }
             }
 
-            @Override
-            public void onIgnored(TypeDescription typeDescription, ClassLoader classLoader, JavaModule module, boolean loaded) {
+            /**
+             * {@inheritDoc}
+             */
+            public void onIgnored(TypeDescription typeDescription, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module, boolean loaded) {
                 for (Listener listener : listeners) {
                     listener.onIgnored(typeDescription, classLoader, module, loaded);
                 }
             }
 
-            @Override
-            public void onError(String typeName, ClassLoader classLoader, JavaModule module, boolean loaded, Throwable throwable) {
+            /**
+             * {@inheritDoc}
+             */
+            public void onError(String typeName, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module, boolean loaded, Throwable throwable) {
                 for (Listener listener : listeners) {
                     listener.onError(typeName, classLoader, module, loaded, throwable);
                 }
             }
 
-            @Override
-            public void onComplete(String typeName, ClassLoader classLoader, JavaModule module, boolean loaded) {
+            /**
+             * {@inheritDoc}
+             */
+            public void onComplete(String typeName, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module, boolean loaded) {
                 for (Listener listener : listeners) {
                     listener.onComplete(typeName, classLoader, module, loaded);
                 }
@@ -1727,12 +2462,16 @@ public interface AgentBuilder {
              */
             INSTANCE;
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public boolean acquire() {
                 return true;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public void release() {
                 /* do nothing */
             }
@@ -1742,33 +2481,44 @@ public interface AgentBuilder {
          * A default implementation of a circularity lock. Since class loading already synchronizes on a class loader,
          * it suffices to apply a thread-local lock.
          */
-        class Default extends ThreadLocal<Boolean> implements CircularityLock {
+        class Default implements CircularityLock {
 
             /**
-             * Indicates that the circularity lock is not currently acquired.
+             * A map of threads to an unused boolean to emulate a thread-local state without using
+             * thread locals. This avoids using thread-local maps and does not interfere with Java
+             * fibers in case that an instrumentation is executed from a virtual thread where thread
+             * locals are not permitted.
              */
-            private static final Boolean NOT_ACQUIRED = null;
+            private final ConcurrentMap<Thread, Boolean> threads = new ConcurrentHashMap<Thread, Boolean>();
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public boolean acquire() {
-                if (get() == NOT_ACQUIRED) {
-                    set(true);
-                    return true;
-                } else {
-                    return false;
-                }
+                return threads.putIfAbsent(Thread.currentThread(), true) == null;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public void release() {
-                set(NOT_ACQUIRED);
+                threads.remove(Thread.currentThread());
+            }
+
+            /**
+             * Returns {@code true} if the current thread is currently locked.
+             *
+             * @return {@code true} if the current thread is currently locked.
+             */
+            protected boolean isLocked() {
+                return threads.containsKey(Thread.currentThread());
             }
         }
 
         /**
          * A circularity lock that holds a global monitor and does not permit concurrent access.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class Global implements CircularityLock {
 
             /**
@@ -1805,7 +2555,9 @@ public interface AgentBuilder {
                 this.timeUnit = timeUnit;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public boolean acquire() {
                 try {
                     return time == 0
@@ -1816,7 +2568,9 @@ public interface AgentBuilder {
                 }
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public void release() {
                 lock.unlock();
             }
@@ -1835,12 +2589,18 @@ public interface AgentBuilder {
          * @param byteBuddy             The Byte Buddy configuration.
          * @param classFileLocator      The class file locator to use.
          * @param methodNameTransformer The method name transformer to use.
+         * @param classLoader           The instrumented type's class loader or {@code null} if the type is loaded by the bootstrap loader.
+         * @param module                The instrumented type's module or {@code null} if it is not declared by a module.
+         * @param protectionDomain      The instrumented type's protection domain or {@code null} if it does not define a protection domain.
          * @return A type builder for the given arguments.
          */
         DynamicType.Builder<?> builder(TypeDescription typeDescription,
                                        ByteBuddy byteBuddy,
                                        ClassFileLocator classFileLocator,
-                                       MethodNameTransformer methodNameTransformer);
+                                       MethodNameTransformer methodNameTransformer,
+                                       @MaybeNull ClassLoader classLoader,
+                                       @MaybeNull JavaModule module,
+                                       @MaybeNull ProtectionDomain protectionDomain);
 
         /**
          * Default implementations of type strategies.
@@ -1851,11 +2611,14 @@ public interface AgentBuilder {
              * A definition handler that performs a rebasing for all types.
              */
             REBASE {
-                @Override
+                /** {@inheritDoc} */
                 public DynamicType.Builder<?> builder(TypeDescription typeDescription,
                                                       ByteBuddy byteBuddy,
                                                       ClassFileLocator classFileLocator,
-                                                      MethodNameTransformer methodNameTransformer) {
+                                                      MethodNameTransformer methodNameTransformer,
+                                                      @MaybeNull ClassLoader classLoader,
+                                                      @MaybeNull JavaModule module,
+                                                      @MaybeNull ProtectionDomain protectionDomain) {
                     return byteBuddy.rebase(typeDescription, classFileLocator, methodNameTransformer);
                 }
             },
@@ -1874,11 +2637,14 @@ public interface AgentBuilder {
              * </p>
              */
             REDEFINE {
-                @Override
+                /** {@inheritDoc} */
                 public DynamicType.Builder<?> builder(TypeDescription typeDescription,
                                                       ByteBuddy byteBuddy,
                                                       ClassFileLocator classFileLocator,
-                                                      MethodNameTransformer methodNameTransformer) {
+                                                      MethodNameTransformer methodNameTransformer,
+                                                      @MaybeNull ClassLoader classLoader,
+                                                      @MaybeNull JavaModule module,
+                                                      @MaybeNull ProtectionDomain protectionDomain) {
                     return byteBuddy.redefine(typeDescription, classFileLocator);
                 }
             },
@@ -1898,22 +2664,56 @@ public interface AgentBuilder {
              * </p>
              */
             REDEFINE_FROZEN {
-                @Override
+                /** {@inheritDoc} */
                 public DynamicType.Builder<?> builder(TypeDescription typeDescription,
                                                       ByteBuddy byteBuddy,
                                                       ClassFileLocator classFileLocator,
-                                                      MethodNameTransformer methodNameTransformer) {
+                                                      MethodNameTransformer methodNameTransformer,
+                                                      @MaybeNull ClassLoader classLoader,
+                                                      @MaybeNull JavaModule module,
+                                                      @MaybeNull ProtectionDomain protectionDomain) {
                     return byteBuddy.with(InstrumentedType.Factory.Default.FROZEN)
+                            .with(VisibilityBridgeStrategy.Default.NEVER)
                             .redefine(typeDescription, classFileLocator)
                             .ignoreAlso(LatentMatcher.ForSelfDeclaredMethod.NOT_DECLARED);
                 }
-            };
+            },
+
+            /**
+             * <p>
+             * A definition handler that performs a decoration of declared methods only. Using this type strategy
+             * implies the limitations that are described by {@link ByteBuddy#decorate(TypeDescription, ClassFileLocator)}.
+             * This type strategy can be useful when only applying {@link AsmVisitorWrapper}s without attempting to change
+             * the class file layout..
+             * </p>
+             * <p>
+             * Note that the default agent builder is configured to apply a self initialization where a static class initializer
+             * is added to the redefined class. This can be disabled by for example using a {@link InitializationStrategy.Minimal} or
+             * {@link InitializationStrategy.NoOp}. Also, consider the constraints implied by {@link ByteBuddy#redefine(TypeDescription, ClassFileLocator)}.
+             * Using this strategy also configures Byte Buddy to create frozen instrumented types and discards any explicit configuration.
+             * </p>
+             * <p>
+             * For prohibiting any changes on a class file, use {@link AgentBuilder#disableClassFormatChanges()}
+             * </p>
+             */
+            DECORATE {
+                /** {@inheritDoc} */
+                public DynamicType.Builder<?> builder(TypeDescription typeDescription,
+                                                      ByteBuddy byteBuddy,
+                                                      ClassFileLocator classFileLocator,
+                                                      MethodNameTransformer methodNameTransformer,
+                                                      @MaybeNull ClassLoader classLoader,
+                                                      @MaybeNull JavaModule module,
+                                                      @MaybeNull ProtectionDomain protectionDomain) {
+                    return byteBuddy.decorate(typeDescription, classFileLocator);
+                }
+            }
         }
 
         /**
          * A type strategy that applies a build {@link EntryPoint}.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class ForBuildEntryPoint implements TypeStrategy {
 
             /**
@@ -1930,11 +2730,16 @@ public interface AgentBuilder {
                 this.entryPoint = entryPoint;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public DynamicType.Builder<?> builder(TypeDescription typeDescription,
                                                   ByteBuddy byteBuddy,
                                                   ClassFileLocator classFileLocator,
-                                                  MethodNameTransformer methodNameTransformer) {
+                                                  MethodNameTransformer methodNameTransformer,
+                                                  @MaybeNull ClassLoader classLoader,
+                                                  @MaybeNull JavaModule module,
+                                                  @MaybeNull ProtectionDomain protectionDomain) {
                 return entryPoint.transform(typeDescription, byteBuddy, classFileLocator, methodNameTransformer);
             }
         }
@@ -1949,41 +2754,24 @@ public interface AgentBuilder {
         /**
          * Allows for a transformation of a {@link net.bytebuddy.dynamic.DynamicType.Builder}.
          *
-         * @param builder         The dynamic builder to transform.
-         * @param typeDescription The description of the type currently being instrumented.
-         * @param classLoader     The class loader of the instrumented class. Might be {@code null} to represent the bootstrap class loader.
-         * @param module          The class's module or {@code null} if the current VM does not support modules.
+         * @param builder          The dynamic builder to transform.
+         * @param typeDescription  The description of the type currently being instrumented.
+         * @param classLoader      The class loader of the instrumented class. Might be {@code null} to represent the bootstrap class loader.
+         * @param module           The class's module or {@code null} if the current VM does not support modules.
+         * @param protectionDomain The protection domain of the transformed type.
          * @return A transformed version of the supplied {@code builder}.
          */
         DynamicType.Builder<?> transform(DynamicType.Builder<?> builder,
                                          TypeDescription typeDescription,
-                                         ClassLoader classLoader,
-                                         JavaModule module);
+                                         @MaybeNull ClassLoader classLoader,
+                                         @MaybeNull JavaModule module,
+                                         ProtectionDomain protectionDomain);
 
         /**
-         * A no-op implementation of a {@link net.bytebuddy.agent.builder.AgentBuilder.Transformer} that does
-         * not modify the supplied dynamic type.
+         * A transformer that applies a build {@link Plugin}. Note that a transformer is never completed as class loading
+         * might happen dynamically such that plugins are not closed.
          */
-        enum NoOp implements Transformer {
-
-            /**
-             * The singleton instance.
-             */
-            INSTANCE;
-
-            @Override
-            public DynamicType.Builder<?> transform(DynamicType.Builder<?> builder,
-                                                    TypeDescription typeDescription,
-                                                    ClassLoader classLoader,
-                                                    JavaModule module) {
-                return builder;
-            }
-        }
-
-        /**
-         * A transformer that applies a build {@link Plugin}.
-         */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class ForBuildPlugin implements Transformer {
 
             /**
@@ -2000,12 +2788,15 @@ public interface AgentBuilder {
                 this.plugin = plugin;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public DynamicType.Builder<?> transform(DynamicType.Builder<?> builder,
                                                     TypeDescription typeDescription,
-                                                    ClassLoader classLoader,
-                                                    JavaModule module) {
-                return plugin.apply(builder, typeDescription);
+                                                    @MaybeNull ClassLoader classLoader,
+                                                    @MaybeNull JavaModule module,
+                                                    ProtectionDomain protectionDomain) {
+                return plugin.apply(builder, typeDescription, ClassFileLocator.ForClassLoader.of(classLoader));
             }
         }
 
@@ -2016,7 +2807,7 @@ public interface AgentBuilder {
          * the advice class's class loader manually via the {@code include} methods and to reference the advice class by its fully-qualified
          * name. The advice class is then never loaded by rather described by a {@link TypePool}.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class ForAdvice implements Transformer {
 
             /**
@@ -2027,7 +2818,7 @@ public interface AgentBuilder {
             /**
              * The exception handler to register for the advice.
              */
-            private final StackManipulation exceptionHandler;
+            private final Advice.ExceptionHandler exceptionHandler;
 
             /**
              * The assigner to use for the advice.
@@ -2068,7 +2859,7 @@ public interface AgentBuilder {
              */
             public ForAdvice(Advice.WithCustomMapping advice) {
                 this(advice,
-                        Removal.of(TypeDescription.THROWABLE),
+                        Advice.ExceptionHandler.Default.SUPPRESSING,
                         Assigner.DEFAULT,
                         ClassFileLocator.NoOp.INSTANCE,
                         PoolStrategy.Default.FAST,
@@ -2088,7 +2879,7 @@ public interface AgentBuilder {
              * @param entries          The advice entries to apply.
              */
             protected ForAdvice(Advice.WithCustomMapping advice,
-                                StackManipulation exceptionHandler,
+                                Advice.ExceptionHandler exceptionHandler,
                                 Assigner assigner,
                                 ClassFileLocator classFileLocator,
                                 PoolStrategy poolStrategy,
@@ -2103,20 +2894,44 @@ public interface AgentBuilder {
                 this.entries = entries;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public DynamicType.Builder<?> transform(DynamicType.Builder<?> builder,
                                                     TypeDescription typeDescription,
-                                                    ClassLoader classLoader,
-                                                    JavaModule module) {
-                ClassFileLocator classFileLocator = new ClassFileLocator.Compound(locationStrategy.classFileLocator(classLoader, module), this.classFileLocator);
+                                                    @MaybeNull ClassLoader classLoader,
+                                                    @MaybeNull JavaModule module,
+                                                    ProtectionDomain protectionDomain) {
+                ClassFileLocator classFileLocator = new ClassFileLocator.Compound(this.classFileLocator, locationStrategy.classFileLocator(classLoader, module));
                 TypePool typePool = poolStrategy.typePool(classFileLocator, classLoader);
                 AsmVisitorWrapper.ForDeclaredMethods asmVisitorWrapper = new AsmVisitorWrapper.ForDeclaredMethods();
                 for (Entry entry : entries) {
-                    asmVisitorWrapper = asmVisitorWrapper.method(entry.getMatcher().resolve(typeDescription), entry.resolve(advice, typePool, classFileLocator)
-                            .withAssigner(assigner)
-                            .withExceptionHandler(exceptionHandler));
+                    asmVisitorWrapper = asmVisitorWrapper.invokable(entry.getMatcher().resolve(typeDescription), wrap(typeDescription,
+                            classLoader,
+                            module,
+                            protectionDomain,
+                            entry.resolve(advice, typePool, classFileLocator).withAssigner(assigner).withExceptionHandler(exceptionHandler)));
                 }
                 return builder.visit(asmVisitorWrapper);
+            }
+
+            /**
+             * Allows for decoration of advice for subclass implementations of this transformer.
+             *
+             * @param typeDescription  The description of the type currently being instrumented.
+             * @param classLoader      The class loader of the instrumented class. Might be {@code null} to represent the bootstrap class loader.
+             * @param module           The class's module or {@code null} if the current VM does not support modules.
+             * @param protectionDomain The protection domain of the transformed type.
+             * @param advice           The advice to wrap.
+             * @return A visitor wrapper that represents the supplied advice.
+             */
+            @SuppressWarnings("unused")
+            protected AsmVisitorWrapper.ForDeclaredMethods.MethodVisitorWrapper wrap(TypeDescription typeDescription,
+                                                                                     @MaybeNull ClassLoader classLoader,
+                                                                                     @MaybeNull JavaModule module,
+                                                                                     ProtectionDomain protectionDomain,
+                                                                                     Advice advice) {
+                return advice;
             }
 
             /**
@@ -2147,7 +2962,7 @@ public interface AgentBuilder {
              * @return A new instance of this advice transformer that applies the supplied exception handler.
              * @see Advice#withExceptionHandler(StackManipulation)
              */
-            public ForAdvice withExceptionHandler(StackManipulation exceptionHandler) {
+            public ForAdvice withExceptionHandler(Advice.ExceptionHandler exceptionHandler) {
                 return new ForAdvice(advice, exceptionHandler, assigner, classFileLocator, poolStrategy, locationStrategy, entries);
             }
 
@@ -2164,6 +2979,7 @@ public interface AgentBuilder {
 
             /**
              * Includes the supplied class loaders as a source for looking up an advice class or its dependencies.
+             * Note that the supplied class loaders are queried for types before the class loader of the instrumented class.
              *
              * @param classLoader The class loaders to include when looking up classes in their order. Duplicates are filtered.
              * @return A new instance of this advice transformer that considers the supplied class loaders as a lookup source.
@@ -2178,6 +2994,7 @@ public interface AgentBuilder {
 
             /**
              * Includes the supplied class file locators as a source for looking up an advice class or its dependencies.
+             * Note that the supplied class loaders are queried for types before the class loader of the instrumented class.
              *
              * @param classFileLocator The class file locators to include when looking up classes in their order. Duplicates are filtered.
              * @return A new instance of this advice transformer that considers the supplied class file locators as a lookup source.
@@ -2188,6 +3005,7 @@ public interface AgentBuilder {
 
             /**
              * Includes the supplied class file locators as a source for looking up an advice class or its dependencies.
+             * Note that the supplied class loaders are queried for types before the class loader of the instrumented class.
              *
              * @param classFileLocators The class file locators to include when looking up classes in their order. Duplicates are filtered.
              * @return A new instance of this advice transformer that considers the supplied class file locators as a lookup source.
@@ -2209,6 +3027,7 @@ public interface AgentBuilder {
              * @param name    The fully-qualified, binary name of the advice class.
              * @return A new instance of this advice transformer that applies the given advice to all matched methods of an instrumented type.
              */
+            @SuppressWarnings("overloads")
             public ForAdvice advice(ElementMatcher<? super MethodDescription> matcher, String name) {
                 return advice(new LatentMatcher.Resolved<MethodDescription>(matcher), name);
             }
@@ -2220,6 +3039,7 @@ public interface AgentBuilder {
              * @param name    The fully-qualified, binary name of the advice class.
              * @return A new instance of this advice transformer that applies the given advice to all matched methods of an instrumented type.
              */
+            @SuppressWarnings("overloads")
             public ForAdvice advice(LatentMatcher<? super MethodDescription> matcher, String name) {
                 return new ForAdvice(advice,
                         exceptionHandler,
@@ -2238,6 +3058,7 @@ public interface AgentBuilder {
              * @param exit    The fully-qualified, binary name of the exit advice class.
              * @return A new instance of this advice transformer that applies the given advice to all matched methods of an instrumented type.
              */
+            @SuppressWarnings("overloads")
             public ForAdvice advice(ElementMatcher<? super MethodDescription> matcher, String enter, String exit) {
                 return advice(new LatentMatcher.Resolved<MethodDescription>(matcher), enter, exit);
             }
@@ -2246,10 +3067,11 @@ public interface AgentBuilder {
              * Applies the given advice class onto all methods that satisfy the supplied matcher.
              *
              * @param matcher The matcher to determine what methods the advice should be applied to.
-             *                * @param enter    The fully-qualified, binary name of the enter advice class.
+             * @param enter   The fully-qualified, binary name of the enter advice class.
              * @param exit    The fully-qualified, binary name of the exit advice class.
              * @return A new instance of this advice transformer that applies the given advice to all matched methods of an instrumented type.
              */
+            @SuppressWarnings("overloads")
             public ForAdvice advice(LatentMatcher<? super MethodDescription> matcher, String enter, String exit) {
                 return new ForAdvice(advice,
                         exceptionHandler,
@@ -2263,7 +3085,7 @@ public interface AgentBuilder {
             /**
              * An entry for an advice to apply.
              */
-            @EqualsAndHashCode
+            @HashCodeAndEqualsPlugin.Enhance
             protected abstract static class Entry {
 
                 /**
@@ -2302,7 +3124,7 @@ public interface AgentBuilder {
                 /**
                  * An entry for an advice class where both the (optional) entry and exit advice methods are declared by the same class.
                  */
-                @EqualsAndHashCode(callSuper = true)
+                @HashCodeAndEqualsPlugin.Enhance
                 protected static class ForUnifiedAdvice extends Entry {
 
                     /**
@@ -2330,7 +3152,7 @@ public interface AgentBuilder {
                 /**
                  * An entry for an advice class where both entry and exit advice methods are declared by the different classes.
                  */
-                @EqualsAndHashCode(callSuper = true)
+                @HashCodeAndEqualsPlugin.Enhance
                 protected static class ForSplitAdvice extends Entry {
 
                     /**
@@ -2363,55 +3185,6 @@ public interface AgentBuilder {
                 }
             }
         }
-
-        /**
-         * A compound transformer that allows to group several
-         * {@link net.bytebuddy.agent.builder.AgentBuilder.Transformer}s as a single transformer.
-         */
-        @EqualsAndHashCode
-        class Compound implements Transformer {
-
-            /**
-             * The transformers to apply in their application order.
-             */
-            private final List<Transformer> transformers;
-
-            /**
-             * Creates a new compound transformer.
-             *
-             * @param transformer The transformers to apply in their application order.
-             */
-            public Compound(Transformer... transformer) {
-                this(Arrays.asList(transformer));
-            }
-
-            /**
-             * Creates a new compound transformer.
-             *
-             * @param transformers The transformers to apply in their application order.
-             */
-            public Compound(List<? extends Transformer> transformers) {
-                this.transformers = new ArrayList<Transformer>();
-                for (Transformer transformer : transformers) {
-                    if (transformer instanceof Compound) {
-                        this.transformers.addAll(((Compound) transformer).transformers);
-                    } else if (!(transformer instanceof NoOp)) {
-                        this.transformers.add(transformer);
-                    }
-                }
-            }
-
-            @Override
-            public DynamicType.Builder<?> transform(DynamicType.Builder<?> builder,
-                                                    TypeDescription typeDescription,
-                                                    ClassLoader classLoader,
-                                                    JavaModule module) {
-                for (Transformer transformer : transformers) {
-                    builder = transformer.transform(builder, typeDescription, classLoader, module);
-                }
-                return builder;
-            }
-        }
     }
 
     /**
@@ -2423,10 +3196,23 @@ public interface AgentBuilder {
          * Creates a type pool for a given class file locator.
          *
          * @param classFileLocator The class file locator to use.
-         * @param classLoader      The class loader for which the class file locator was created.
+         * @param classLoader      The class loader for which the class file locator was
+         *                         created or {@code null} if the boot loader.
          * @return A type pool for the supplied class file locator.
          */
-        TypePool typePool(ClassFileLocator classFileLocator, ClassLoader classLoader);
+        TypePool typePool(ClassFileLocator classFileLocator, @MaybeNull ClassLoader classLoader);
+
+        /**
+         * Creates a type pool for a given class file locator. If a cache is used, the type that is
+         * currently instrumented is not used.
+         *
+         * @param classFileLocator The class file locator to use.
+         * @param classLoader      The class loader for which the class file locator
+         *                         was created or {@code null} if the boot loader.
+         * @param name             The name of the currently instrumented type.
+         * @return A type pool for the supplied class file locator.
+         */
+        TypePool typePool(ClassFileLocator classFileLocator, @MaybeNull ClassLoader classLoader, String name);
 
         /**
          * <p>
@@ -2469,9 +3255,18 @@ public interface AgentBuilder {
                 this.readerMode = readerMode;
             }
 
-            @Override
-            public TypePool typePool(ClassFileLocator classFileLocator, ClassLoader classLoader) {
+            /**
+             * {@inheritDoc}
+             */
+            public TypePool typePool(ClassFileLocator classFileLocator, @MaybeNull ClassLoader classLoader) {
                 return new TypePool.Default.WithLazyResolution(TypePool.CacheProvider.Simple.withObjectType(), classFileLocator, readerMode);
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public TypePool typePool(ClassFileLocator classFileLocator, @MaybeNull ClassLoader classLoader, String name) {
+                return typePool(classFileLocator, classLoader);
             }
         }
 
@@ -2516,9 +3311,18 @@ public interface AgentBuilder {
                 this.readerMode = readerMode;
             }
 
-            @Override
-            public TypePool typePool(ClassFileLocator classFileLocator, ClassLoader classLoader) {
+            /**
+             * {@inheritDoc}
+             */
+            public TypePool typePool(ClassFileLocator classFileLocator, @MaybeNull ClassLoader classLoader) {
                 return new TypePool.Default(TypePool.CacheProvider.Simple.withObjectType(), classFileLocator, readerMode);
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public TypePool typePool(ClassFileLocator classFileLocator, @MaybeNull ClassLoader classLoader, String name) {
+                return typePool(classFileLocator, classLoader);
             }
         }
 
@@ -2564,9 +3368,18 @@ public interface AgentBuilder {
                 this.readerMode = readerMode;
             }
 
-            @Override
-            public TypePool typePool(ClassFileLocator classFileLocator, ClassLoader classLoader) {
+            /**
+             * {@inheritDoc}
+             */
+            public TypePool typePool(ClassFileLocator classFileLocator, @MaybeNull ClassLoader classLoader) {
                 return TypePool.ClassLoading.of(classLoader, new TypePool.Default.WithLazyResolution(TypePool.CacheProvider.Simple.withObjectType(), classFileLocator, readerMode));
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public TypePool typePool(ClassFileLocator classFileLocator, @MaybeNull ClassLoader classLoader, String name) {
+                return typePool(classFileLocator, classLoader);
             }
         }
 
@@ -2581,7 +3394,7 @@ public interface AgentBuilder {
          * All types that are returned by the locator's type pool are resolved lazily.
          * </p>
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         abstract class WithTypePoolCache implements PoolStrategy {
 
             /**
@@ -2598,24 +3411,36 @@ public interface AgentBuilder {
                 this.readerMode = readerMode;
             }
 
-            @Override
-            public TypePool typePool(ClassFileLocator classFileLocator, ClassLoader classLoader) {
+            /**
+             * {@inheritDoc}
+             */
+            public TypePool typePool(ClassFileLocator classFileLocator, @MaybeNull ClassLoader classLoader) {
                 return new TypePool.Default.WithLazyResolution(locate(classLoader), classFileLocator, readerMode);
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public TypePool typePool(ClassFileLocator classFileLocator, @MaybeNull ClassLoader classLoader, String name) {
+                return new TypePool.Default.WithLazyResolution(new TypePool.CacheProvider.Discriminating(ElementMatchers.<String>is(name),
+                        new TypePool.CacheProvider.Simple(),
+                        locate(classLoader)), classFileLocator, readerMode);
             }
 
             /**
              * Locates a cache provider for a given class loader.
              *
-             * @param classLoader The class loader for which to locate a cache. This class loader might be {@code null} to represent the bootstrap loader.
+             * @param classLoader The class loader for which to locate a cache. This class loader might
+             *                    be {@code null} to represent the bootstrap loader.
              * @return The cache provider to use.
              */
-            protected abstract TypePool.CacheProvider locate(ClassLoader classLoader);
+            protected abstract TypePool.CacheProvider locate(@MaybeNull ClassLoader classLoader);
 
             /**
              * An implementation of a type locator {@link WithTypePoolCache} (note documentation of the linked class) that is based on a
              * {@link ConcurrentMap}. It is the responsibility of the type locator's user to avoid the type locator from leaking memory.
              */
-            @EqualsAndHashCode(callSuper = true)
+            @HashCodeAndEqualsPlugin.Enhance
             public static class Simple extends WithTypePoolCache {
 
                 /**
@@ -2645,7 +3470,7 @@ public interface AgentBuilder {
                 }
 
                 @Override
-                protected TypePool.CacheProvider locate(ClassLoader classLoader) {
+                protected TypePool.CacheProvider locate(@MaybeNull ClassLoader classLoader) {
                     classLoader = classLoader == null ? getBootstrapMarkerLoader() : classLoader;
                     TypePool.CacheProvider cacheProvider = cacheProviders.get(classLoader);
                     while (cacheProvider == null) {
@@ -2709,24 +3534,12 @@ public interface AgentBuilder {
             /**
              * Registers a dynamic type for initialization and/or begins the initialization process.
              *
-             * @param dynamicType     The dynamic type that is created.
-             * @param classLoader     The class loader of the dynamic type.
-             * @param injectorFactory The injector factory
+             * @param dynamicType       The dynamic type that is created.
+             * @param classLoader       The class loader of the dynamic type which can be {@code null} to represent the bootstrap class loader.
+             * @param protectionDomain  The instrumented type's protection domain or {@code null} if no protection domain is available.
+             * @param injectionStrategy The injection strategy to use.
              */
-            void register(DynamicType dynamicType, ClassLoader classLoader, InjectorFactory injectorFactory);
-
-            /**
-             * A factory for creating a {@link ClassInjector} only if it is required.
-             */
-            interface InjectorFactory {
-
-                /**
-                 * Resolves the class injector for this factory.
-                 *
-                 * @return The class injector for this factory.
-                 */
-                ClassInjector resolve();
-            }
+            void register(DynamicType dynamicType, @MaybeNull ClassLoader classLoader, @MaybeNull ProtectionDomain protectionDomain, InjectionStrategy injectionStrategy);
         }
 
         /**
@@ -2739,18 +3552,24 @@ public interface AgentBuilder {
              */
             INSTANCE;
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Dispatcher dispatcher() {
                 return this;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public DynamicType.Builder<?> apply(DynamicType.Builder<?> builder) {
                 return builder;
             }
 
-            @Override
-            public void register(DynamicType dynamicType, ClassLoader classLoader, InjectorFactory injectorFactory) {
+            /**
+             * {@inheritDoc}
+             */
+            public void register(DynamicType dynamicType, @MaybeNull ClassLoader classLoader, @MaybeNull ProtectionDomain protectionDomain, InjectionStrategy injectionStrategy) {
                 /* do nothing */
             }
         }
@@ -2767,18 +3586,24 @@ public interface AgentBuilder {
              */
             INSTANCE;
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Dispatcher dispatcher() {
                 return this;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public DynamicType.Builder<?> apply(DynamicType.Builder<?> builder) {
                 return builder;
             }
 
-            @Override
-            public void register(DynamicType dynamicType, ClassLoader classLoader, InjectorFactory injectorFactory) {
+            /**
+             * {@inheritDoc}
+             */
+            public void register(DynamicType dynamicType, @MaybeNull ClassLoader classLoader, @MaybeNull ProtectionDomain protectionDomain, InjectionStrategy injectionStrategy) {
                 Map<TypeDescription, byte[]> auxiliaryTypes = dynamicType.getAuxiliaryTypes();
                 Map<TypeDescription, byte[]> independentTypes = new LinkedHashMap<TypeDescription, byte[]>(auxiliaryTypes);
                 for (TypeDescription auxiliaryType : auxiliaryTypes.keySet()) {
@@ -2787,7 +3612,7 @@ public interface AgentBuilder {
                     }
                 }
                 if (!independentTypes.isEmpty()) {
-                    ClassInjector classInjector = injectorFactory.resolve();
+                    ClassInjector classInjector = injectionStrategy.resolve(classLoader, protectionDomain);
                     Map<TypeDescription, LoadedTypeInitializer> loadedTypeInitializers = dynamicType.getLoadedTypeInitializers();
                     for (Map.Entry<TypeDescription, Class<?>> entry : classInjector.inject(independentTypes).entrySet()) {
                         loadedTypeInitializers.get(entry.getKey()).onLoad(entry.getValue());
@@ -2800,7 +3625,7 @@ public interface AgentBuilder {
          * An initialization strategy that adds a code block to an instrumented type's type initializer which
          * then calls a specific class that is responsible for the explicit initialization.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         abstract class SelfInjection implements InitializationStrategy {
 
             /**
@@ -2817,8 +3642,10 @@ public interface AgentBuilder {
                 this.nexusAccessor = nexusAccessor;
             }
 
-            @Override
-            @SuppressFBWarnings(value = "DMI_RANDOM_USED_ONLY_ONCE", justification = "Avoiding synchronization without security concerns")
+            /**
+             * {@inheritDoc}
+             */
+            @SuppressFBWarnings(value = "DMI_RANDOM_USED_ONLY_ONCE", justification = "Avoids thread-contention.")
             public InitializationStrategy.Dispatcher dispatcher() {
                 return dispatcher(new Random().nextInt());
             }
@@ -2834,7 +3661,7 @@ public interface AgentBuilder {
             /**
              * A dispatcher for a self-initialization strategy.
              */
-            @EqualsAndHashCode
+            @HashCodeAndEqualsPlugin.Enhance
             protected abstract static class Dispatcher implements InitializationStrategy.Dispatcher {
 
                 /**
@@ -2858,7 +3685,9 @@ public interface AgentBuilder {
                     this.identification = identification;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public DynamicType.Builder<?> apply(DynamicType.Builder<?> builder) {
                     return builder.initializer(new NexusAccessor.InitializationAppender(identification));
                 }
@@ -2866,7 +3695,7 @@ public interface AgentBuilder {
                 /**
                  * A type initializer that injects all auxiliary types of the instrumented type.
                  */
-                @EqualsAndHashCode
+                @HashCodeAndEqualsPlugin.Enhance
                 protected static class InjectingInitializer implements LoadedTypeInitializer {
 
                     /**
@@ -2908,7 +3737,9 @@ public interface AgentBuilder {
                         this.classInjector = classInjector;
                     }
 
-                    @Override
+                    /**
+                     * {@inheritDoc}
+                     */
                     public void onLoad(Class<?> type) {
                         for (Map.Entry<TypeDescription, Class<?>> auxiliary : classInjector.inject(rawAuxiliaryTypes).entrySet()) {
                             loadedTypeInitializers.get(auxiliary.getKey()).onLoad(auxiliary.getValue());
@@ -2916,7 +3747,9 @@ public interface AgentBuilder {
                         loadedTypeInitializers.get(instrumentedType).onLoad(type);
                     }
 
-                    @Override
+                    /**
+                     * {@inheritDoc}
+                     */
                     public boolean isAlive() {
                         return true;
                     }
@@ -2966,13 +3799,15 @@ public interface AgentBuilder {
                         super(nexusAccessor, identification);
                     }
 
-                    @Override
-                    public void register(DynamicType dynamicType, ClassLoader classLoader, InitializationStrategy.Dispatcher.InjectorFactory injectorFactory) {
+                    /**
+                     * {@inheritDoc}
+                     */
+                    public void register(DynamicType dynamicType, @MaybeNull ClassLoader classLoader, @MaybeNull ProtectionDomain protectionDomain, InjectionStrategy injectionStrategy) {
                         Map<TypeDescription, byte[]> auxiliaryTypes = dynamicType.getAuxiliaryTypes();
                         LoadedTypeInitializer loadedTypeInitializer;
                         if (!auxiliaryTypes.isEmpty()) {
                             TypeDescription instrumentedType = dynamicType.getTypeDescription();
-                            ClassInjector classInjector = injectorFactory.resolve();
+                            ClassInjector classInjector = injectionStrategy.resolve(classLoader, protectionDomain);
                             Map<TypeDescription, byte[]> independentTypes = new LinkedHashMap<TypeDescription, byte[]>(auxiliaryTypes);
                             Map<TypeDescription, byte[]> dependentTypes = new LinkedHashMap<TypeDescription, byte[]>(auxiliaryTypes);
                             for (TypeDescription auxiliaryType : auxiliaryTypes.keySet()) {
@@ -3040,12 +3875,14 @@ public interface AgentBuilder {
                         super(nexusAccessor, identification);
                     }
 
-                    @Override
-                    public void register(DynamicType dynamicType, ClassLoader classLoader, InitializationStrategy.Dispatcher.InjectorFactory injectorFactory) {
+                    /**
+                     * {@inheritDoc}
+                     */
+                    public void register(DynamicType dynamicType, @MaybeNull ClassLoader classLoader, @MaybeNull ProtectionDomain protectionDomain, InjectionStrategy injectionStrategy) {
                         Map<TypeDescription, byte[]> auxiliaryTypes = dynamicType.getAuxiliaryTypes();
                         LoadedTypeInitializer loadedTypeInitializer = auxiliaryTypes.isEmpty()
                                 ? dynamicType.getLoadedTypeInitializers().get(dynamicType.getTypeDescription())
-                                : new Dispatcher.InjectingInitializer(dynamicType.getTypeDescription(), auxiliaryTypes, dynamicType.getLoadedTypeInitializers(), injectorFactory.resolve());
+                                : new Dispatcher.InjectingInitializer(dynamicType.getTypeDescription(), auxiliaryTypes, dynamicType.getLoadedTypeInitializers(), injectionStrategy.resolve(classLoader, protectionDomain));
                         nexusAccessor.register(dynamicType.getTypeDescription().getName(), classLoader, identification, loadedTypeInitializer);
                     }
                 }
@@ -3092,12 +3929,14 @@ public interface AgentBuilder {
                         super(nexusAccessor, identification);
                     }
 
-                    @Override
-                    public void register(DynamicType dynamicType, ClassLoader classLoader, InitializationStrategy.Dispatcher.InjectorFactory injectorFactory) {
+                    /**
+                     * {@inheritDoc}
+                     */
+                    public void register(DynamicType dynamicType, @MaybeNull ClassLoader classLoader, @MaybeNull ProtectionDomain protectionDomain, InjectionStrategy injectionStrategy) {
                         Map<TypeDescription, byte[]> auxiliaryTypes = dynamicType.getAuxiliaryTypes();
                         Map<TypeDescription, LoadedTypeInitializer> loadedTypeInitializers = dynamicType.getLoadedTypeInitializers();
                         if (!auxiliaryTypes.isEmpty()) {
-                            for (Map.Entry<TypeDescription, Class<?>> entry : injectorFactory.resolve().inject(auxiliaryTypes).entrySet()) {
+                            for (Map.Entry<TypeDescription, Class<?>> entry : injectionStrategy.resolve(classLoader, protectionDomain).inject(auxiliaryTypes).entrySet()) {
                                 loadedTypeInitializers.get(entry.getKey()).onLoad(entry.getValue());
                             }
                         }
@@ -3105,6 +3944,172 @@ public interface AgentBuilder {
                         nexusAccessor.register(dynamicType.getTypeDescription().getName(), classLoader, identification, loadedTypeInitializer);
                     }
                 }
+            }
+        }
+    }
+
+    /**
+     * A strategy for injecting auxiliary types into a class loader.
+     */
+    interface InjectionStrategy {
+
+        /**
+         * Resolves the class injector to use for a given class loader and protection domain.
+         *
+         * @param classLoader      The class loader to use or {@code null} if using the bootstrap loader.
+         * @param protectionDomain The protection domain to use or {@code null} if all privileges should be assigned.
+         * @return The class injector to use.
+         */
+        ClassInjector resolve(@MaybeNull ClassLoader classLoader, @MaybeNull ProtectionDomain protectionDomain);
+
+        /**
+         * An injection strategy that does not permit class injection.
+         */
+        enum Disabled implements InjectionStrategy {
+
+            /**
+             * The singleton instance.
+             */
+            INSTANCE;
+
+            /**
+             * {@inheritDoc}
+             */
+            public ClassInjector resolve(@MaybeNull ClassLoader classLoader, @MaybeNull ProtectionDomain protectionDomain) {
+                throw new IllegalStateException("Class injection is disabled");
+            }
+        }
+
+        /**
+         * An injection strategy that uses Java reflection. This strategy is not capable of injecting classes into the bootstrap class loader.
+         */
+        enum UsingReflection implements InjectionStrategy {
+
+            /**
+             * The singleton instance.
+             */
+            INSTANCE;
+
+            /**
+             * {@inheritDoc}
+             */
+            public ClassInjector resolve(@MaybeNull ClassLoader classLoader, @MaybeNull ProtectionDomain protectionDomain) {
+                if (classLoader == null) {
+                    throw new IllegalStateException("Cannot inject auxiliary class into bootstrap loader using reflection");
+                } else if (ClassInjector.UsingReflection.isAvailable()) {
+                    return new ClassInjector.UsingReflection(classLoader, protectionDomain);
+                } else {
+                    throw new IllegalStateException("Reflection-based injection is not available on the current VM");
+                }
+            }
+        }
+
+        /**
+         * An injection strategy that uses {@code sun.misc.Unsafe} or {@code jdk.internal.misc.Unsafe} to inject classes.
+         */
+        enum UsingUnsafe implements InjectionStrategy {
+
+            /**
+             * The singleton instance.
+             */
+            INSTANCE;
+
+            /**
+             * {@inheritDoc}
+             */
+            public ClassInjector resolve(@MaybeNull ClassLoader classLoader, @MaybeNull ProtectionDomain protectionDomain) {
+                if (ClassInjector.UsingUnsafe.isAvailable()) {
+                    return new ClassInjector.UsingUnsafe(classLoader, protectionDomain);
+                } else {
+                    throw new IllegalStateException("Unsafe-based injection is not available on the current VM");
+                }
+            }
+
+            /**
+             * An injection strategy that uses a factory for creating an unsafe injector.
+             */
+            @HashCodeAndEqualsPlugin.Enhance
+            public static class OfFactory implements InjectionStrategy {
+
+                /**
+                 * The factory to use for creating an unsafe injector.
+                 */
+                private final ClassInjector.UsingUnsafe.Factory factory;
+
+                /**
+                 * Creates an injection strategy based on a factory.
+                 *
+                 * @param factory The factory to use for creating an unsafe injector.
+                 */
+                public OfFactory(ClassInjector.UsingUnsafe.Factory factory) {
+                    this.factory = factory;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public ClassInjector resolve(@MaybeNull ClassLoader classLoader, @MaybeNull ProtectionDomain protectionDomain) {
+                    return factory.make(classLoader, protectionDomain);
+                }
+            }
+        }
+
+        /**
+         * An injection strategy that uses JNA to inject classes. This strategy is only available if JNA was added as a dependency.
+         */
+        enum UsingJna implements InjectionStrategy {
+
+            /**
+             * The singleton instance.
+             */
+            INSTANCE;
+
+            /**
+             * {@inheritDoc}
+             */
+            public ClassInjector resolve(@MaybeNull ClassLoader classLoader, @MaybeNull ProtectionDomain protectionDomain) {
+                if (ClassInjector.UsingJna.isAvailable()) {
+                    return new ClassInjector.UsingJna(classLoader, protectionDomain);
+                } else {
+                    throw new IllegalStateException("JNA-based injection is not available on the current VM");
+                }
+            }
+        }
+
+        /**
+         * An injection strategy that uses bootstrap injection using an {@link Instrumentation} instance.
+         */
+        @HashCodeAndEqualsPlugin.Enhance
+        class UsingInstrumentation implements InjectionStrategy {
+
+            /**
+             * The instrumentation instance to use.
+             */
+            private final Instrumentation instrumentation;
+
+            /**
+             * The folder to store jar files being used for bootstrap injection.
+             */
+            private final File folder;
+
+            /**
+             * Creates a new bootstrap injection strategy.
+             *
+             * @param instrumentation The instrumentation instance to use.
+             * @param folder          The folder to store jar files being used for bootstrap injection.
+             */
+            public UsingInstrumentation(Instrumentation instrumentation, File folder) {
+                this.instrumentation = instrumentation;
+                this.folder = folder;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public ClassInjector resolve(@MaybeNull ClassLoader classLoader, @MaybeNull ProtectionDomain protectionDomain) {
+                return classLoader == null
+                        ? ClassInjector.UsingInstrumentation.of(folder, ClassInjector.UsingInstrumentation.Target.BOOTSTRAP, instrumentation)
+                        : UsingReflection.INSTANCE.resolve(classLoader, protectionDomain);
             }
         }
     }
@@ -3125,7 +4130,7 @@ public interface AgentBuilder {
         /**
          * Describes the given type.
          *
-         * @param typeName        The binary name of the type to describe.
+         * @param name            The binary name of the type to describe.
          * @param type            The type that is being redefined, if a redefinition is applied or {@code null} if no redefined type is available.
          * @param typePool        The type pool to use for locating a type if required.
          * @param classLoader     The type's class loader where {@code null} represents the bootstrap class loader.
@@ -3133,7 +4138,7 @@ public interface AgentBuilder {
          * @param module          The type's module or {@code null} if the current VM does not support modules.
          * @return An appropriate type description.
          */
-        TypeDescription apply(String typeName, Class<?> type, TypePool typePool, CircularityLock circularityLock, ClassLoader classLoader, JavaModule module);
+        TypeDescription apply(String name, @MaybeNull Class<?> type, TypePool typePool, CircularityLock circularityLock, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module);
 
         /**
          * Default implementations of a {@link DescriptionStrategy}.
@@ -3153,16 +4158,16 @@ public interface AgentBuilder {
              * @see FallbackStrategy.ByThrowableType#ofOptionalTypes()
              */
             HYBRID(true) {
-                @Override
-                public TypeDescription apply(String typeName,
-                                             Class<?> type,
+                /** {@inheritDoc} */
+                public TypeDescription apply(String name,
+                                             @MaybeNull Class<?> type,
                                              TypePool typePool,
                                              CircularityLock circularityLock,
-                                             ClassLoader classLoader,
-                                             JavaModule module) {
+                                             @MaybeNull ClassLoader classLoader,
+                                             @MaybeNull JavaModule module) {
                     return type == null
-                            ? typePool.describe(typeName).resolve()
-                            : new TypeDescription.ForLoadedType(type);
+                            ? typePool.describe(name).resolve()
+                            : TypeDescription.ForLoadedType.of(type);
                 }
             },
 
@@ -3180,14 +4185,14 @@ public interface AgentBuilder {
              * </p>
              */
             POOL_ONLY(false) {
-                @Override
-                public TypeDescription apply(String typeName,
-                                             Class<?> type,
+                /** {@inheritDoc} */
+                public TypeDescription apply(String name,
+                                             @MaybeNull Class<?> type,
                                              TypePool typePool,
                                              CircularityLock circularityLock,
-                                             ClassLoader classLoader,
-                                             JavaModule module) {
-                    return typePool.describe(typeName).resolve();
+                                             @MaybeNull ClassLoader classLoader,
+                                             @MaybeNull JavaModule module) {
+                    return typePool.describe(name).resolve();
                 }
             },
 
@@ -3204,17 +4209,17 @@ public interface AgentBuilder {
              * </p>
              */
             POOL_FIRST(false) {
-                @Override
-                public TypeDescription apply(String typeName,
-                                             Class<?> type,
+                /** {@inheritDoc} */
+                public TypeDescription apply(String name,
+                                             @MaybeNull Class<?> type,
                                              TypePool typePool,
                                              CircularityLock circularityLock,
-                                             ClassLoader classLoader,
-                                             JavaModule module) {
-                    TypePool.Resolution resolution = typePool.describe(typeName);
+                                             @MaybeNull ClassLoader classLoader,
+                                             @MaybeNull JavaModule module) {
+                    TypePool.Resolution resolution = typePool.describe(name);
                     return resolution.isResolved() || type == null
                             ? resolution.resolve()
-                            : new TypeDescription.ForLoadedType(type);
+                            : TypeDescription.ForLoadedType.of(type);
                 }
             };
 
@@ -3244,7 +4249,9 @@ public interface AgentBuilder {
                 return new SuperTypeLoading(this);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public boolean isLoadedFirst() {
                 return loadedFirst;
             }
@@ -3274,7 +4281,7 @@ public interface AgentBuilder {
          * The instrumentation API does not submit such types to a class file transformer on most VM implementations.
          * </p>
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class SuperTypeLoading implements DescriptionStrategy {
 
             /**
@@ -3291,19 +4298,23 @@ public interface AgentBuilder {
                 this.delegate = delegate;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public boolean isLoadedFirst() {
                 return delegate.isLoadedFirst();
             }
 
-            @Override
-            public TypeDescription apply(String typeName,
-                                         Class<?> type,
+            /**
+             * {@inheritDoc}
+             */
+            public TypeDescription apply(String name,
+                                         @MaybeNull Class<?> type,
                                          TypePool typePool,
                                          CircularityLock circularityLock,
-                                         ClassLoader classLoader,
-                                         JavaModule module) {
-                TypeDescription typeDescription = delegate.apply(typeName, type, typePool, circularityLock, classLoader, module);
+                                         @MaybeNull ClassLoader classLoader,
+                                         @MaybeNull JavaModule module) {
+                TypeDescription typeDescription = delegate.apply(name, type, typePool, circularityLock, classLoader, module);
                 return typeDescription instanceof TypeDescription.ForLoadedType
                         ? typeDescription
                         : new TypeDescription.SuperTypeLoading(typeDescription, classLoader, new UnlockingClassLoadingDelegate(circularityLock));
@@ -3312,7 +4323,7 @@ public interface AgentBuilder {
             /**
              * A class loading delegate that unlocks the circularity lock during class loading.
              */
-            @EqualsAndHashCode
+            @HashCodeAndEqualsPlugin.Enhance
             protected static class UnlockingClassLoadingDelegate implements TypeDescription.SuperTypeLoading.ClassLoadingDelegate {
 
                 /**
@@ -3329,8 +4340,10 @@ public interface AgentBuilder {
                     this.circularityLock = circularityLock;
                 }
 
-                @Override
-                public Class<?> load(String name, ClassLoader classLoader) throws ClassNotFoundException {
+                /**
+                 * {@inheritDoc}
+                 */
+                public Class<?> load(String name, @MaybeNull ClassLoader classLoader) throws ClassNotFoundException {
                     circularityLock.release();
                     try {
                         return Class.forName(name, false, classLoader);
@@ -3370,7 +4383,7 @@ public interface AgentBuilder {
              * might contain corrupt class files.
              * </p>
              */
-            @EqualsAndHashCode
+            @HashCodeAndEqualsPlugin.Enhance
             public static class Asynchronous implements DescriptionStrategy {
 
                 /**
@@ -3394,19 +4407,23 @@ public interface AgentBuilder {
                     this.executorService = executorService;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public boolean isLoadedFirst() {
                     return delegate.isLoadedFirst();
                 }
 
-                @Override
-                public TypeDescription apply(String typeName,
-                                             Class<?> type,
+                /**
+                 * {@inheritDoc}
+                 */
+                public TypeDescription apply(String name,
+                                             @MaybeNull Class<?> type,
                                              TypePool typePool,
                                              CircularityLock circularityLock,
-                                             ClassLoader classLoader,
-                                             JavaModule module) {
-                    TypeDescription typeDescription = delegate.apply(typeName, type, typePool, circularityLock, classLoader, module);
+                                             @MaybeNull ClassLoader classLoader,
+                                             @MaybeNull JavaModule module) {
+                    TypeDescription typeDescription = delegate.apply(name, type, typePool, circularityLock, classLoader, module);
                     return typeDescription instanceof TypeDescription.ForLoadedType
                             ? typeDescription
                             : new TypeDescription.SuperTypeLoading(typeDescription, classLoader, new ThreadSwitchingClassLoadingDelegate(executorService));
@@ -3415,7 +4432,7 @@ public interface AgentBuilder {
                 /**
                  * A class loading delegate that delegates loading of the super type to another thread.
                  */
-                @EqualsAndHashCode
+                @HashCodeAndEqualsPlugin.Enhance
                 protected static class ThreadSwitchingClassLoadingDelegate implements TypeDescription.SuperTypeLoading.ClassLoadingDelegate {
 
                     /**
@@ -3432,8 +4449,10 @@ public interface AgentBuilder {
                         this.executorService = executorService;
                     }
 
-                    @Override
-                    public Class<?> load(String name, ClassLoader classLoader) throws ClassNotFoundException {
+                    /**
+                     * {@inheritDoc}
+                     */
+                    public Class<?> load(String name, @MaybeNull ClassLoader classLoader) {
                         boolean holdsLock = classLoader != null && Thread.holdsLock(classLoader);
                         AtomicBoolean signal = new AtomicBoolean(holdsLock);
                         Future<Class<?>> future = executorService.submit(holdsLock
@@ -3454,7 +4473,7 @@ public interface AgentBuilder {
                     /**
                      * A class loading action that simply loads a type.
                      */
-                    @EqualsAndHashCode
+                    @HashCodeAndEqualsPlugin.Enhance
                     protected static class SimpleClassLoadingAction implements Callable<Class<?>> {
 
                         /**
@@ -3465,6 +4484,8 @@ public interface AgentBuilder {
                         /**
                          * The type's class loader or {@code null} if the type is loaded by the bootstrap loader.
                          */
+                        @MaybeNull
+                        @HashCodeAndEqualsPlugin.ValueHandling(HashCodeAndEqualsPlugin.ValueHandling.Sort.REVERSE_NULLABILITY)
                         private final ClassLoader classLoader;
 
                         /**
@@ -3473,12 +4494,14 @@ public interface AgentBuilder {
                          * @param name        The loaded type's name.
                          * @param classLoader The type's class loader or {@code null} if the type is loaded by the bootstrap loader.
                          */
-                        protected SimpleClassLoadingAction(String name, ClassLoader classLoader) {
+                        protected SimpleClassLoadingAction(String name, @MaybeNull ClassLoader classLoader) {
                             this.name = name;
                             this.classLoader = classLoader;
                         }
 
-                        @Override
+                        /**
+                         * {@inheritDoc}
+                         */
                         public Class<?> call() throws ClassNotFoundException {
                             return Class.forName(name, false, classLoader);
                         }
@@ -3487,6 +4510,7 @@ public interface AgentBuilder {
                     /**
                      * A class loading action that notifies the class loader's lock after the type was loaded.
                      */
+                    @HashCodeAndEqualsPlugin.Enhance
                     protected static class NotifyingClassLoadingAction implements Callable<Class<?>> {
 
                         /**
@@ -3495,7 +4519,7 @@ public interface AgentBuilder {
                         private final String name;
 
                         /**
-                         * The type's class loader or {@code null} if the type is loaded by the bootstrap loader.
+                         * The type's class loader which must not be the boot loader, i.e {@code null}.
                          */
                         private final ClassLoader classLoader;
 
@@ -3508,7 +4532,7 @@ public interface AgentBuilder {
                          * Creates a notifying class loading action.
                          *
                          * @param name        The loaded type's name.
-                         * @param classLoader The type's class loader or {@code null} if the type is loaded by the bootstrap loader.
+                         * @param classLoader The type's class loader which must not be the boot loader, i.e {@code null}.
                          * @param signal      The signal that indicates the completion of the class loading with {@code false}.
                          */
                         protected NotifyingClassLoadingAction(String name, ClassLoader classLoader, AtomicBoolean signal) {
@@ -3517,7 +4541,9 @@ public interface AgentBuilder {
                             this.signal = signal;
                         }
 
-                        @Override
+                        /**
+                         * {@inheritDoc}
+                         */
                         public Class<?> call() throws ClassNotFoundException {
                             synchronized (classLoader) {
                                 try {
@@ -3546,7 +4572,7 @@ public interface AgentBuilder {
          * @param module      The type's module or {@code null} if Java modules are not supported on the current VM.
          * @return The class file locator to use.
          */
-        ClassFileLocator classFileLocator(ClassLoader classLoader, JavaModule module);
+        ClassFileLocator classFileLocator(@MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module);
 
         /**
          * A location strategy that never locates any byte code.
@@ -3558,8 +4584,10 @@ public interface AgentBuilder {
              */
             INSTANCE;
 
-            @Override
-            public ClassFileLocator classFileLocator(ClassLoader classLoader, JavaModule module) {
+            /**
+             * {@inheritDoc}
+             */
+            public ClassFileLocator classFileLocator(@MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module) {
                 return ClassFileLocator.NoOp.INSTANCE;
             }
         }
@@ -3573,8 +4601,8 @@ public interface AgentBuilder {
              * A location strategy that keeps a strong reference to the class loader the created class file locator represents.
              */
             STRONG {
-                @Override
-                public ClassFileLocator classFileLocator(ClassLoader classLoader, JavaModule module) {
+                /** {@inheritDoc} */
+                public ClassFileLocator classFileLocator(@MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module) {
                     return ClassFileLocator.ForClassLoader.of(classLoader);
                 }
             },
@@ -3584,8 +4612,8 @@ public interface AgentBuilder {
              * As a consequence, any returned class file locator stops working once the represented class loader is garbage collected.
              */
             WEAK {
-                @Override
-                public ClassFileLocator classFileLocator(ClassLoader classLoader, JavaModule module) {
+                /** {@inheritDoc} */
+                public ClassFileLocator classFileLocator(@MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module) {
                     return ClassFileLocator.ForClassLoader.WeaklyReferenced.of(classLoader);
                 }
             };
@@ -3643,7 +4671,7 @@ public interface AgentBuilder {
         /**
          * A simple location strategy that queries a given class file locator.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class Simple implements LocationStrategy {
 
             /**
@@ -3660,8 +4688,10 @@ public interface AgentBuilder {
                 this.classFileLocator = classFileLocator;
             }
 
-            @Override
-            public ClassFileLocator classFileLocator(ClassLoader classLoader, JavaModule module) {
+            /**
+             * {@inheritDoc}
+             */
+            public ClassFileLocator classFileLocator(@MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module) {
                 return classFileLocator;
             }
         }
@@ -3669,7 +4699,7 @@ public interface AgentBuilder {
         /**
          * A compound location strategy that applies a list of location strategies.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class Compound implements LocationStrategy {
 
             /**
@@ -3702,8 +4732,10 @@ public interface AgentBuilder {
                 }
             }
 
-            @Override
-            public ClassFileLocator classFileLocator(ClassLoader classLoader, JavaModule module) {
+            /**
+             * {@inheritDoc}
+             */
+            public ClassFileLocator classFileLocator(@MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module) {
                 List<ClassFileLocator> classFileLocators = new ArrayList<ClassFileLocator>(locationStrategies.size());
                 for (LocationStrategy locationStrategy : locationStrategies) {
                     classFileLocators.add(locationStrategy.classFileLocator(classLoader, module));
@@ -3760,7 +4792,9 @@ public interface AgentBuilder {
                 this.enabled = enabled;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public boolean isFallback(Class<?> type, Throwable throwable) {
                 return enabled;
             }
@@ -3769,7 +4803,7 @@ public interface AgentBuilder {
         /**
          * A fallback strategy that discriminates by the type of the {@link Throwable} that triggered a request.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class ByThrowableType implements FallbackStrategy {
 
             /**
@@ -3782,7 +4816,7 @@ public interface AgentBuilder {
              *
              * @param type The throwable types that should trigger a fallback.
              */
-            @SuppressWarnings("unchecked") // In absence of @SafeVarargs for Java 6
+            @SuppressWarnings("unchecked") // In absence of @SafeVarargs
             public ByThrowableType(Class<? extends Throwable>... type) {
                 this(new HashSet<Class<? extends Throwable>>(Arrays.asList(type)));
             }
@@ -3801,12 +4835,14 @@ public interface AgentBuilder {
              *
              * @return A fallback strategy that triggers a reattempt if a {@link LinkageError} or a {@link TypeNotPresentException} is raised.
              */
-            @SuppressWarnings("unchecked") // In absence of @SafeVarargs for Java 6
+            @SuppressWarnings("unchecked") // In absence of @SafeVarargs
             public static FallbackStrategy ofOptionalTypes() {
                 return new ByThrowableType(LinkageError.class, TypeNotPresentException.class);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public boolean isFallback(Class<?> type, Throwable throwable) {
                 for (Class<? extends Throwable> aType : types) {
                     if (aType.isInstance(throwable)) {
@@ -3826,6 +4862,7 @@ public interface AgentBuilder {
         /**
          * Indicates that an exception is handled.
          */
+        @AlwaysNull
         Throwable SUPPRESS_ERROR = null;
 
         /**
@@ -3854,6 +4891,7 @@ public interface AgentBuilder {
          * @param throwable            The throwable that causes the error.
          * @return The error to propagate or {@code null} if the error is handled. Any subsequent listeners are not called if the exception is handled.
          */
+        @MaybeNull
         Throwable onError(Instrumentation instrumentation, ResettableClassFileTransformer classFileTransformer, Throwable throwable);
 
         /**
@@ -3865,6 +4903,33 @@ public interface AgentBuilder {
         void onReset(Instrumentation instrumentation, ResettableClassFileTransformer classFileTransformer);
 
         /**
+         * Invoked before a warump is executed.
+         *
+         * @param types                The types that are used for the warmup.
+         * @param classFileTransformer The class file transformer that is warmed up.
+         */
+        void onBeforeWarmUp(Set<Class<?>> types, ResettableClassFileTransformer classFileTransformer);
+
+        /**
+         * Invoked when a class yields an unexpected error that is not catched by the listener.
+         *
+         * @param type                 The type that caused the error.
+         * @param classFileTransformer The class file transformer that is warmed up.
+         * @param throwable            The throwable that represents the error.
+         */
+        void onWarmUpError(Class<?> type, ResettableClassFileTransformer classFileTransformer, Throwable throwable);
+
+        /**
+         * Invoked after a warump is executed.
+         *
+         * @param types                The types that are used for the warmup mapped to their transformed byte code
+         *                             or {@code null} if the type was not transformed or failed to transform.
+         * @param classFileTransformer The class file transformer that is warmed up.
+         * @param transformed          {@code true} if at least one class caused an actual transformation.
+         */
+        void onAfterWarmUp(Map<Class<?>, byte[]> types, ResettableClassFileTransformer classFileTransformer, boolean transformed);
+
+        /**
          * A non-operational listener that does not do anything.
          */
         enum NoOp implements InstallationListener {
@@ -3874,23 +4939,52 @@ public interface AgentBuilder {
              */
             INSTANCE;
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public void onBeforeInstall(Instrumentation instrumentation, ResettableClassFileTransformer classFileTransformer) {
                 /* do nothing */
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public void onInstall(Instrumentation instrumentation, ResettableClassFileTransformer classFileTransformer) {
                 /* do nothing */
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Throwable onError(Instrumentation instrumentation, ResettableClassFileTransformer classFileTransformer, Throwable throwable) {
                 return throwable;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public void onReset(Instrumentation instrumentation, ResettableClassFileTransformer classFileTransformer) {
+                /* do nothing */
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public void onBeforeWarmUp(Set<Class<?>> types, ResettableClassFileTransformer classFileTransformer) {
+                /* do nothing */
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public void onWarmUpError(Class<?> type, ResettableClassFileTransformer classFileTransformer, Throwable throwable) {
+                /* do nothing */
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public void onAfterWarmUp(Map<Class<?>, byte[]> types, ResettableClassFileTransformer classFileTransformer, boolean transformed) {
                 /* do nothing */
             }
         }
@@ -3905,23 +4999,53 @@ public interface AgentBuilder {
              */
             INSTANCE;
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public void onBeforeInstall(Instrumentation instrumentation, ResettableClassFileTransformer classFileTransformer) {
                 /* do nothing */
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public void onInstall(Instrumentation instrumentation, ResettableClassFileTransformer classFileTransformer) {
                 /* do nothing */
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
+            @MaybeNull
             public Throwable onError(Instrumentation instrumentation, ResettableClassFileTransformer classFileTransformer, Throwable throwable) {
                 return SUPPRESS_ERROR;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public void onReset(Instrumentation instrumentation, ResettableClassFileTransformer classFileTransformer) {
+                /* do nothing */
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public void onBeforeWarmUp(Set<Class<?>> types, ResettableClassFileTransformer classFileTransformer) {
+                /* do nothing */
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public void onWarmUpError(Class<?> type, ResettableClassFileTransformer classFileTransformer, Throwable throwable) {
+                /* do nothing */
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public void onAfterWarmUp(Map<Class<?>, byte[]> types, ResettableClassFileTransformer classFileTransformer, boolean transformed) {
                 /* do nothing */
             }
         }
@@ -3931,23 +5055,52 @@ public interface AgentBuilder {
          */
         abstract class Adapter implements InstallationListener {
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public void onBeforeInstall(Instrumentation instrumentation, ResettableClassFileTransformer classFileTransformer) {
                 /* do nothing */
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public void onInstall(Instrumentation instrumentation, ResettableClassFileTransformer classFileTransformer) {
                 /* do nothing */
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Throwable onError(Instrumentation instrumentation, ResettableClassFileTransformer classFileTransformer, Throwable throwable) {
                 return throwable;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public void onReset(Instrumentation instrumentation, ResettableClassFileTransformer classFileTransformer) {
+                /* do nothing */
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public void onBeforeWarmUp(Set<Class<?>> types, ResettableClassFileTransformer classFileTransformer) {
+                /* do nothing */
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public void onWarmUpError(Class<?> type, ResettableClassFileTransformer classFileTransformer, Throwable throwable) {
+                /* do nothing */
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public void onAfterWarmUp(Map<Class<?>, byte[]> types, ResettableClassFileTransformer classFileTransformer, boolean transformed) {
                 /* do nothing */
             }
         }
@@ -3955,7 +5108,7 @@ public interface AgentBuilder {
         /**
          * This installation listener prints the status of any installation to a {@link PrintStream}.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class StreamWriting implements InstallationListener {
 
             /**
@@ -3995,17 +5148,23 @@ public interface AgentBuilder {
                 return new StreamWriting(System.err);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public void onBeforeInstall(Instrumentation instrumentation, ResettableClassFileTransformer classFileTransformer) {
                 printStream.printf(PREFIX + " BEFORE_INSTALL %s on %s%n", classFileTransformer, instrumentation);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public void onInstall(Instrumentation instrumentation, ResettableClassFileTransformer classFileTransformer) {
                 printStream.printf(PREFIX + " INSTALL %s on %s%n", classFileTransformer, instrumentation);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Throwable onError(Instrumentation instrumentation, ResettableClassFileTransformer classFileTransformer, Throwable throwable) {
                 synchronized (printStream) {
                     printStream.printf(PREFIX + " ERROR %s on %s%n", classFileTransformer, instrumentation);
@@ -4014,16 +5173,42 @@ public interface AgentBuilder {
                 return throwable;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public void onReset(Instrumentation instrumentation, ResettableClassFileTransformer classFileTransformer) {
                 printStream.printf(PREFIX + " RESET %s on %s%n", classFileTransformer, instrumentation);
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public void onBeforeWarmUp(Set<Class<?>> types, ResettableClassFileTransformer classFileTransformer) {
+                printStream.printf(PREFIX + " BEFORE_WARMUP %s on %s%n", classFileTransformer, types);
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public void onWarmUpError(Class<?> type, ResettableClassFileTransformer classFileTransformer, Throwable throwable) {
+                synchronized (printStream) {
+                    printStream.printf(PREFIX + " ERROR_WARMUP %s on %s%n", classFileTransformer, type);
+                    throwable.printStackTrace(printStream);
+                }
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public void onAfterWarmUp(Map<Class<?>, byte[]> types, ResettableClassFileTransformer classFileTransformer, boolean transformed) {
+                printStream.printf(PREFIX + " AFTER_WARMUP %s %s on %s%n", transformed ? "transformed" : "not transformed", classFileTransformer, types.keySet());
             }
         }
 
         /**
          * A compound installation listener.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class Compound implements InstallationListener {
 
             /**
@@ -4056,21 +5241,28 @@ public interface AgentBuilder {
                 }
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public void onBeforeInstall(Instrumentation instrumentation, ResettableClassFileTransformer classFileTransformer) {
                 for (InstallationListener installationListener : installationListeners) {
                     installationListener.onBeforeInstall(instrumentation, classFileTransformer);
                 }
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public void onInstall(Instrumentation instrumentation, ResettableClassFileTransformer classFileTransformer) {
                 for (InstallationListener installationListener : installationListeners) {
                     installationListener.onInstall(instrumentation, classFileTransformer);
                 }
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
+            @MaybeNull
             public Throwable onError(Instrumentation instrumentation, ResettableClassFileTransformer classFileTransformer, Throwable throwable) {
                 for (InstallationListener installationListener : installationListeners) {
                     if (throwable == SUPPRESS_ERROR) {
@@ -4081,11 +5273,203 @@ public interface AgentBuilder {
                 return throwable;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public void onReset(Instrumentation instrumentation, ResettableClassFileTransformer classFileTransformer) {
                 for (InstallationListener installationListener : installationListeners) {
                     installationListener.onReset(instrumentation, classFileTransformer);
                 }
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public void onBeforeWarmUp(Set<Class<?>> types, ResettableClassFileTransformer classFileTransformer) {
+                for (InstallationListener installationListener : installationListeners) {
+                    installationListener.onBeforeWarmUp(types, classFileTransformer);
+                }
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public void onWarmUpError(Class<?> type, ResettableClassFileTransformer classFileTransformer, Throwable throwable) {
+                for (InstallationListener installationListener : installationListeners) {
+                    installationListener.onWarmUpError(type, classFileTransformer, throwable);
+                }
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public void onAfterWarmUp(Map<Class<?>, byte[]> types, ResettableClassFileTransformer classFileTransformer, boolean transformed) {
+                for (InstallationListener installationListener : installationListeners) {
+                    installationListener.onAfterWarmUp(types, classFileTransformer, transformed);
+                }
+            }
+        }
+    }
+
+    /**
+     * This strategy determines how the provided class file buffer is used.
+     */
+    interface ClassFileBufferStrategy {
+
+        /**
+         * Resolves a class file locator for the class file buffer that is provided to the class file transformer.
+         *
+         * @param name                 The instrumented type's binary name.
+         * @param binaryRepresentation The instrumented type's binary representation.
+         * @param classLoader          The instrumented type's class loader or {@code null} if the type is loaded by the bootstrap class loader.
+         * @param module               The instrumented type's module or {@code null} if the current VM does not support modules.
+         * @param protectionDomain     The instrumented type's protection domain.
+         * @return An appropriate class file locator.
+         */
+        ClassFileLocator resolve(String name, byte[] binaryRepresentation, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module, ProtectionDomain protectionDomain);
+
+        /**
+         * Resolves the type pool for a given type name by the supplied {@link PoolStrategy}.
+         *
+         * @param poolStrategy     The pool strategy to use.
+         * @param classFileLocator The class file locator to use.
+         * @param classLoader      The class loader to use.
+         * @param name             The name of the type for which the type pool is resolved.
+         * @return A suitable type pool.
+         */
+        TypePool typePool(PoolStrategy poolStrategy, ClassFileLocator classFileLocator, @MaybeNull ClassLoader classLoader, String name);
+
+        /**
+         * An implementation of default class file buffer strategy.
+         */
+        enum Default implements ClassFileBufferStrategy {
+
+            /**
+             * A class file buffer strategy that retains the original class file buffer.
+             */
+            RETAINING {
+                /** {@inheritDoc} */
+                public ClassFileLocator resolve(String name,
+                                                byte[] binaryRepresentation,
+                                                @MaybeNull ClassLoader classLoader,
+                                                @MaybeNull JavaModule module,
+                                                ProtectionDomain protectionDomain) {
+                    return ClassFileLocator.Simple.of(name, binaryRepresentation);
+                }
+
+                /** {@inheritDoc} */
+                public TypePool typePool(PoolStrategy poolStrategy,
+                                         ClassFileLocator classFileLocator,
+                                         @MaybeNull ClassLoader classLoader,
+                                         String name) {
+                    return poolStrategy.typePool(classFileLocator, classLoader, name);
+                }
+            },
+
+            /**
+             * <p>
+             * A class file buffer strategy that discards the original class file buffer.
+             * </p>
+             * <p>
+             * <b>Warning</b>: This strategy discards any changes that were applied by previous Java agents.
+             * </p>
+             */
+            DISCARDING {
+                /** {@inheritDoc} */
+                public ClassFileLocator resolve(String name,
+                                                byte[] binaryRepresentation,
+                                                @MaybeNull ClassLoader classLoader,
+                                                @MaybeNull JavaModule module,
+                                                ProtectionDomain protectionDomain) {
+                    return ClassFileLocator.NoOp.INSTANCE;
+                }
+
+                /** {@inheritDoc} */
+                public TypePool typePool(PoolStrategy poolStrategy,
+                                         ClassFileLocator classFileLocator,
+                                         @MaybeNull ClassLoader classLoader,
+                                         String name) {
+                    return poolStrategy.typePool(classFileLocator, classLoader);
+                }
+            }
+        }
+    }
+
+    /**
+     * A decorator that allows to change the class file transformer that is registered.
+     */
+    interface TransformerDecorator {
+
+        /**
+         * Decorates the applied class file transformer.
+         *
+         * @param classFileTransformer The original transformer created by the agent builder.
+         * @return The class file transformer that is actually being registered.
+         */
+        ResettableClassFileTransformer decorate(ResettableClassFileTransformer classFileTransformer);
+
+        /**
+         * A transformer decorator that retains the original transformer.
+         */
+        enum NoOp implements TransformerDecorator {
+
+            /**
+             * The singleton instance.
+             */
+            INSTANCE;
+
+            /**
+             * {@inheritDoc}
+             */
+            public ResettableClassFileTransformer decorate(ResettableClassFileTransformer classFileTransformer) {
+                return classFileTransformer;
+            }
+        }
+
+        /**
+         * A compound transformer decorator.
+         */
+        @HashCodeAndEqualsPlugin.Enhance
+        class Compound implements TransformerDecorator {
+
+            /**
+             * The listeners to invoke.
+             */
+            private final List<TransformerDecorator> transformerDecorators;
+
+            /**
+             * Creates a new compound transformer decorator.
+             *
+             * @param transformerDecorator The transformer decorators to add.
+             */
+            public Compound(TransformerDecorator... transformerDecorator) {
+                this(Arrays.asList(transformerDecorator));
+            }
+
+            /**
+             * Creates a new compound listener.
+             *
+             * @param transformerDecorators The transformerDecorators to invoke.
+             */
+            public Compound(List<? extends TransformerDecorator> transformerDecorators) {
+                this.transformerDecorators = new ArrayList<TransformerDecorator>();
+                for (TransformerDecorator transformerDecorator : transformerDecorators) {
+                    if (transformerDecorator instanceof Compound) {
+                        this.transformerDecorators.addAll(((Compound) transformerDecorator).transformerDecorators);
+                    } else if (!(transformerDecorator instanceof NoOp)) {
+                        this.transformerDecorators.add(transformerDecorator);
+                    }
+                }
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public ResettableClassFileTransformer decorate(ResettableClassFileTransformer classFileTransformer) {
+                for (TransformerDecorator transformerDecorator : transformerDecorators) {
+                    classFileTransformer = transformerDecorator.decorate(classFileTransformer);
+                }
+                return classFileTransformer;
             }
         }
     }
@@ -4108,18 +5492,8 @@ public interface AgentBuilder {
         DISABLED(false, false) {
             @Override
             public void apply(Instrumentation instrumentation,
-                              AgentBuilder.Listener listener,
-                              CircularityLock circularityLock,
-                              PoolStrategy poolStrategy,
-                              LocationStrategy locationStrategy,
-                              DiscoveryStrategy discoveryStrategy,
-                              BatchAllocator redefinitionBatchAllocator,
-                              Listener redefinitionListener,
-                              LambdaInstrumentationStrategy lambdaInstrumentationStrategy,
-                              DescriptionStrategy descriptionStrategy,
-                              FallbackStrategy fallbackStrategy,
-                              RawMatcher typeMatcher,
-                              RawMatcher ignoredTypeMatcher) {
+                              PoolStrategy poolStrategy, LocationStrategy locationStrategy, DescriptionStrategy descriptionStrategy, FallbackStrategy fallbackStrategy, DiscoveryStrategy discoveryStrategy, LambdaInstrumentationStrategy lambdaInstrumentationStrategy, AgentBuilder.Listener listener,
+                              Listener redefinitionListener, RawMatcher matcher, BatchAllocator redefinitionBatchAllocator, CircularityLock circularityLock) {
                 /* do nothing */
             }
 
@@ -4129,7 +5503,13 @@ public interface AgentBuilder {
             }
 
             @Override
-            protected Collector make() {
+            protected Collector make(PoolStrategy poolStrategy,
+                                     LocationStrategy locationStrategy,
+                                     DescriptionStrategy descriptionStrategy,
+                                     FallbackStrategy fallbackStrategy,
+                                     AgentBuilder.Listener listener,
+                                     RawMatcher matcher,
+                                     CircularityLock circularityLock) {
                 throw new IllegalStateException("A disabled redefinition strategy cannot create a collector");
             }
         },
@@ -4147,7 +5527,7 @@ public interface AgentBuilder {
          * <p>
          * <b>Note</b>: When applying a redefinition, it is normally required to use a {@link TypeStrategy} that applies
          * a redefinition instead of rebasing classes such as {@link TypeStrategy.Default#REDEFINE}. Also, consider
-         * the constrains given by this type strategy.
+         * the constraints given by this type strategy.
          * </p>
          */
         REDEFINITION(true, false) {
@@ -4159,8 +5539,20 @@ public interface AgentBuilder {
             }
 
             @Override
-            protected Collector make() {
-                return new Collector.ForRedefinition();
+            protected Collector make(PoolStrategy poolStrategy,
+                                     LocationStrategy locationStrategy,
+                                     DescriptionStrategy descriptionStrategy,
+                                     FallbackStrategy fallbackStrategy,
+                                     AgentBuilder.Listener listener,
+                                     RawMatcher matcher,
+                                     CircularityLock circularityLock) {
+                return new Collector.ForRedefinition(matcher,
+                        poolStrategy,
+                        locationStrategy,
+                        descriptionStrategy,
+                        listener,
+                        fallbackStrategy,
+                        circularityLock);
             }
         },
 
@@ -4175,24 +5567,41 @@ public interface AgentBuilder {
          * retransformation of a class causes the entire retransformation attempt to fail.
          * </p>
          * <p>
-         * <b>Note</b>: When applying a redefinition, it is normally required to use a {@link TypeStrategy} that applies
+         * <b>Note</b>: When applying a retransformation, it is normally required to use a {@link TypeStrategy} that applies
          * a redefinition instead of rebasing classes such as {@link TypeStrategy.Default#REDEFINE}. Also, consider
-         * the constrains given by this type strategy.
+         * the constraints given by this type strategy.
          * </p>
          */
         RETRANSFORMATION(true, true) {
             @Override
             protected void check(Instrumentation instrumentation) {
-                if (!instrumentation.isRetransformClassesSupported()) {
-                    throw new IllegalStateException("Cannot apply redefinition on " + instrumentation);
+                if (!DISPATCHER.isRetransformClassesSupported(instrumentation)) {
+                    throw new IllegalStateException("Cannot apply retransformation on " + instrumentation);
                 }
             }
 
             @Override
-            protected Collector make() {
-                return new Collector.ForRetransformation();
+            protected Collector make(PoolStrategy poolStrategy,
+                                     LocationStrategy locationStrategy,
+                                     DescriptionStrategy descriptionStrategy,
+                                     FallbackStrategy fallbackStrategy,
+                                     AgentBuilder.Listener listener,
+                                     RawMatcher matcher,
+                                     CircularityLock circularityLock) {
+                return new Collector.ForRetransformation(matcher,
+                        poolStrategy,
+                        locationStrategy,
+                        descriptionStrategy,
+                        listener,
+                        fallbackStrategy,
+                        circularityLock);
             }
         };
+
+        /**
+         * A dispatcher to use for interacting with the instrumentation API.
+         */
+        protected static final Dispatcher DISPATCHER = Default.doPrivileged(JavaDispatcher.of(Dispatcher.class));
 
         /**
          * Indicates that this redefinition strategy is enabled.
@@ -4244,87 +5653,70 @@ public interface AgentBuilder {
         /**
          * Creates a collector instance that is responsible for collecting loaded classes for potential retransformation.
          *
+         * @param poolStrategy        The pool strategy to use.
+         * @param locationStrategy    The location strategy to use.
+         * @param descriptionStrategy The description strategy for resolving type descriptions for types.
+         * @param fallbackStrategy    The fallback strategy to apply.
+         * @param listener            The listener to notify on transformations.
+         * @param matcher             The matcher to identify what types to redefine.
+         * @param circularityLock     The circularity lock to use.
          * @return A new collector for collecting already loaded classes for transformation.
          */
-        protected abstract Collector make();
+        protected abstract Collector make(PoolStrategy poolStrategy,
+                                          LocationStrategy locationStrategy,
+                                          DescriptionStrategy descriptionStrategy,
+                                          FallbackStrategy fallbackStrategy,
+                                          AgentBuilder.Listener listener,
+                                          RawMatcher matcher,
+                                          CircularityLock circularityLock);
 
         /**
-         * Applies this redefinition strategy by submitting all loaded types to redefiniton. If this redefinition strategy is disabled,
+         * Applies this redefinition strategy by submitting all loaded types to redefinition. If this redefinition strategy is disabled,
          * this method is non-operational.
          *
          * @param instrumentation               The instrumentation instance to use.
-         * @param listener                      The listener to notify on transformations.
-         * @param circularityLock               The circularity lock to use.
          * @param poolStrategy                  The type locator to use.
          * @param locationStrategy              The location strategy to use.
-         * @param redefinitionDiscoveryStrategy The discovery strategy for loaded types to be redefined.
-         * @param redefinitionBatchAllocator    The batch allocator for the redefinition strategy to apply.
-         * @param redefinitionListener          The redefinition listener for the redefinition strategy to apply.
-         * @param lambdaInstrumentationStrategy A strategy to determine of the {@code LambdaMetafactory} should be instrumented to allow for the
-         *                                      instrumentation of classes that represent lambda expressions.
          * @param descriptionStrategy           The description strategy for resolving type descriptions for types.
          * @param fallbackStrategy              The fallback strategy to apply.
-         * @param typeMatcher                   Identifies types that should be instrumented.
-         * @param ignoredTypeMatcher            Identifies types that should not be instrumented.
+         * @param redefinitionDiscoveryStrategy The discovery strategy for loaded types to be redefined.
+         * @param lambdaInstrumentationStrategy A strategy to determine of the {@code LambdaMetafactory} should be instrumented to allow for the
+         *                                      instrumentation of classes that represent lambda expressions.
+         * @param listener                      The listener to notify on transformations.
+         * @param redefinitionListener          The redefinition listener for the redefinition strategy to apply.
+         * @param matcher                       The matcher to identify what types to redefine.
+         * @param redefinitionBatchAllocator    The batch allocator for the redefinition strategy to apply.
+         * @param circularityLock               The circularity lock to use.
          */
-        public void apply(Instrumentation instrumentation,
-                          AgentBuilder.Listener listener,
-                          CircularityLock circularityLock,
-                          PoolStrategy poolStrategy,
-                          LocationStrategy locationStrategy,
-                          DiscoveryStrategy redefinitionDiscoveryStrategy,
-                          BatchAllocator redefinitionBatchAllocator,
-                          Listener redefinitionListener,
-                          LambdaInstrumentationStrategy lambdaInstrumentationStrategy,
-                          DescriptionStrategy descriptionStrategy,
-                          FallbackStrategy fallbackStrategy,
-                          RawMatcher typeMatcher,
-                          RawMatcher ignoredTypeMatcher) {
+        protected void apply(Instrumentation instrumentation,
+                             PoolStrategy poolStrategy,
+                             LocationStrategy locationStrategy,
+                             DescriptionStrategy descriptionStrategy,
+                             FallbackStrategy fallbackStrategy,
+                             DiscoveryStrategy redefinitionDiscoveryStrategy,
+                             LambdaInstrumentationStrategy lambdaInstrumentationStrategy,
+                             AgentBuilder.Listener listener,
+                             Listener redefinitionListener,
+                             RawMatcher matcher,
+                             BatchAllocator redefinitionBatchAllocator,
+                             CircularityLock circularityLock) {
             check(instrumentation);
             int batch = RedefinitionStrategy.BatchAllocator.FIRST_BATCH;
             for (Iterable<Class<?>> types : redefinitionDiscoveryStrategy.resolve(instrumentation)) {
-                RedefinitionStrategy.Collector collector = make();
+                RedefinitionStrategy.Collector collector = make(poolStrategy,
+                        locationStrategy,
+                        descriptionStrategy,
+                        fallbackStrategy,
+                        listener,
+                        matcher,
+                        circularityLock);
                 for (Class<?> type : types) {
-                    if (type.isArray() || !lambdaInstrumentationStrategy.isInstrumented(type)) {
+                    if (type == null || type.isArray() || type.isPrimitive() || !lambdaInstrumentationStrategy.isInstrumented(type)) {
                         continue;
                     }
-                    JavaModule module = JavaModule.ofType(type);
-                    try {
-                        TypePool typePool = poolStrategy.typePool(locationStrategy.classFileLocator(type.getClassLoader(), module), type.getClassLoader());
-                        try {
-                            collector.consider(typeMatcher,
-                                    ignoredTypeMatcher,
-                                    listener,
-                                    descriptionStrategy.apply(TypeDescription.ForLoadedType.getName(type), type, typePool, circularityLock, type.getClassLoader(), module),
-                                    type,
-                                    type,
-                                    module,
-                                    !instrumentation.isModifiableClass(type));
-                        } catch (Throwable throwable) {
-                            if (descriptionStrategy.isLoadedFirst() && fallbackStrategy.isFallback(type, throwable)) {
-                                collector.consider(typeMatcher,
-                                        ignoredTypeMatcher,
-                                        listener,
-                                        typePool.describe(TypeDescription.ForLoadedType.getName(type)).resolve(),
-                                        type,
-                                        module);
-                            } else {
-                                throw throwable;
-                            }
-                        }
-                    } catch (Throwable throwable) {
-                        try {
-                            try {
-                                listener.onError(TypeDescription.ForLoadedType.getName(type), type.getClassLoader(), module, AgentBuilder.Listener.LOADED, throwable);
-                            } finally {
-                                listener.onComplete(TypeDescription.ForLoadedType.getName(type), type.getClassLoader(), module, AgentBuilder.Listener.LOADED);
-                            }
-                        } catch (Throwable ignored) {
-                            // Ignore exceptions that are thrown by listeners to mimic the behavior of a transformation.
-                        }
-                    }
+                    collector.consider(type, DISPATCHER.isModifiableClass(instrumentation, type) || ClassFileVersion.ofThisVm(ClassFileVersion.JAVA_V5).isAtMost(ClassFileVersion.JAVA_V5));
                 }
-                batch = collector.apply(instrumentation, circularityLock, locationStrategy, listener, redefinitionBatchAllocator, redefinitionListener, batch);
+                batch = collector.apply(instrumentation, redefinitionBatchAllocator, redefinitionListener, batch);
             }
         }
 
@@ -4359,7 +5751,9 @@ public interface AgentBuilder {
                  */
                 INSTANCE;
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public Iterable<? extends List<Class<?>>> batch(List<Class<?>> types) {
                     return types.isEmpty()
                             ? Collections.<List<Class<?>>>emptySet()
@@ -4370,7 +5764,7 @@ public interface AgentBuilder {
             /**
              * A batch allocator that creates chunks with a fixed size as batch jobs.
              */
-            @EqualsAndHashCode
+            @HashCodeAndEqualsPlugin.Enhance
             class ForFixedSize implements BatchAllocator {
 
                 /**
@@ -4403,7 +5797,9 @@ public interface AgentBuilder {
                     }
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public Iterable<? extends List<Class<?>>> batch(List<Class<?>> types) {
                     List<List<Class<?>>> batches = new ArrayList<List<Class<?>>>();
                     for (int index = 0; index < types.size(); index += size) {
@@ -4416,7 +5812,7 @@ public interface AgentBuilder {
             /**
              * A batch allocator that groups all batches by discriminating types using a type matcher.
              */
-            @EqualsAndHashCode
+            @HashCodeAndEqualsPlugin.Enhance
             class ForMatchedGrouping implements BatchAllocator {
 
                 /**
@@ -4430,7 +5826,7 @@ public interface AgentBuilder {
                  *
                  * @param matcher The type matchers to apply in their application order.
                  */
-                @SuppressWarnings("unchecked") // In absence of @SafeVarargs for Java 6
+                @SuppressWarnings("unchecked") // In absence of @SafeVarargs
                 public ForMatchedGrouping(ElementMatcher<? super TypeDescription>... matcher) {
                     this(new LinkedHashSet<ElementMatcher<? super TypeDescription>>(Arrays.asList(matcher)));
                 }
@@ -4479,7 +5875,9 @@ public interface AgentBuilder {
                     return Slicing.withinRange(minimum, maximum, this);
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public Iterable<? extends List<Class<?>>> batch(List<Class<?>> types) {
                     Map<ElementMatcher<? super TypeDescription>, List<Class<?>>> matched = new LinkedHashMap<ElementMatcher<? super TypeDescription>, List<Class<?>>>();
                     List<Class<?>> unmatched = new ArrayList<Class<?>>();
@@ -4489,7 +5887,7 @@ public interface AgentBuilder {
                     typeLoop:
                     for (Class<?> type : types) {
                         for (ElementMatcher<? super TypeDescription> matcher : matchers) {
-                            if (matcher.matches(new TypeDescription.ForLoadedType(type))) {
+                            if (matcher.matches(TypeDescription.ForLoadedType.of(type))) {
                                 matched.get(matcher).add(type);
                                 continue typeLoop;
                             }
@@ -4512,7 +5910,7 @@ public interface AgentBuilder {
             /**
              * A slicing batch allocator that assures that any batch is within a certain size range.
              */
-            @EqualsAndHashCode
+            @HashCodeAndEqualsPlugin.Enhance
             class Slicing implements BatchAllocator {
 
                 /**
@@ -4582,7 +5980,9 @@ public interface AgentBuilder {
                     return new Slicing(minimum, maximum, batchAllocator);
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public Iterable<? extends List<Class<?>>> batch(List<Class<?>> types) {
                     return new SlicingIterable(minimum, maximum, batchAllocator.batch(types));
                 }
@@ -4620,7 +6020,9 @@ public interface AgentBuilder {
                         this.iterable = iterable;
                     }
 
-                    @Override
+                    /**
+                     * {@inheritDoc}
+                     */
                     public Iterator<List<Class<?>>> iterator() {
                         return new SlicingIterator(minimum, maximum, iterable.iterator());
                     }
@@ -4664,12 +6066,16 @@ public interface AgentBuilder {
                             buffer = new ArrayList<Class<?>>();
                         }
 
-                        @Override
+                        /**
+                         * {@inheritDoc}
+                         */
                         public boolean hasNext() {
                             return !buffer.isEmpty() || iterator.hasNext();
                         }
 
-                        @Override
+                        /**
+                         * {@inheritDoc}
+                         */
                         public List<Class<?>> next() {
                             if (buffer.isEmpty()) {
                                 buffer = iterator.next();
@@ -4692,7 +6098,9 @@ public interface AgentBuilder {
                             }
                         }
 
-                        @Override
+                        /**
+                         * {@inheritDoc}
+                         */
                         public void remove() {
                             throw new UnsupportedOperationException("remove");
                         }
@@ -4703,7 +6111,7 @@ public interface AgentBuilder {
             /**
              * A partitioning batch allocator that splits types for redefinition into a fixed amount of parts.
              */
-            @EqualsAndHashCode
+            @HashCodeAndEqualsPlugin.Enhance
             class Partitioning implements BatchAllocator {
 
                 /**
@@ -4733,7 +6141,9 @@ public interface AgentBuilder {
                     return new Partitioning(parts);
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public Iterable<? extends List<Class<?>>> batch(List<Class<?>> types) {
                     if (types.isEmpty()) {
                         return Collections.emptyList();
@@ -4799,17 +6209,23 @@ public interface AgentBuilder {
                  */
                 INSTANCE;
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public void onBatch(int index, List<Class<?>> batch, List<Class<?>> types) {
                     /* do nothing */
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public Iterable<? extends List<Class<?>>> onError(int index, List<Class<?>> batch, Throwable throwable, List<Class<?>> types) {
                     return Collections.emptyList();
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public void onComplete(int amount, List<Class<?>> types, Map<List<Class<?>>, Throwable> failures) {
                     /* do nothing */
                 }
@@ -4825,19 +6241,25 @@ public interface AgentBuilder {
                  */
                 INSTANCE;
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public void onBatch(int index, List<Class<?>> batch, List<Class<?>> types) {
                     if (index > 0) {
                         Thread.yield();
                     }
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public Iterable<? extends List<Class<?>>> onError(int index, List<Class<?>> batch, Throwable throwable, List<Class<?>> types) {
                     return Collections.emptyList();
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public void onComplete(int amount, List<Class<?>> types, Map<List<Class<?>>, Throwable> failures) {
                     /* do nothing */
                 }
@@ -4852,12 +6274,12 @@ public interface AgentBuilder {
                  * A listener that fails the retransformation upon the first failed retransformation of a batch.
                  */
                 FAIL_FAST {
-                    @Override
+                    /** {@inheritDoc} */
                     public Iterable<? extends List<Class<?>>> onError(int index, List<Class<?>> batch, Throwable throwable, List<Class<?>> types) {
                         throw new IllegalStateException("Could not transform any of " + batch, throwable);
                     }
 
-                    @Override
+                    /** {@inheritDoc} */
                     public void onComplete(int amount, List<Class<?>> types, Map<List<Class<?>>, Throwable> failures) {
                         /* do nothing */
                     }
@@ -4867,12 +6289,12 @@ public interface AgentBuilder {
                  * A listener that fails the retransformation after all batches were executed if any error occurred.
                  */
                 FAIL_LAST {
-                    @Override
+                    /** {@inheritDoc} */
                     public Iterable<? extends List<Class<?>>> onError(int index, List<Class<?>> batch, Throwable throwable, List<Class<?>> types) {
                         return Collections.emptyList();
                     }
 
-                    @Override
+                    /** {@inheritDoc} */
                     public void onComplete(int amount, List<Class<?>> types, Map<List<Class<?>>, Throwable> failures) {
                         if (!failures.isEmpty()) {
                             throw new IllegalStateException("Could not transform any of " + failures);
@@ -4880,7 +6302,9 @@ public interface AgentBuilder {
                     }
                 };
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public void onBatch(int index, List<Class<?>> batch, List<Class<?>> types) {
                     /* do nothing */
                 }
@@ -4889,20 +6313,26 @@ public interface AgentBuilder {
             /**
              * A listener adapter that offers non-operational implementations of all listener methods.
              */
-            @EqualsAndHashCode
+            @HashCodeAndEqualsPlugin.Enhance
             abstract class Adapter implements Listener {
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public void onBatch(int index, List<Class<?>> batch, List<Class<?>> types) {
                     /* do nothing */
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public Iterable<? extends List<Class<?>>> onError(int index, List<Class<?>> batch, Throwable throwable, List<Class<?>> types) {
                     return Collections.emptyList();
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public void onComplete(int amount, List<Class<?>> types, Map<List<Class<?>>, Throwable> failures) {
                     /* do nothing */
                 }
@@ -4919,7 +6349,7 @@ public interface AgentBuilder {
              * allocator must not resubmit batches that previously failed as an identical outcome is likely.
              * </p>
              */
-            @EqualsAndHashCode(callSuper = false)
+            @HashCodeAndEqualsPlugin.Enhance
             class BatchReallocator extends Adapter {
 
                 /**
@@ -4956,7 +6386,7 @@ public interface AgentBuilder {
             /**
              * A listener that invokes {@link Thread#sleep(long)} prior to every batch but the first batch.
              */
-            @EqualsAndHashCode(callSuper = false)
+            @HashCodeAndEqualsPlugin.Enhance
             class Pausing extends Adapter {
 
                 /**
@@ -4997,7 +6427,8 @@ public interface AgentBuilder {
                         try {
                             Thread.sleep(value);
                         } catch (InterruptedException exception) {
-                            throw new RuntimeException("Sleep was interrupted", exception);
+                            Thread.currentThread().interrupt();
+                            throw new IllegalStateException(exception);
                         }
                     }
                 }
@@ -5006,7 +6437,7 @@ public interface AgentBuilder {
             /**
              * A listener that writes events to a {@link PrintStream}.
              */
-            @EqualsAndHashCode
+            @HashCodeAndEqualsPlugin.Enhance
             class StreamWriting implements Listener {
 
                 /**
@@ -5041,12 +6472,16 @@ public interface AgentBuilder {
                     return new StreamWriting(System.err);
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public void onBatch(int index, List<Class<?>> batch, List<Class<?>> types) {
                     printStream.printf(AgentBuilder.Listener.StreamWriting.PREFIX + " REDEFINE BATCH #%d [%d of %d type(s)]%n", index, batch.size(), types.size());
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public Iterable<? extends List<Class<?>>> onError(int index, List<Class<?>> batch, Throwable throwable, List<Class<?>> types) {
                     synchronized (printStream) {
                         printStream.printf(AgentBuilder.Listener.StreamWriting.PREFIX + " REDEFINE ERROR #%d [%d of %d type(s)]%n", index, batch.size(), types.size());
@@ -5055,16 +6490,18 @@ public interface AgentBuilder {
                     return Collections.emptyList();
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public void onComplete(int amount, List<Class<?>> types, Map<List<Class<?>>, Throwable> failures) {
-                    printStream.printf(AgentBuilder.Listener.StreamWriting.PREFIX + " REDEFINE COMPLETE #%d batch(es) containing %d types [%d failed batch(es)]%n", amount, types.size(), failures.size());
+                    printStream.printf(AgentBuilder.Listener.StreamWriting.PREFIX + " REDEFINE COMPLETE %d batch(es) containing %d types [%d failed batch(es)]%n", amount, types.size(), failures.size());
                 }
             }
 
             /**
              * A compound listener that delegates events to several listeners.
              */
-            @EqualsAndHashCode
+            @HashCodeAndEqualsPlugin.Enhance
             class Compound implements Listener {
 
                 /**
@@ -5097,14 +6534,18 @@ public interface AgentBuilder {
                     }
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public void onBatch(int index, List<Class<?>> batch, List<Class<?>> types) {
                     for (Listener listener : listeners) {
                         listener.onBatch(index, batch, types);
                     }
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public Iterable<? extends List<Class<?>>> onError(int index, List<Class<?>> batch, Throwable throwable, List<Class<?>> types) {
                     List<Iterable<? extends List<Class<?>>>> reattempts = new ArrayList<Iterable<? extends List<Class<?>>>>();
                     for (Listener listener : listeners) {
@@ -5113,7 +6554,9 @@ public interface AgentBuilder {
                     return new CompoundIterable(reattempts);
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public void onComplete(int amount, List<Class<?>> types, Map<List<Class<?>>, Throwable> failures) {
                     for (Listener listener : listeners) {
                         listener.onComplete(amount, types, failures);
@@ -5123,7 +6566,7 @@ public interface AgentBuilder {
                 /**
                  * A compound iterable.
                  */
-                @EqualsAndHashCode
+                @HashCodeAndEqualsPlugin.Enhance
                 protected static class CompoundIterable implements Iterable<List<Class<?>>> {
 
                     /**
@@ -5140,7 +6583,9 @@ public interface AgentBuilder {
                         this.iterables = iterables;
                     }
 
-                    @Override
+                    /**
+                     * {@inheritDoc}
+                     */
                     public Iterator<List<Class<?>>> iterator() {
                         return new CompoundIterator(new ArrayList<Iterable<? extends List<Class<?>>>>(iterables));
                     }
@@ -5153,6 +6598,7 @@ public interface AgentBuilder {
                         /**
                          * The current iterator or {@code null} if no such iterator is defined.
                          */
+                        @MaybeNull
                         private Iterator<? extends List<Class<?>>> current;
 
                         /**
@@ -5170,12 +6616,16 @@ public interface AgentBuilder {
                             forward();
                         }
 
-                        @Override
+                        /**
+                         * {@inheritDoc}
+                         */
                         public boolean hasNext() {
                             return current != null && current.hasNext();
                         }
 
-                        @Override
+                        /**
+                         * {@inheritDoc}
+                         */
                         public List<Class<?>> next() {
                             try {
                                 if (current != null) {
@@ -5197,7 +6647,9 @@ public interface AgentBuilder {
                             }
                         }
 
-                        @Override
+                        /**
+                         * {@inheritDoc}
+                         */
                         public void remove() {
                             throw new UnsupportedOperationException("remove");
                         }
@@ -5230,7 +6682,9 @@ public interface AgentBuilder {
                  */
                 INSTANCE;
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public Iterable<Iterable<Class<?>>> resolve(Instrumentation instrumentation) {
                     return Collections.<Iterable<Class<?>>>singleton(Arrays.<Class<?>>asList(instrumentation.getAllLoadedClasses()));
                 }
@@ -5248,7 +6702,9 @@ public interface AgentBuilder {
                  */
                 INSTANCE;
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public Iterable<Iterable<Class<?>>> resolve(Instrumentation instrumentation) {
                     return new ReiteratingIterable(instrumentation);
                 }
@@ -5256,7 +6712,7 @@ public interface AgentBuilder {
                 /**
                  * An iterable that returns any loaded types and checks if any additional types were loaded during the last instrumentation.
                  */
-                @EqualsAndHashCode
+                @HashCodeAndEqualsPlugin.Enhance
                 protected static class ReiteratingIterable implements Iterable<Iterable<Class<?>>> {
 
                     /**
@@ -5273,7 +6729,9 @@ public interface AgentBuilder {
                         this.instrumentation = instrumentation;
                     }
 
-                    @Override
+                    /**
+                     * {@inheritDoc}
+                     */
                     public Iterator<Iterable<Class<?>>> iterator() {
                         return new ReiteratingIterator(instrumentation);
                     }
@@ -5297,6 +6755,7 @@ public interface AgentBuilder {
                     /**
                      * The current list of types or {@code null} if the current list of types is not prepared.
                      */
+                    @MaybeNull
                     private List<Class<?>> types;
 
                     /**
@@ -5309,12 +6768,14 @@ public interface AgentBuilder {
                         processed = new HashSet<Class<?>>();
                     }
 
-                    @Override
+                    /**
+                     * {@inheritDoc}
+                     */
                     public boolean hasNext() {
                         if (types == null) {
                             types = new ArrayList<Class<?>>();
                             for (Class<?> type : instrumentation.getAllLoadedClasses()) {
-                                if (processed.add(type)) {
+                                if (type != null && processed.add(type)) {
                                     types.add(type);
                                 }
                             }
@@ -5322,7 +6783,9 @@ public interface AgentBuilder {
                         return !types.isEmpty();
                     }
 
-                    @Override
+                    /**
+                     * {@inheritDoc}
+                     */
                     public Iterable<Class<?>> next() {
                         if (hasNext()) {
                             try {
@@ -5335,9 +6798,132 @@ public interface AgentBuilder {
                         }
                     }
 
-                    @Override
+                    /**
+                     * {@inheritDoc}
+                     */
                     public void remove() {
                         throw new UnsupportedOperationException("remove");
+                    }
+                }
+
+                /**
+                 * <p>
+                 * A discovery strategy that simplifies the application of {@link Reiterating} by assuming that the
+                 * loaded classes that are returned by {@link Instrumentation#getAllLoadedClasses()} are always
+                 * returned in the same order.
+                 * </p>
+                 * <p>
+                 * <b>Important</b>: While this increases the performance of reiteration, it relies on an implementation
+                 * detail of the JVM. Also, this strategy does not consider the possibility of classes being unloaded
+                 * during reiteration. For these reasons, this strategy has to be used with care!
+                 * </p>
+                 */
+                enum WithSortOrderAssumption implements DiscoveryStrategy {
+
+                    /**
+                     * The singleton instance.
+                     */
+                    INSTANCE;
+
+                    /**
+                     * {@inheritDoc}
+                     */
+                    public Iterable<Iterable<Class<?>>> resolve(Instrumentation instrumentation) {
+                        return new OrderedReiteratingIterable(instrumentation);
+                    }
+
+                    /**
+                     * An iterable that reiterates over an array of loaded classes by the previously observed length.
+                     */
+                    @HashCodeAndEqualsPlugin.Enhance
+                    protected static class OrderedReiteratingIterable implements Iterable<Iterable<Class<?>>> {
+
+                        /**
+                         * The instrumentation instance to use.
+                         */
+                        private final Instrumentation instrumentation;
+
+                        /**
+                         * Creates a new reiterating iterable.
+                         *
+                         * @param instrumentation The instrumentation instance to use.
+                         */
+                        protected OrderedReiteratingIterable(Instrumentation instrumentation) {
+                            this.instrumentation = instrumentation;
+                        }
+
+                        /**
+                         * {@inheritDoc}
+                         */
+                        public Iterator<Iterable<Class<?>>> iterator() {
+                            return new OrderedReiteratingIterator(instrumentation);
+                        }
+                    }
+
+                    /**
+                     * An iterator that reiterates over an array of loaded classes by the previously observed length.
+                     */
+                    protected static class OrderedReiteratingIterator implements Iterator<Iterable<Class<?>>> {
+
+                        /**
+                         * The instrumentation instance to use.
+                         */
+                        private final Instrumentation instrumentation;
+
+                        /**
+                         * The length of the last known array of known classes.
+                         */
+                        private int index;
+
+                        /**
+                         * The current list of types or {@code null} if the current list of types is not prepared.
+                         */
+                        @MaybeNull
+                        private List<Class<?>> types;
+
+                        /**
+                         * Creates a new reiterating iterator.
+                         *
+                         * @param instrumentation The instrumentation instance to use.
+                         */
+                        protected OrderedReiteratingIterator(Instrumentation instrumentation) {
+                            this.instrumentation = instrumentation;
+                            index = 0;
+                        }
+
+                        /**
+                         * {@inheritDoc}
+                         */
+                        public boolean hasNext() {
+                            if (types == null) {
+                                Class<?>[] type = instrumentation.getAllLoadedClasses();
+                                types = new ArrayList<Class<?>>(Arrays.asList(type).subList(index, type.length));
+                                index = type.length;
+                            }
+                            return !types.isEmpty();
+                        }
+
+                        /**
+                         * {@inheritDoc}
+                         */
+                        public Iterable<Class<?>> next() {
+                            if (hasNext()) {
+                                try {
+                                    return types;
+                                } finally {
+                                    types = null;
+                                }
+                            } else {
+                                throw new NoSuchElementException();
+                            }
+                        }
+
+                        /**
+                         * {@inheritDoc}
+                         */
+                        public void remove() {
+                            throw new UnsupportedOperationException("remove");
+                        }
                     }
                 }
             }
@@ -5345,7 +6931,7 @@ public interface AgentBuilder {
             /**
              * An explicit discovery strategy that only attempts the redefinition of specific types.
              */
-            @EqualsAndHashCode
+            @HashCodeAndEqualsPlugin.Enhance
             class Explicit implements DiscoveryStrategy {
 
                 /**
@@ -5371,7 +6957,9 @@ public interface AgentBuilder {
                     this.types = types;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public Iterable<Iterable<Class<?>>> resolve(Instrumentation instrumentation) {
                     return Collections.<Iterable<Class<?>>>singleton(types);
                 }
@@ -5418,7 +7006,9 @@ public interface AgentBuilder {
                      */
                     INSTANCE;
 
-                    @Override
+                    /**
+                     * {@inheritDoc}
+                     */
                     public void cancel() {
                         /* do nothing */
                     }
@@ -5427,7 +7017,7 @@ public interface AgentBuilder {
                 /**
                  * A cancelable for a {@link Future}.
                  */
-                @EqualsAndHashCode
+                @HashCodeAndEqualsPlugin.Enhance
                 class ForFuture implements Cancelable {
 
                     /**
@@ -5444,7 +7034,9 @@ public interface AgentBuilder {
                         this.future = future;
                     }
 
-                    @Override
+                    /**
+                     * {@inheritDoc}
+                     */
                     public void cancel() {
                         future.cancel(true);
                     }
@@ -5461,12 +7053,16 @@ public interface AgentBuilder {
                  */
                 INSTANCE;
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public boolean isAlive() {
                     return false;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public Cancelable schedule(Runnable job) {
                     return Cancelable.NoOp.INSTANCE;
                 }
@@ -5475,7 +7071,7 @@ public interface AgentBuilder {
             /**
              * A resubmission scheduler that schedules jobs at a fixed rate.
              */
-            @EqualsAndHashCode
+            @HashCodeAndEqualsPlugin.Enhance
             class AtFixedRate implements ResubmissionScheduler {
 
                 /**
@@ -5506,12 +7102,16 @@ public interface AgentBuilder {
                     this.timeUnit = timeUnit;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public boolean isAlive() {
                     return !scheduledExecutorService.isShutdown();
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public Cancelable schedule(Runnable job) {
                     return new Cancelable.ForFuture(scheduledExecutorService.scheduleAtFixedRate(job, time, time, timeUnit));
                 }
@@ -5520,7 +7120,7 @@ public interface AgentBuilder {
             /**
              * A resubmission scheduler that schedules jobs with a fixed delay.
              */
-            @EqualsAndHashCode
+            @HashCodeAndEqualsPlugin.Enhance
             class WithFixedDelay implements ResubmissionScheduler {
 
                 /**
@@ -5551,12 +7151,16 @@ public interface AgentBuilder {
                     this.timeUnit = timeUnit;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public boolean isAlive() {
                     return !scheduledExecutorService.isShutdown();
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public Cancelable schedule(Runnable job) {
                     return new Cancelable.ForFuture(scheduledExecutorService.scheduleWithFixedDelay(job, time, time, timeUnit));
                 }
@@ -5572,7 +7176,10 @@ public interface AgentBuilder {
              * Invoked upon installation of an agent builder.
              *
              * @param instrumentation            The instrumentation instance to use.
+             * @param poolStrategy               The pool strategy to use.
              * @param locationStrategy           The location strategy to use.
+             * @param descriptionStrategy        The description strategy to use.
+             * @param fallbackStrategy           The fallback strategy to use.
              * @param listener                   The listener to use.
              * @param installationListener       The installation listener to use.
              * @param circularityLock            The circularity lock to use.
@@ -5583,7 +7190,10 @@ public interface AgentBuilder {
              * @return A potentially modified listener to apply.
              */
             Installation apply(Instrumentation instrumentation,
+                               PoolStrategy poolStrategy,
                                LocationStrategy locationStrategy,
+                               DescriptionStrategy descriptionStrategy,
+                               FallbackStrategy fallbackStrategy,
                                AgentBuilder.Listener listener,
                                InstallationListener installationListener,
                                CircularityLock circularityLock,
@@ -5602,24 +7212,29 @@ public interface AgentBuilder {
                  */
                 INSTANCE;
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public Installation apply(Instrumentation instrumentation,
+                                          PoolStrategy poolStrategy,
                                           LocationStrategy locationStrategy,
+                                          DescriptionStrategy descriptionStrategy,
+                                          FallbackStrategy fallbackStrategy,
                                           AgentBuilder.Listener listener,
                                           InstallationListener installationListener,
                                           CircularityLock circularityLock,
                                           RawMatcher matcher,
                                           RedefinitionStrategy redefinitionStrategy,
-                                          BatchAllocator redefinitionBatchAllocator,
-                                          Listener redefinitionBatchListener) {
-                    return new Installation(listener, installationListener);
+                                          RedefinitionStrategy.BatchAllocator redefinitionBatchAllocator,
+                                          RedefinitionStrategy.Listener redefinitionBatchListener) {
+                    return new Installation(listener, installationListener, ResubmissionEnforcer.Disabled.INSTANCE);
                 }
             }
 
             /**
              * An enabled resubmission strategy.
              */
-            @EqualsAndHashCode
+            @HashCodeAndEqualsPlugin.Enhance
             class Enabled implements ResubmissionStrategy {
 
                 /**
@@ -5628,24 +7243,38 @@ public interface AgentBuilder {
                 private final ResubmissionScheduler resubmissionScheduler;
 
                 /**
-                 * The matcher for filtering error causes.
+                 * A matcher to determine resubmissions on errors.
                  */
-                private final ElementMatcher<? super Throwable> matcher;
+                private final RedefinitionListenable.ResubmissionOnErrorMatcher resubmissionOnErrorMatcher;
+
+                /**
+                 * A matcher to determine resubmissions without errors.
+                 */
+                private final RedefinitionListenable.ResubmissionImmediateMatcher resubmissionImmediateMatcher;
 
                 /**
                  * Creates a new enabled resubmission strategy.
                  *
-                 * @param resubmissionScheduler A scheduler that is responsible for resubmission of types.
-                 * @param matcher               The matcher for filtering error causes.
+                 * @param resubmissionScheduler        A scheduler that is responsible for resubmission of types.
+                 * @param resubmissionOnErrorMatcher   A matcher to determine resubmissions on errors.
+                 * @param resubmissionImmediateMatcher A matcher to determine resubmissions without errors.
                  */
-                protected Enabled(ResubmissionScheduler resubmissionScheduler, ElementMatcher<? super Throwable> matcher) {
+                protected Enabled(ResubmissionScheduler resubmissionScheduler,
+                                  RedefinitionListenable.ResubmissionOnErrorMatcher resubmissionOnErrorMatcher,
+                                  RedefinitionListenable.ResubmissionImmediateMatcher resubmissionImmediateMatcher) {
                     this.resubmissionScheduler = resubmissionScheduler;
-                    this.matcher = matcher;
+                    this.resubmissionOnErrorMatcher = resubmissionOnErrorMatcher;
+                    this.resubmissionImmediateMatcher = resubmissionImmediateMatcher;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public Installation apply(Instrumentation instrumentation,
+                                          PoolStrategy poolStrategy,
                                           LocationStrategy locationStrategy,
+                                          DescriptionStrategy descriptionStrategy,
+                                          FallbackStrategy fallbackStrategy,
                                           AgentBuilder.Listener listener,
                                           InstallationListener installationListener,
                                           CircularityLock circularityLock,
@@ -5653,33 +7282,43 @@ public interface AgentBuilder {
                                           RedefinitionStrategy redefinitionStrategy,
                                           RedefinitionStrategy.BatchAllocator redefinitionBatchAllocator,
                                           RedefinitionStrategy.Listener redefinitionBatchListener) {
-                    if (redefinitionStrategy.isEnabled() && resubmissionScheduler.isAlive()) {
+                    if (resubmissionScheduler.isAlive()) {
                         ConcurrentMap<StorageKey, Set<String>> types = new ConcurrentHashMap<StorageKey, Set<String>>();
-                        return new Installation(new AgentBuilder.Listener.Compound(new ResubmissionListener(this.matcher, types), listener),
-                                new InstallationListener.Compound(new ResubmissionInstallationListener(resubmissionScheduler,
-                                        instrumentation,
+                        Resubmitter resubmitter = new Resubmitter(resubmissionOnErrorMatcher, resubmissionImmediateMatcher, types);
+                        return new Installation(new AgentBuilder.Listener.Compound(resubmitter, listener),
+                                new InstallationListener.Compound(new ResubmissionInstallationListener(instrumentation,
+                                        resubmissionScheduler,
+                                        poolStrategy,
                                         locationStrategy,
+                                        descriptionStrategy,
+                                        fallbackStrategy,
                                         listener,
                                         circularityLock,
                                         matcher,
                                         redefinitionStrategy,
                                         redefinitionBatchAllocator,
                                         redefinitionBatchListener,
-                                        types), installationListener));
+                                        types), installationListener),
+                                resubmitter);
                     } else {
-                        return new Installation(listener, installationListener);
+                        throw new IllegalStateException("Resubmission scheduler " + resubmissionScheduler + " is not alive");
                     }
                 }
 
                 /**
-                 * A listener that registers types for resubmission that failed during transformations.
+                 * A handler for resubmissions.
                  */
-                protected static class ResubmissionListener extends AgentBuilder.Listener.Adapter {
+                protected static class Resubmitter extends AgentBuilder.Listener.Adapter implements ResubmissionEnforcer {
 
                     /**
-                     * The matcher for filtering error causes.
+                     * A matcher to determine resubmissions on errors.
                      */
-                    private final ElementMatcher<? super Throwable> matcher;
+                    private final RedefinitionListenable.ResubmissionOnErrorMatcher resubmissionOnErrorMatcher;
+
+                    /**
+                     * A matcher to determine resubmissions without errors.
+                     */
+                    private final RedefinitionListenable.ResubmissionImmediateMatcher resubmissionImmediateMatcher;
 
                     /**
                      * A map of class loaders to their types to resubmit.
@@ -5687,27 +7326,100 @@ public interface AgentBuilder {
                     private final ConcurrentMap<StorageKey, Set<String>> types;
 
                     /**
-                     * @param matcher The matcher for filtering error causes.
-                     * @param types   A map of class loaders to their types to resubmit.
+                     * Creates a new resubmitter.
+                     *
+                     * @param resubmissionOnErrorMatcher   A matcher to determine resubmissions on errors.
+                     * @param resubmissionImmediateMatcher A matcher to determine resubmissions without errors.
+                     * @param types                        A map of class loaders to their types to resubmit.
                      */
-                    protected ResubmissionListener(ElementMatcher<? super Throwable> matcher, ConcurrentMap<StorageKey, Set<String>> types) {
-                        this.matcher = matcher;
+                    protected Resubmitter(RedefinitionListenable.ResubmissionOnErrorMatcher resubmissionOnErrorMatcher,
+                                          RedefinitionListenable.ResubmissionImmediateMatcher resubmissionImmediateMatcher,
+                                          ConcurrentMap<StorageKey, Set<String>> types) {
+                        this.resubmissionOnErrorMatcher = resubmissionOnErrorMatcher;
+                        this.resubmissionImmediateMatcher = resubmissionImmediateMatcher;
                         this.types = types;
                     }
 
-                    @Override
-                    @SuppressFBWarnings(value = "GC_UNRELATED_TYPES", justification = "Use of unrelated key is inteded for avoiding unnecessary weak reference")
-                    public void onError(String typeName, ClassLoader classLoader, JavaModule module, boolean loaded, Throwable throwable) {
-                        if (!loaded && matcher.matches(throwable)) {
+                    /**
+                     * {@inheritDoc}
+                     */
+                    @SuppressFBWarnings(value = "GC_UNRELATED_TYPES", justification = "Cross-comparison is intended.")
+                    public void onError(String typeName, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module, boolean loaded, Throwable throwable) {
+                        if (!loaded && resubmissionOnErrorMatcher.matches(throwable, typeName, classLoader, module)) {
                             Set<String> types = this.types.get(new LookupKey(classLoader));
                             if (types == null) {
-                                types = Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
+                                types = new ConcurrentHashSet<String>();
                                 Set<String> previous = this.types.putIfAbsent(new StorageKey(classLoader), types);
                                 if (previous != null) {
                                     types = previous;
                                 }
                             }
                             types.add(typeName);
+                        }
+                    }
+
+                    /**
+                     * {@inheritDoc}
+                     */
+                    @SuppressFBWarnings(value = "GC_UNRELATED_TYPES", justification = "Cross-comparison is intended.")
+                    public boolean isEnforced(String typeName, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module, @MaybeNull Class<?> classBeingRedefined) {
+                        if (classBeingRedefined == null && resubmissionImmediateMatcher.matches(typeName, classLoader, module)) {
+                            Set<String> types = this.types.get(new LookupKey(classLoader));
+                            if (types == null) {
+                                types = new ConcurrentHashSet<String>();
+                                Set<String> previous = this.types.putIfAbsent(new StorageKey(classLoader), types);
+                                if (previous != null) {
+                                    types = previous;
+                                }
+                            }
+                            types.add(typeName);
+                            return true;
+                        } else {
+                            return false;
+                        }
+                    }
+
+                    /**
+                     * A set projection for a {@link ConcurrentHashMap}.
+                     *
+                     * @param <T> The element type of the set projection.
+                     */
+                    protected static class ConcurrentHashSet<T> extends AbstractSet<T> {
+
+                        /**
+                         * The delegate map.
+                         */
+                        private final ConcurrentMap<T, Boolean> delegate;
+
+                        /**
+                         * Creates a concurrent hash set.
+                         */
+                        protected ConcurrentHashSet() {
+                            delegate = new ConcurrentHashMap<T, Boolean>();
+                        }
+
+                        @Override
+                        public boolean add(T value) {
+                            return delegate.put(value, Boolean.TRUE) == null;
+                        }
+
+                        @Override
+                        public boolean remove(Object value) {
+                            return delegate.remove(value) != null;
+                        }
+
+                        /**
+                         * {@inheritDoc}
+                         */
+                        public Iterator<T> iterator() {
+                            return delegate.keySet().iterator();
+                        }
+
+                        /**
+                         * {@inheritDoc}
+                         */
+                        public int size() {
+                            return delegate.size();
                         }
                     }
                 }
@@ -5718,19 +7430,34 @@ public interface AgentBuilder {
                 protected static class ResubmissionInstallationListener extends AgentBuilder.InstallationListener.Adapter implements Runnable {
 
                     /**
-                     * The resubmission scheduler to use.
-                     */
-                    private final ResubmissionScheduler resubmissionScheduler;
-
-                    /**
                      * The instrumentation instance to use.
                      */
                     private final Instrumentation instrumentation;
 
                     /**
+                     * The resubmission scheduler to use.
+                     */
+                    private final ResubmissionScheduler resubmissionScheduler;
+
+                    /**
                      * The location strategy to use.
                      */
                     private final LocationStrategy locationStrategy;
+
+                    /**
+                     * The pool strategy to use.
+                     */
+                    private final PoolStrategy poolStrategy;
+
+                    /**
+                     * The description strategy to use.
+                     */
+                    private final DescriptionStrategy descriptionStrategy;
+
+                    /**
+                     * The fallback strategy to use.
+                     */
+                    private final FallbackStrategy fallbackStrategy;
 
                     /**
                      * The listener to use.
@@ -5770,6 +7497,7 @@ public interface AgentBuilder {
                     /**
                      * This scheduler's cancelable or {@code null} if no cancelable was registered.
                      */
+                    @MaybeNull
                     private volatile ResubmissionScheduler.Cancelable cancelable;
 
                     /**
@@ -5777,7 +7505,10 @@ public interface AgentBuilder {
                      *
                      * @param resubmissionScheduler      The resubmission scheduler to use.
                      * @param instrumentation            The instrumentation instance to use.
+                     * @param poolStrategy               The pool strategy to use.
                      * @param locationStrategy           The location strategy to use.
+                     * @param descriptionStrategy        The description strategy to use.
+                     * @param fallbackStrategy           The fallback strategy to use.
                      * @param listener                   The listener to use.
                      * @param circularityLock            The circularity lock to use.
                      * @param matcher                    The matcher to apply for analyzing if a type is to be resubmitted.
@@ -5786,9 +7517,12 @@ public interface AgentBuilder {
                      * @param redefinitionBatchListener  The batch listener to notify.
                      * @param types                      A map of class loaders to their types to resubmit.
                      */
-                    protected ResubmissionInstallationListener(ResubmissionScheduler resubmissionScheduler,
-                                                               Instrumentation instrumentation,
+                    protected ResubmissionInstallationListener(Instrumentation instrumentation,
+                                                               ResubmissionScheduler resubmissionScheduler,
+                                                               PoolStrategy poolStrategy,
                                                                LocationStrategy locationStrategy,
+                                                               DescriptionStrategy descriptionStrategy,
+                                                               FallbackStrategy fallbackStrategy,
                                                                AgentBuilder.Listener listener,
                                                                CircularityLock circularityLock,
                                                                RawMatcher matcher,
@@ -5796,9 +7530,12 @@ public interface AgentBuilder {
                                                                BatchAllocator redefinitionBatchAllocator,
                                                                Listener redefinitionBatchListener,
                                                                ConcurrentMap<StorageKey, Set<String>> types) {
-                        this.resubmissionScheduler = resubmissionScheduler;
                         this.instrumentation = instrumentation;
+                        this.resubmissionScheduler = resubmissionScheduler;
+                        this.poolStrategy = poolStrategy;
                         this.locationStrategy = locationStrategy;
+                        this.descriptionStrategy = descriptionStrategy;
+                        this.fallbackStrategy = fallbackStrategy;
                         this.listener = listener;
                         this.circularityLock = circularityLock;
                         this.matcher = matcher;
@@ -5807,7 +7544,6 @@ public interface AgentBuilder {
                         this.redefinitionBatchListener = redefinitionBatchListener;
                         this.types = types;
                     }
-
 
                     @Override
                     public void onInstall(Instrumentation instrumentation, ResettableClassFileTransformer classFileTransformer) {
@@ -5822,42 +7558,38 @@ public interface AgentBuilder {
                         }
                     }
 
-                    @Override
+                    /**
+                     * {@inheritDoc}
+                     */
                     public void run() {
                         boolean release = circularityLock.acquire();
                         try {
+                            RedefinitionStrategy.Collector collector = redefinitionStrategy.make(poolStrategy,
+                                    locationStrategy,
+                                    descriptionStrategy,
+                                    fallbackStrategy,
+                                    listener,
+                                    matcher,
+                                    circularityLock);
                             Iterator<Map.Entry<StorageKey, Set<String>>> entries = types.entrySet().iterator();
-                            List<Class<?>> types = new ArrayList<Class<?>>();
-                            while (!Thread.interrupted() && entries.hasNext()) {
+                            while (entries.hasNext()) {
+                                if (Thread.interrupted()) {
+                                    return;
+                                }
                                 Map.Entry<StorageKey, Set<String>> entry = entries.next();
                                 ClassLoader classLoader = entry.getKey().get();
                                 if (classLoader != null || entry.getKey().isBootstrapLoader()) {
                                     Iterator<String> iterator = entry.getValue().iterator();
                                     while (iterator.hasNext()) {
+                                        if (Thread.interrupted()) {
+                                            return;
+                                        }
                                         try {
                                             Class<?> type = Class.forName(iterator.next(), false, classLoader);
-                                            try {
-                                                if (instrumentation.isModifiableClass(type) && matcher.matches(new TypeDescription.ForLoadedType(type),
-                                                        type.getClassLoader(),
-                                                        JavaModule.ofType(type),
-                                                        type,
-                                                        type.getProtectionDomain())) {
-                                                    types.add(type);
-                                                }
-                                            } catch (Throwable throwable) {
-                                                try {
-                                                    listener.onError(TypeDescription.ForLoadedType.getName(type),
-                                                            type.getClassLoader(),
-                                                            JavaModule.ofType(type),
-                                                            AgentBuilder.Listener.LOADED,
-                                                            throwable);
-                                                } finally {
-                                                    listener.onComplete(TypeDescription.ForLoadedType.getName(type),
-                                                            type.getClassLoader(),
-                                                            JavaModule.ofType(type),
-                                                            AgentBuilder.Listener.LOADED);
-                                                }
-                                            }
+                                            collector.consider(type, !type.isArray()
+                                                    && !type.isPrimitive()
+                                                    && (DISPATCHER.isModifiableClass(instrumentation, type)
+                                                    || ClassFileVersion.ofThisVm(ClassFileVersion.JAVA_V5).isAtMost(ClassFileVersion.JAVA_V5)));
                                         } catch (Throwable ignored) {
                                             /* do nothing */
                                         } finally {
@@ -5868,17 +7600,10 @@ public interface AgentBuilder {
                                     entries.remove();
                                 }
                             }
-                            if (!types.isEmpty()) {
-                                RedefinitionStrategy.Collector collector = redefinitionStrategy.make();
-                                collector.include(types);
-                                collector.apply(instrumentation,
-                                        circularityLock,
-                                        locationStrategy,
-                                        listener,
-                                        redefinitionBatchAllocator,
-                                        redefinitionBatchListener,
-                                        BatchAllocator.FIRST_BATCH);
-                            }
+                            collector.apply(instrumentation,
+                                    redefinitionBatchAllocator,
+                                    redefinitionBatchListener,
+                                    BatchAllocator.FIRST_BATCH);
                         } finally {
                             if (release) {
                                 circularityLock.release();
@@ -5895,6 +7620,7 @@ public interface AgentBuilder {
                     /**
                      * The represented class loader.
                      */
+                    @MaybeNull
                     private final ClassLoader classLoader;
 
                     /**
@@ -5907,29 +7633,29 @@ public interface AgentBuilder {
                      *
                      * @param classLoader The represented class loader.
                      */
-                    protected LookupKey(ClassLoader classLoader) {
+                    protected LookupKey(@MaybeNull ClassLoader classLoader) {
                         this.classLoader = classLoader;
                         hashCode = System.identityHashCode(classLoader);
                     }
 
                     @Override
-                    @SuppressFBWarnings(value = "EQ_CHECK_FOR_OPERAND_NOT_COMPATIBLE_WITH_THIS", justification = "Cross-comparison is intended")
-                    public boolean equals(Object object) {
-                        if (this == object) {
+                    public int hashCode() {
+                        return hashCode;
+                    }
+
+                    @Override
+                    @SuppressFBWarnings(value = "EQ_CHECK_FOR_OPERAND_NOT_COMPATIBLE_WITH_THIS", justification = "Cross-comparison is intended.")
+                    public boolean equals(@MaybeNull Object other) {
+                        if (this == other) {
                             return true;
-                        } else if (object instanceof LookupKey) {
-                            return classLoader == ((LookupKey) object).classLoader;
-                        } else if (object instanceof StorageKey) {
-                            StorageKey storageKey = (StorageKey) object;
+                        } else if (other instanceof LookupKey) {
+                            return classLoader == ((LookupKey) other).classLoader;
+                        } else if (other instanceof StorageKey) {
+                            StorageKey storageKey = (StorageKey) other;
                             return hashCode == storageKey.hashCode && classLoader == storageKey.get();
                         } else {
                             return false;
                         }
-                    }
-
-                    @Override
-                    public int hashCode() {
-                        return hashCode;
                     }
                 }
 
@@ -5948,7 +7674,7 @@ public interface AgentBuilder {
                      *
                      * @param classLoader The represented class loader or {@code null} for the bootstrap class loader.
                      */
-                    protected StorageKey(ClassLoader classLoader) {
+                    protected StorageKey(@MaybeNull ClassLoader classLoader) {
                         super(classLoader);
                         hashCode = System.identityHashCode(classLoader);
                     }
@@ -5963,24 +7689,24 @@ public interface AgentBuilder {
                     }
 
                     @Override
-                    @SuppressFBWarnings(value = "EQ_CHECK_FOR_OPERAND_NOT_COMPATIBLE_WITH_THIS", justification = "Cross-comparison is intended")
-                    public boolean equals(Object object) {
-                        if (this == object) {
+                    public int hashCode() {
+                        return hashCode;
+                    }
+
+                    @Override
+                    @SuppressFBWarnings(value = "EQ_CHECK_FOR_OPERAND_NOT_COMPATIBLE_WITH_THIS", justification = "Cross-comparison is intended.")
+                    public boolean equals(@MaybeNull Object other) {
+                        if (this == other) {
                             return true;
-                        } else if (object instanceof LookupKey) {
-                            LookupKey lookupKey = (LookupKey) object;
+                        } else if (other instanceof LookupKey) {
+                            LookupKey lookupKey = (LookupKey) other;
                             return hashCode == lookupKey.hashCode && get() == lookupKey.classLoader;
-                        } else if (object instanceof StorageKey) {
-                            StorageKey storageKey = (StorageKey) object;
+                        } else if (other instanceof StorageKey) {
+                            StorageKey storageKey = (StorageKey) other;
                             return hashCode == storageKey.hashCode && get() == storageKey.get();
                         } else {
                             return false;
                         }
-                    }
-
-                    @Override
-                    public int hashCode() {
-                        return hashCode;
                     }
                 }
             }
@@ -5988,7 +7714,7 @@ public interface AgentBuilder {
             /**
              * Represents an installation of a resubmission strategy.
              */
-            @EqualsAndHashCode
+            @HashCodeAndEqualsPlugin.Enhance
             class Installation {
 
                 /**
@@ -6002,14 +7728,21 @@ public interface AgentBuilder {
                 private final InstallationListener installationListener;
 
                 /**
+                 * The resubmission enforcer to apply.
+                 */
+                private final ResubmissionEnforcer resubmissionEnforcer;
+
+                /**
                  * Creates a new installation.
                  *
                  * @param listener             The listener to apply.
                  * @param installationListener The installation listener to apply.
+                 * @param resubmissionEnforcer The resubmission enforcer to apply.
                  */
-                protected Installation(AgentBuilder.Listener listener, InstallationListener installationListener) {
+                protected Installation(AgentBuilder.Listener listener, InstallationListener installationListener, ResubmissionEnforcer resubmissionEnforcer) {
                     this.listener = listener;
                     this.installationListener = installationListener;
+                    this.resubmissionEnforcer = resubmissionEnforcer;
                 }
 
                 /**
@@ -6029,7 +7762,85 @@ public interface AgentBuilder {
                 protected InstallationListener getInstallationListener() {
                     return installationListener;
                 }
+
+                /**
+                 * Returns the resubmission enforcer to apply.
+                 *
+                 * @return The resubmission enforcer to apply.
+                 */
+                protected ResubmissionEnforcer getResubmissionEnforcer() {
+                    return resubmissionEnforcer;
+                }
             }
+        }
+
+        /**
+         * A resubmission enforcer determines if a non-loaded class should be scheduled for resubmission or be treated upon first load.
+         */
+        protected interface ResubmissionEnforcer {
+
+            /**
+             * Returns {@code true} if a class should be scheduled for resubmission.
+             *
+             * @param typeName            The name of the instrumented class.
+             * @param classLoader         The class loader of the instrumented class or {@code null} if the boot loader.
+             * @param module              The module of the instrumented class or {@code null} if the module system is not supported.
+             * @param classBeingRedefined The class to be redefined or {@code null} if the current type is loaded for the first time.
+             * @return {@code true} if the class should be scheduled for resubmission.
+             */
+            boolean isEnforced(String typeName, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module, @MaybeNull Class<?> classBeingRedefined);
+
+            /**
+             * A resubmission enforcer that does not consider non-loaded classes.
+             */
+            enum Disabled implements ResubmissionEnforcer {
+
+                /**
+                 * The singleton instance.
+                 */
+                INSTANCE;
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public boolean isEnforced(String typeName, @MaybeNull ClassLoader classLoader, @MaybeNull JavaModule module, @MaybeNull Class<?> classBeingRedefined) {
+                    return false;
+                }
+            }
+        }
+
+        /**
+         * A dispatcher for interacting with the instrumentation API.
+         */
+        @JavaDispatcher.Proxied("java.lang.instrument.Instrumentation")
+        protected interface Dispatcher {
+
+            /**
+             * Checks if the supplied type is modifiable.
+             *
+             * @param instrumentation The instrumentation instance available.
+             * @param type            The type to check for modifiability.
+             * @return {@code true} if the supplied type is modifiable.
+             */
+            boolean isModifiableClass(Instrumentation instrumentation, Class<?> type);
+
+            /**
+             * Checks if retransformation is supported for the supplied instrumentation instance.
+             *
+             * @param instrumentation The instrumentation instance available.
+             * @return {@code true} if the supplied instance supports retransformation.
+             */
+            @JavaDispatcher.Defaults
+            boolean isRetransformClassesSupported(Instrumentation instrumentation);
+
+            /**
+             * Retransforms the supplied classes.
+             *
+             * @param instrumentation The instrumentation instance to use for retransformation.
+             * @param type            The types to retransform.
+             * @throws UnmodifiableClassException If the supplied classes cannot be retransformed.
+             */
+            void retransformClasses(Instrumentation instrumentation, Class<?>[] type) throws UnmodifiableClassException;
         }
 
         /**
@@ -6038,9 +7849,39 @@ public interface AgentBuilder {
         protected abstract static class Collector {
 
             /**
-             * A representation for a non-available loaded type.
+             * The matcher to identify what types to redefine.
              */
-            private static final Class<?> NO_LOADED_TYPE = null;
+            private final RawMatcher matcher;
+
+            /**
+             * The pool strategy to use.
+             */
+            private final PoolStrategy poolStrategy;
+
+            /**
+             * The location strategy to use.
+             */
+            protected final LocationStrategy locationStrategy;
+
+            /**
+             * The description strategy for resolving type descriptions for types.
+             */
+            private final DescriptionStrategy descriptionStrategy;
+
+            /**
+             * The listener to notify on transformations.
+             */
+            protected final AgentBuilder.Listener listener;
+
+            /**
+             * The fallback strategy to apply.
+             */
+            private final FallbackStrategy fallbackStrategy;
+
+            /**
+             * The circularity lock to use.
+             */
+            protected final CircularityLock circularityLock;
 
             /**
              * All types that were collected for redefinition.
@@ -6049,59 +7890,73 @@ public interface AgentBuilder {
 
             /**
              * Creates a new collector.
+             *
+             * @param matcher             The matcher to identify what types to redefine.
+             * @param poolStrategy        The pool strategy to use.
+             * @param locationStrategy    The location strategy to use.
+             * @param descriptionStrategy The description strategy for resolving type descriptions for types.
+             * @param listener            The listener to notify on transformations.
+             * @param fallbackStrategy    The fallback strategy to apply.
+             * @param circularityLock     The circularity lock to use.
              */
-            protected Collector() {
+            protected Collector(RawMatcher matcher,
+                                PoolStrategy poolStrategy,
+                                LocationStrategy locationStrategy,
+                                DescriptionStrategy descriptionStrategy,
+                                AgentBuilder.Listener listener,
+                                FallbackStrategy fallbackStrategy,
+                                CircularityLock circularityLock) {
+                this.matcher = matcher;
+                this.poolStrategy = poolStrategy;
+                this.locationStrategy = locationStrategy;
+                this.descriptionStrategy = descriptionStrategy;
+                this.listener = listener;
+                this.fallbackStrategy = fallbackStrategy;
+                this.circularityLock = circularityLock;
                 types = new ArrayList<Class<?>>();
             }
 
             /**
-             * Does consider the retransformation or redefinition of a loaded type without a loaded type representation.
+             * Considers a loaded class for collection.
              *
-             * @param typeMatcher        The type matcher to apply.
-             * @param ignoredTypeMatcher The ignored type matcher to apply.
-             * @param listener           The listener to apply during the consideration.
-             * @param typeDescription    The type description of the type being considered.
-             * @param type               The loaded type being considered.
-             * @param module             The type's Java module or {@code null} if the current VM does not support modules.
+             * @param type       The loaded type being considered.
+             * @param modifiable {@code true} if the considered type is considered modifiable.
              */
-            protected void consider(RawMatcher typeMatcher,
-                                    RawMatcher ignoredTypeMatcher,
-                                    AgentBuilder.Listener listener,
-                                    TypeDescription typeDescription,
-                                    Class<?> type,
-                                    JavaModule module) {
-                consider(typeMatcher, ignoredTypeMatcher, listener, typeDescription, type, NO_LOADED_TYPE, module, false);
-            }
-
-            /**
-             * Does consider the retransformation or redefinition of a loaded type.
-             *
-             * @param typeMatcher         A type matcher to apply.
-             * @param ignoredTypeMatcher  The ignored type matcher to apply.
-             * @param listener            The listener to apply during the consideration.
-             * @param typeDescription     The type description of the type being considered.
-             * @param type                The loaded type being considered.
-             * @param classBeingRedefined The loaded type being considered or {@code null} if it should be considered non-available.
-             * @param module              The type's Java module or {@code null} if the current VM does not support modules.
-             * @param unmodifiable        {@code true} if the current type should be considered unmodifiable.
-             */
-            protected void consider(RawMatcher typeMatcher,
-                                    RawMatcher ignoredTypeMatcher,
-                                    AgentBuilder.Listener listener,
-                                    TypeDescription typeDescription,
-                                    Class<?> type,
-                                    Class<?> classBeingRedefined,
-                                    JavaModule module,
-                                    boolean unmodifiable) {
-                if (unmodifiable
-                        || ignoredTypeMatcher.matches(typeDescription, type.getClassLoader(), module, classBeingRedefined, type.getProtectionDomain())
-                        || !typeMatcher.matches(typeDescription, type.getClassLoader(), module, classBeingRedefined, type.getProtectionDomain())
-                        || !types.add(type)) {
+            protected void consider(Class<?> type, boolean modifiable) {
+                JavaModule module = JavaModule.ofType(type);
+                try {
+                    TypePool typePool = poolStrategy.typePool(locationStrategy.classFileLocator(type.getClassLoader(), module), type.getClassLoader());
+                    try {
+                        doConsider(matcher,
+                                listener,
+                                descriptionStrategy.apply(TypeDescription.ForLoadedType.getName(type), type, typePool, circularityLock, type.getClassLoader(), module),
+                                type,
+                                type,
+                                module,
+                                modifiable);
+                    } catch (Throwable throwable) {
+                        if (descriptionStrategy.isLoadedFirst() && fallbackStrategy.isFallback(type, throwable)) {
+                            doConsider(matcher,
+                                    listener,
+                                    typePool.describe(TypeDescription.ForLoadedType.getName(type)).resolve(),
+                                    type,
+                                    null,
+                                    module,
+                                    true);
+                        } else {
+                            throw throwable;
+                        }
+                    }
+                } catch (Throwable throwable) {
                     try {
                         try {
-                            listener.onIgnored(typeDescription, type.getClassLoader(), module, classBeingRedefined != null);
+                            listener.onDiscovery(TypeDescription.ForLoadedType.getName(type), type.getClassLoader(), module, AgentBuilder.Listener.LOADED);
                         } finally {
-                            listener.onComplete(typeDescription.getName(), type.getClassLoader(), module, classBeingRedefined != null);
+                            try {
+                                listener.onError(TypeDescription.ForLoadedType.getName(type), type.getClassLoader(), module, AgentBuilder.Listener.LOADED, throwable);
+                            } finally {
+                                listener.onComplete(TypeDescription.ForLoadedType.getName(type), type.getClassLoader(), module, AgentBuilder.Listener.LOADED);
+                            }
                         }
                     } catch (Throwable ignored) {
                         // Ignore exceptions that are thrown by listeners to mimic the behavior of a transformation.
@@ -6110,42 +7965,63 @@ public interface AgentBuilder {
             }
 
             /**
-             * Includes all the supplied types in this collector.
+             * Does consider the retransformation or redefinition of a loaded type.
              *
-             * @param types The types to include.
+             * @param matcher             A type matcher to apply.
+             * @param listener            The listener to apply during the consideration.
+             * @param typeDescription     The type description of the type being considered.
+             * @param type                The loaded type being considered.
+             * @param classBeingRedefined The loaded type being considered or {@code null} if it should be considered non-available.
+             * @param module              The type's Java module or {@code null} if the current VM does not support modules.
+             * @param modifiable          {@code true} if the considered type is considered modifiable.
              */
-            protected void include(List<Class<?>> types) {
-                this.types.addAll(types);
+            private void doConsider(RawMatcher matcher,
+                                    AgentBuilder.Listener listener,
+                                    TypeDescription typeDescription,
+                                    Class<?> type,
+                                    @MaybeNull Class<?> classBeingRedefined,
+                                    @MaybeNull JavaModule module,
+                                    boolean modifiable) {
+                if (!modifiable || !matcher.matches(typeDescription, type.getClassLoader(), module, classBeingRedefined, type.getProtectionDomain())) {
+                    try {
+                        try {
+                            listener.onDiscovery(TypeDescription.ForLoadedType.getName(type), type.getClassLoader(), module, classBeingRedefined != null);
+                            listener.onIgnored(typeDescription, type.getClassLoader(), module, classBeingRedefined != null);
+                        } catch (Throwable throwable) {
+                            listener.onError(TypeDescription.ForLoadedType.getName(type), type.getClassLoader(), module, classBeingRedefined != null, throwable);
+                        } finally {
+                            listener.onComplete(TypeDescription.ForLoadedType.getName(type), type.getClassLoader(), module, classBeingRedefined != null);
+                        }
+                    } catch (Throwable ignored) {
+                        // Ignore exceptions that are thrown by listeners to mimic the behavior of a transformation.
+                    }
+                } else {
+                    types.add(type);
+                }
             }
 
             /**
              * Applies all types that this collector collected.
              *
              * @param instrumentation            The instrumentation instance to apply changes to.
-             * @param circularityLock            The circularity lock to use.
-             * @param locationStrategy           The location strategy to use.
-             * @param listener                   The listener to use.
              * @param redefinitionBatchAllocator The redefinition batch allocator to use.
              * @param redefinitionListener       The redefinition listener to use.
              * @param batch                      The next batch's index.
              * @return The next batch's index after this application.
              */
             protected int apply(Instrumentation instrumentation,
-                                CircularityLock circularityLock,
-                                LocationStrategy locationStrategy,
-                                AgentBuilder.Listener listener,
                                 BatchAllocator redefinitionBatchAllocator,
                                 Listener redefinitionListener,
                                 int batch) {
                 Map<List<Class<?>>, Throwable> failures = new HashMap<List<Class<?>>, Throwable>();
-                PrependableIterator prepanedableIterator = new PrependableIterator(redefinitionBatchAllocator.batch(this.types));
-                while (prepanedableIterator.hasNext()) {
-                    List<Class<?>> types = prepanedableIterator.next();
+                PrependableIterator prependableIterator = new PrependableIterator(redefinitionBatchAllocator.batch(this.types));
+                while (prependableIterator.hasNext()) {
+                    List<Class<?>> types = prependableIterator.next();
                     redefinitionListener.onBatch(batch, types, this.types);
                     try {
-                        doApply(instrumentation, circularityLock, types, locationStrategy, listener);
+                        doApply(instrumentation, types);
                     } catch (Throwable throwable) {
-                        prepanedableIterator.prepend(redefinitionListener.onError(batch, types, throwable, this.types));
+                        prependableIterator.prepend(redefinitionListener.onError(batch, types, throwable, this.types));
                         failures.put(types, throwable);
                     }
                     batch += 1;
@@ -6157,19 +8033,13 @@ public interface AgentBuilder {
             /**
              * Applies this collector.
              *
-             * @param instrumentation  The instrumentation instance to apply the transformation for.
-             * @param circularityLock  The circularity lock to use.
-             * @param types            The types of the current patch to transform.
-             * @param locationStrategy The location strategy to use.
-             * @param listener         the listener to notify.
+             * @param instrumentation The instrumentation instance to apply the transformation for.
+             * @param types           The types of the current patch to transform.
              * @throws UnmodifiableClassException If a class is not modifiable.
              * @throws ClassNotFoundException     If a class could not be found.
              */
             protected abstract void doApply(Instrumentation instrumentation,
-                                            CircularityLock circularityLock,
-                                            List<Class<?>> types,
-                                            LocationStrategy locationStrategy,
-                                            AgentBuilder.Listener listener) throws UnmodifiableClassException, ClassNotFoundException;
+                                            List<Class<?>> types) throws UnmodifiableClassException, ClassNotFoundException;
 
             /**
              * An iterator that allows prepending of iterables to be applied previous to another iterator.
@@ -6184,7 +8054,7 @@ public interface AgentBuilder {
                 /**
                  * The backlog of iterators to apply.
                  */
-                private final Deque<Iterator<? extends List<Class<?>>>> backlog;
+                private final List<Iterator<? extends List<Class<?>>>> backlog;
 
                 /**
                  * Creates a new prependable iterator.
@@ -6193,7 +8063,7 @@ public interface AgentBuilder {
                  */
                 protected PrependableIterator(Iterable<? extends List<Class<?>>> origin) {
                     current = origin.iterator();
-                    backlog = new ArrayDeque<Iterator<? extends List<Class<?>>>>();
+                    backlog = new ArrayList<Iterator<? extends List<Class<?>>>>();
                 }
 
                 /**
@@ -6205,29 +8075,35 @@ public interface AgentBuilder {
                     Iterator<? extends List<Class<?>>> iterator = iterable.iterator();
                     if (iterator.hasNext()) {
                         if (current.hasNext()) {
-                            backlog.addLast(current);
+                            backlog.add(current);
                         }
                         current = iterator;
                     }
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public boolean hasNext() {
                     return current.hasNext();
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public List<Class<?>> next() {
                     try {
                         return current.next();
                     } finally {
                         while (!current.hasNext() && !backlog.isEmpty()) {
-                            current = backlog.removeLast();
+                            current = backlog.remove(backlog.size() - 1);
                         }
                     }
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public void remove() {
                     throw new UnsupportedOperationException("remove");
                 }
@@ -6238,12 +8114,30 @@ public interface AgentBuilder {
              */
             protected static class ForRedefinition extends Collector {
 
+                /**
+                 * Creates a new collector for redefinition.
+                 *
+                 * @param matcher             The matcher to identify what types to redefine.
+                 * @param poolStrategy        The pool strategy to use.
+                 * @param locationStrategy    The location strategy to use.
+                 * @param descriptionStrategy The description strategy for resolving type descriptions for types.
+                 * @param listener            The listener to notify on transformations.
+                 * @param fallbackStrategy    The fallback strategy to apply.
+                 * @param circularityLock     The circularity lock to use.
+                 */
+                protected ForRedefinition(RawMatcher matcher,
+                                          PoolStrategy poolStrategy,
+                                          LocationStrategy locationStrategy,
+                                          DescriptionStrategy descriptionStrategy,
+                                          AgentBuilder.Listener listener,
+                                          FallbackStrategy fallbackStrategy,
+                                          CircularityLock circularityLock) {
+                    super(matcher, poolStrategy, locationStrategy, descriptionStrategy, listener, fallbackStrategy, circularityLock);
+                }
+
                 @Override
                 protected void doApply(Instrumentation instrumentation,
-                                       CircularityLock circularityLock,
-                                       List<Class<?>> types,
-                                       LocationStrategy locationStrategy,
-                                       AgentBuilder.Listener listener) throws UnmodifiableClassException, ClassNotFoundException {
+                                       List<Class<?>> types) throws UnmodifiableClassException, ClassNotFoundException {
                     List<ClassDefinition> classDefinitions = new ArrayList<ClassDefinition>(types.size());
                     for (Class<?> type : types) {
                         try {
@@ -6254,9 +8148,13 @@ public interface AgentBuilder {
                             } catch (Throwable throwable) {
                                 JavaModule module = JavaModule.ofType(type);
                                 try {
-                                    listener.onError(TypeDescription.ForLoadedType.getName(type), type.getClassLoader(), module, AgentBuilder.Listener.LOADED, throwable);
+                                    listener.onDiscovery(TypeDescription.ForLoadedType.getName(type), type.getClassLoader(), module, AgentBuilder.Listener.LOADED);
                                 } finally {
-                                    listener.onComplete(TypeDescription.ForLoadedType.getName(type), type.getClassLoader(), module, AgentBuilder.Listener.LOADED);
+                                    try {
+                                        listener.onError(TypeDescription.ForLoadedType.getName(type), type.getClassLoader(), module, AgentBuilder.Listener.LOADED, throwable);
+                                    } finally {
+                                        listener.onComplete(TypeDescription.ForLoadedType.getName(type), type.getClassLoader(), module, AgentBuilder.Listener.LOADED);
+                                    }
                                 }
                             }
                         } catch (Throwable ignored) {
@@ -6266,7 +8164,7 @@ public interface AgentBuilder {
                     if (!classDefinitions.isEmpty()) {
                         circularityLock.release();
                         try {
-                            instrumentation.redefineClasses(classDefinitions.toArray(new ClassDefinition[classDefinitions.size()]));
+                            instrumentation.redefineClasses(classDefinitions.toArray(new ClassDefinition[0]));
                         } finally {
                             circularityLock.acquire();
                         }
@@ -6279,16 +8177,34 @@ public interface AgentBuilder {
              */
             protected static class ForRetransformation extends Collector {
 
+                /**
+                 * Creates a collector to apply a retransformation.
+                 *
+                 * @param matcher             The matcher to identify what types to redefine.
+                 * @param poolStrategy        The pool strategy to use.
+                 * @param locationStrategy    The location strategy to use.
+                 * @param descriptionStrategy The description strategy for resolving type descriptions for types.
+                 * @param listener            The listener to notify on transformations.
+                 * @param fallbackStrategy    The fallback strategy to apply.
+                 * @param circularityLock     The circularity lock to use.
+                 */
+                protected ForRetransformation(RawMatcher matcher,
+                                              PoolStrategy poolStrategy,
+                                              LocationStrategy locationStrategy,
+                                              DescriptionStrategy descriptionStrategy,
+                                              AgentBuilder.Listener listener,
+                                              FallbackStrategy fallbackStrategy,
+                                              CircularityLock circularityLock) {
+                    super(matcher, poolStrategy, locationStrategy, descriptionStrategy, listener, fallbackStrategy, circularityLock);
+                }
+
                 @Override
                 protected void doApply(Instrumentation instrumentation,
-                                       CircularityLock circularityLock,
-                                       List<Class<?>> types,
-                                       LocationStrategy locationStrategy,
-                                       AgentBuilder.Listener listener) throws UnmodifiableClassException {
+                                       List<Class<?>> types) throws UnmodifiableClassException {
                     if (!types.isEmpty()) {
                         circularityLock.release();
                         try {
-                            instrumentation.retransformClasses(types.toArray(new Class<?>[types.size()]));
+                            DISPATCHER.retransformClasses(instrumentation, types.toArray(new Class<?>[0]));
                         } finally {
                             circularityLock.acquire();
                         }
@@ -6299,7 +8215,13 @@ public interface AgentBuilder {
     }
 
     /**
+     * <p>
      * Implements the instrumentation of the {@code LambdaMetafactory} if this feature is enabled.
+     * </p>
+     * <p>
+     * <b>Warning</b>: This feature is not recommended for production systems but only for experiments or debugging
+     * purposes. It might no longer work in a future release and makes assumptions over JVM-internal API.
+     * </p>
      */
     enum LambdaInstrumentationStrategy {
 
@@ -6329,16 +8251,17 @@ public interface AgentBuilder {
                     }
                     byteBuddy.with(Implementation.Context.Disabled.Factory.INSTANCE)
                             .redefine(lambdaMetaFactory)
-                            .visit(new AsmVisitorWrapper.ForDeclaredMethods()
-                                    .method(named("metafactory"), MetaFactoryRedirection.INSTANCE)
-                                    .method(named("altMetafactory"), AlternativeMetaFactoryRedirection.INSTANCE))
+                            .method(ElementMatchers.<MethodDescription>isPublic().and(named("metafactory")))
+                            .intercept(new Implementation.Simple(LambdaMetafactoryFactory.REGULAR))
+                            .method(ElementMatchers.<MethodDescription>isPublic().and(named("altMetafactory")))
+                            .intercept(new Implementation.Simple(LambdaMetafactoryFactory.ALTERNATIVE))
                             .make()
                             .load(lambdaMetaFactory.getClassLoader(), ClassReloadingStrategy.of(instrumentation));
                 }
             }
 
             @Override
-            protected boolean isInstrumented(Class<?> type) {
+            protected boolean isInstrumented(@MaybeNull Class<?> type) {
                 return true;
             }
         },
@@ -6355,22 +8278,10 @@ public interface AgentBuilder {
             }
 
             @Override
-            protected boolean isInstrumented(Class<?> type) {
+            protected boolean isInstrumented(@MaybeNull Class<?> type) {
                 return type == null || !type.getName().contains("/");
             }
         };
-
-        /**
-         * The name of the current VM's {@code Unsafe} class that is visible to the bootstrap loader.
-         */
-        private static final String UNSAFE_CLASS = ClassFileVersion.ofThisVm(ClassFileVersion.JAVA_V6).isAtLeast(ClassFileVersion.JAVA_V9)
-                ? "jdk/internal/misc/Unsafe"
-                : "sun/misc/Unsafe";
-
-        /**
-         * Indicates that an original implementation can be ignored when redefining a method.
-         */
-        protected static final MethodVisitor IGNORE_ORIGINAL = null;
 
         /**
          * Releases the supplied class file transformer when it was built with {@link AgentBuilder#with(LambdaInstrumentationStrategy)} enabled.
@@ -6426,622 +8337,302 @@ public interface AgentBuilder {
          * @param type The redefined type or {@code null} if no such type exists.
          * @return {@code true} if the supplied type should be instrumented according to this strategy.
          */
-        protected abstract boolean isInstrumented(Class<?> type);
+        protected abstract boolean isInstrumented(@MaybeNull Class<?> type);
 
         /**
-         * A factory that creates instances that represent lambda expressions.
+         * A factory for rewriting the JDK's {@code java.lang.invoke.LambdaMetafactory} methods for use with Byte Buddy. The code that is
+         * created by this factory is roughly equivalent to the following:
+         * <blockquote><pre>
+         * public static CallSite metafactory(MethodHandles.Lookup caller,
+         *                                    String interfaceMethodName,
+         *                                    MethodType factoryType,
+         *                                    MethodType interfaceMethodType,
+         *                                    MethodHandle implementation,
+         *                                    MethodType dynamicMethodType) throws Exception {
+         *   boolean serializable = false;
+         *  {@code List<Class<?>>} markerInterfaces = Collections.emptyList();
+         *  {@code List<MethodType>} additionalBridges = Collections.emptyList();
+         *   byte[] binaryRepresentation = (byte[]) ClassLoader.getSystemClassLoader().loadClass("net.bytebuddy.agent.builder.LambdaFactory").getDeclaredMethod("make",
+         *     Object.class,
+         *     String.class,
+         *     Object.class,
+         *     Object.class,
+         *     Object.class,
+         *     Object.class,
+         *     boolean.class,
+         *     List.class,
+         *     List.class).invoke(null,
+         *       caller,
+         *       interfaceMethodName,
+         *       factoryType,
+         *       interfaceMethodType,
+         *       implementation,
+         *       dynamicMethodType,
+         *       serializable,
+         *       markerInterfaces,
+         *       additionalBridges);
+         *  {@code Class<?>} lambdaClass = ... // loading code
+         *   return factoryType.parameterCount() == 0
+         *     ? new ConstantCallSite(MethodHandles.constant(factoryType.returnType(), lambdaClass.getDeclaredConstructors()[0].newInstance()))
+         *     : new ConstantCallSite(Lookup.IMPL_LOOKUP.findStatic(lambdaClass, "get$Lambda", factoryType));
+         * }
+         * </pre></blockquote>
+         * The code's preamble is adjusted for the alternative metafactory to ressemble the following:
+         * <blockquote><pre>
+         * public static CallSite altMetafactory(MethodHandles.Lookup caller,
+         *                                       String interfaceMethodName,
+         *                                       MethodType factoryType,
+         *                                       Object... argument) throws Exception {
+         *   int flags = (Integer) argument[3];
+         *   int index = 4;
+         *  {@code Class<?>[]} markerInterface;
+         *   if ((flags{@code &} 2) != 0) {
+         *     int count = (Integer) argument[index++];
+         *     markerInterface = new{@code Class<?>}[count];
+         *     System.arraycopy(argument, index, markerInterface, 0, count);
+         *     index += count;
+         *   } else {
+         *     markerInterface = new{@code Class<?>}[0];
+         *   }
+         *   MethodType[] additionalBridge;
+         *   if ((flags{@code &} 2) != 0) {
+         *     int count = (Integer) argument[index++];
+         *     additionalBridge = new MethodType[count];
+         *     System.arraycopy(argument, index, additionalBridge, 0, count);
+         *   } else {
+         *     additionalBridge = new MethodType[0];
+         *   }
+         *   MethodType interfaceMethodType = (MethodType) argument[0];
+         *   MethodHandle implementation = (MethodHandle) argument[1];
+         *   MethodType dynamicMethodType = (MethodType) argument[2];
+         *   boolean serializable = (flags{@code &} 1) != 0;
+         *  {@code List<Class<?>>} markerInterfaces = Arrays.asList(markerInterface);
+         *  {@code List<MethodType>} additionalBridges = Arrays.asList(additionalBridge);
+         *   // ... reminder of method as before
+         * }
+         * </pre></blockquote>
          */
-        @EqualsAndHashCode
-        protected static class LambdaInstanceFactory {
+        protected enum LambdaMetafactoryFactory implements ByteCodeAppender {
 
             /**
-             * The name of a factory for a lambda expression.
+             * Implements the {@code java.lang.invoke.LambdaMetafactory#metafactory} method.
              */
-            private static final String LAMBDA_FACTORY = "get$Lambda";
+            REGULAR(6, 11) {
+                @Override
+                protected void onDispatch(MethodVisitor methodVisitor) {
+                    methodVisitor.visitInsn(Opcodes.ICONST_0);
+                    methodVisitor.visitVarInsn(Opcodes.ISTORE, 6);
+                    methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Collections", "emptyList", "()Ljava/util/List;", false);
+                    methodVisitor.visitVarInsn(Opcodes.ASTORE, 7);
+                    methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Collections", "emptyList", "()Ljava/util/List;", false);
+                    methodVisitor.visitVarInsn(Opcodes.ASTORE, 8);
+                    methodVisitor.visitFrame(Opcodes.F_APPEND, 3, new Object[]{Opcodes.INTEGER, "java/util/List", "java/util/List"}, 0, null);
+                }
+            },
 
             /**
-             * A prefix for a field that represents a property of a lambda expression.
+             * Implements the {@code java.lang.invoke.LambdaMetafactory#altMetafactory} method.
              */
-            private static final String FIELD_PREFIX = "arg$";
+            ALTERNATIVE(6, 16) {
+                @Override
+                protected void onDispatch(MethodVisitor methodVisitor) {
+                    methodVisitor.visitVarInsn(Opcodes.ALOAD, 3);
+                    methodVisitor.visitInsn(Opcodes.ICONST_3);
+                    methodVisitor.visitInsn(Opcodes.AALOAD);
+                    methodVisitor.visitTypeInsn(Opcodes.CHECKCAST, "java/lang/Integer");
+                    methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/Integer", "intValue", "()I", false);
+                    methodVisitor.visitVarInsn(Opcodes.ISTORE, 4);
+                    methodVisitor.visitInsn(Opcodes.ICONST_4);
+                    methodVisitor.visitVarInsn(Opcodes.ISTORE, 5);
+                    methodVisitor.visitVarInsn(Opcodes.ILOAD, 4);
+                    methodVisitor.visitInsn(Opcodes.ICONST_2);
+                    methodVisitor.visitInsn(Opcodes.IAND);
+                    Label first = new Label();
+                    methodVisitor.visitJumpInsn(Opcodes.IFEQ, first);
+                    methodVisitor.visitVarInsn(Opcodes.ALOAD, 3);
+                    methodVisitor.visitVarInsn(Opcodes.ILOAD, 5);
+                    methodVisitor.visitIincInsn(5, 1);
+                    methodVisitor.visitInsn(Opcodes.AALOAD);
+                    methodVisitor.visitTypeInsn(Opcodes.CHECKCAST, "java/lang/Integer");
+                    methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/Integer", "intValue", "()I", false);
+                    methodVisitor.visitVarInsn(Opcodes.ISTORE, 7);
+                    methodVisitor.visitVarInsn(Opcodes.ILOAD, 7);
+                    methodVisitor.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/Class");
+                    methodVisitor.visitVarInsn(Opcodes.ASTORE, 6);
+                    methodVisitor.visitVarInsn(Opcodes.ALOAD, 3);
+                    methodVisitor.visitVarInsn(Opcodes.ILOAD, 5);
+                    methodVisitor.visitVarInsn(Opcodes.ALOAD, 6);
+                    methodVisitor.visitInsn(Opcodes.ICONST_0);
+                    methodVisitor.visitVarInsn(Opcodes.ILOAD, 7);
+                    methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/System", "arraycopy", "(Ljava/lang/Object;ILjava/lang/Object;II)V", false);
+                    methodVisitor.visitVarInsn(Opcodes.ILOAD, 5);
+                    methodVisitor.visitVarInsn(Opcodes.ILOAD, 7);
+                    methodVisitor.visitInsn(Opcodes.IADD);
+                    methodVisitor.visitVarInsn(Opcodes.ISTORE, 5);
+                    Label second = new Label();
+                    methodVisitor.visitJumpInsn(Opcodes.GOTO, second);
+                    methodVisitor.visitLabel(first);
+                    methodVisitor.visitFrame(Opcodes.F_APPEND, 2, new Object[]{Opcodes.INTEGER, Opcodes.INTEGER}, 0, null);
+                    methodVisitor.visitInsn(Opcodes.ICONST_0);
+                    methodVisitor.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/Class");
+                    methodVisitor.visitVarInsn(Opcodes.ASTORE, 6);
+                    methodVisitor.visitLabel(second);
+                    methodVisitor.visitFrame(Opcodes.F_APPEND, 1, new Object[]{"[Ljava/lang/Class;"}, 0, null);
+                    methodVisitor.visitVarInsn(Opcodes.ILOAD, 4);
+                    methodVisitor.visitInsn(Opcodes.ICONST_2);
+                    methodVisitor.visitInsn(Opcodes.IAND);
+                    Label third = new Label();
+                    methodVisitor.visitJumpInsn(Opcodes.IFEQ, third);
+                    methodVisitor.visitVarInsn(Opcodes.ALOAD, 3);
+                    methodVisitor.visitVarInsn(Opcodes.ILOAD, 5);
+                    methodVisitor.visitIincInsn(5, 1);
+                    methodVisitor.visitInsn(Opcodes.AALOAD);
+                    methodVisitor.visitTypeInsn(Opcodes.CHECKCAST, "java/lang/Integer");
+                    methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/Integer", "intValue", "()I", false);
+                    methodVisitor.visitVarInsn(Opcodes.ISTORE, 8);
+                    methodVisitor.visitVarInsn(Opcodes.ILOAD, 8);
+                    methodVisitor.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/invoke/MethodType");
+                    methodVisitor.visitVarInsn(Opcodes.ASTORE, 7);
+                    methodVisitor.visitVarInsn(Opcodes.ALOAD, 3);
+                    methodVisitor.visitVarInsn(Opcodes.ILOAD, 5);
+                    methodVisitor.visitVarInsn(Opcodes.ALOAD, 7);
+                    methodVisitor.visitInsn(Opcodes.ICONST_0);
+                    methodVisitor.visitVarInsn(Opcodes.ILOAD, 8);
+                    methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/System", "arraycopy", "(Ljava/lang/Object;ILjava/lang/Object;II)V", false);
+                    Label forth = new Label();
+                    methodVisitor.visitJumpInsn(Opcodes.GOTO, forth);
+                    methodVisitor.visitLabel(third);
+                    methodVisitor.visitFrame(Opcodes.F_SAME, 0, null, 0, null);
+                    methodVisitor.visitInsn(Opcodes.ICONST_0);
+                    methodVisitor.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/invoke/MethodType");
+                    methodVisitor.visitVarInsn(Opcodes.ASTORE, 7);
+                    methodVisitor.visitLabel(forth);
+                    methodVisitor.visitFrame(Opcodes.F_APPEND, 1, new Object[]{"[Ljava/lang/invoke/MethodType;"}, 0, null);
+                    methodVisitor.visitVarInsn(Opcodes.ALOAD, 3);
+                    methodVisitor.visitInsn(Opcodes.ICONST_0);
+                    methodVisitor.visitInsn(Opcodes.AALOAD);
+                    methodVisitor.visitTypeInsn(Opcodes.CHECKCAST, "java/lang/invoke/MethodType");
+                    methodVisitor.visitVarInsn(Opcodes.ASTORE, 8);
+                    methodVisitor.visitVarInsn(Opcodes.ALOAD, 3);
+                    methodVisitor.visitInsn(Opcodes.ICONST_1);
+                    methodVisitor.visitInsn(Opcodes.AALOAD);
+                    methodVisitor.visitTypeInsn(Opcodes.CHECKCAST, "java/lang/invoke/MethodHandle");
+                    methodVisitor.visitVarInsn(Opcodes.ASTORE, 9);
+                    methodVisitor.visitVarInsn(Opcodes.ALOAD, 3);
+                    methodVisitor.visitInsn(Opcodes.ICONST_2);
+                    methodVisitor.visitInsn(Opcodes.AALOAD);
+                    methodVisitor.visitTypeInsn(Opcodes.CHECKCAST, "java/lang/invoke/MethodType");
+                    methodVisitor.visitVarInsn(Opcodes.ASTORE, 10);
+                    methodVisitor.visitVarInsn(Opcodes.ILOAD, 4);
+                    methodVisitor.visitInsn(Opcodes.ICONST_1);
+                    methodVisitor.visitInsn(Opcodes.IAND);
+                    Label fifth = new Label();
+                    methodVisitor.visitJumpInsn(Opcodes.IFEQ, fifth);
+                    methodVisitor.visitInsn(Opcodes.ICONST_1);
+                    Label sixth = new Label();
+                    methodVisitor.visitJumpInsn(Opcodes.GOTO, sixth);
+                    methodVisitor.visitLabel(fifth);
+                    methodVisitor.visitFrame(Opcodes.F_APPEND, 3, new Object[]{"java/lang/invoke/MethodType", "java/lang/invoke/MethodHandle", "java/lang/invoke/MethodType"}, 0, null);
+                    methodVisitor.visitInsn(Opcodes.ICONST_0);
+                    methodVisitor.visitLabel(sixth);
+                    methodVisitor.visitFrame(Opcodes.F_SAME1, 0, null, 1, new Object[]{Opcodes.INTEGER});
+                    methodVisitor.visitVarInsn(Opcodes.ISTORE, 11);
+                    methodVisitor.visitVarInsn(Opcodes.ALOAD, 6);
+                    methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Arrays", "asList", "([Ljava/lang/Object;)Ljava/util/List;", false);
+                    methodVisitor.visitVarInsn(Opcodes.ASTORE, 12);
+                    methodVisitor.visitVarInsn(Opcodes.ALOAD, 7);
+                    methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Arrays", "asList", "([Ljava/lang/Object;)Ljava/util/List;", false);
+                    methodVisitor.visitVarInsn(Opcodes.ASTORE, 13);
+                    methodVisitor.visitVarInsn(Opcodes.ALOAD, 8);
+                    methodVisitor.visitVarInsn(Opcodes.ASTORE, 3);
+                    methodVisitor.visitVarInsn(Opcodes.ALOAD, 9);
+                    methodVisitor.visitVarInsn(Opcodes.ASTORE, 4);
+                    methodVisitor.visitVarInsn(Opcodes.ALOAD, 10);
+                    methodVisitor.visitVarInsn(Opcodes.ASTORE, 5);
+                    methodVisitor.visitVarInsn(Opcodes.ILOAD, 11);
+                    methodVisitor.visitVarInsn(Opcodes.ISTORE, 6);
+                    methodVisitor.visitVarInsn(Opcodes.ALOAD, 12);
+                    methodVisitor.visitVarInsn(Opcodes.ASTORE, 7);
+                    methodVisitor.visitVarInsn(Opcodes.ALOAD, 13);
+                    methodVisitor.visitVarInsn(Opcodes.ASTORE, 8);
+                    methodVisitor.visitFrame(Opcodes.F_FULL, 9, new Object[]{"java/lang/invoke/MethodHandles$Lookup",
+                            "java/lang/String",
+                            "java/lang/invoke/MethodType",
+                            "java/lang/invoke/MethodType",
+                            "java/lang/invoke/MethodHandle",
+                            "java/lang/invoke/MethodType",
+                            Opcodes.INTEGER,
+                            "java/util/List",
+                            "java/util/List"}, 0, null);
+                }
+            };
 
             /**
-             * The infix to use for naming classes that represent lambda expression. The additional prefix
-             * is necessary because the subsequent counter is not sufficient to keep names unique compared
-             * to the original factory.
+             * A loader for the generated lambda class.
              */
-            private static final String LAMBDA_TYPE_INFIX = "$$Lambda$ByteBuddy$";
+            private static final Loader LOADER = resolve();
 
             /**
-             * A type-safe constant to express that a class is not already loaded when applying a class file transformer.
-             */
-            private static final Class<?> NOT_PREVIOUSLY_DEFINED = null;
-
-            /**
-             * A counter for naming lambda expressions randomly.
-             */
-            private static final AtomicInteger LAMBDA_NAME_COUNTER = new AtomicInteger();
-
-            /**
-             * The Byte Buddy instance to use for creating lambda objects.
-             */
-            private final ByteBuddy byteBuddy;
-
-            /**
-             * Creates a new lambda instance factory.
+             * Resolves the loader for the current VM.
              *
-             * @param byteBuddy The Byte Buddy instance to use for creating lambda objects.
+             * @return An appropriate loader.
              */
-            protected LambdaInstanceFactory(ByteBuddy byteBuddy) {
-                this.byteBuddy = byteBuddy;
-            }
-
-            /**
-             * Applies this lambda meta factory.
-             *
-             * @param targetTypeLookup            A lookup context representing the creating class of this lambda expression.
-             * @param lambdaMethodName            The name of the lambda expression's represented method.
-             * @param factoryMethodType           The type of the lambda expression's represented method.
-             * @param lambdaMethodType            The type of the lambda expression's factory method.
-             * @param targetMethodHandle          A handle representing the target of the lambda expression's method.
-             * @param specializedLambdaMethodType A specialization of the type of the lambda expression's represented method.
-             * @param serializable                {@code true} if the lambda expression should be serializable.
-             * @param markerInterfaces            A list of interfaces for the lambda expression to represent.
-             * @param additionalBridges           A list of additional bridge methods to be implemented by the lambda expression.
-             * @param classFileTransformers       A collection of class file transformers to apply when creating the class.
-             * @return A binary representation of the transformed class file.
-             */
-            public byte[] make(Object targetTypeLookup,
-                               String lambdaMethodName,
-                               Object factoryMethodType,
-                               Object lambdaMethodType,
-                               Object targetMethodHandle,
-                               Object specializedLambdaMethodType,
-                               boolean serializable,
-                               List<Class<?>> markerInterfaces,
-                               List<?> additionalBridges,
-                               Collection<? extends ClassFileTransformer> classFileTransformers) {
-                JavaConstant.MethodType factoryMethod = JavaConstant.MethodType.ofLoaded(factoryMethodType);
-                JavaConstant.MethodType lambdaMethod = JavaConstant.MethodType.ofLoaded(lambdaMethodType);
-                JavaConstant.MethodHandle targetMethod = JavaConstant.MethodHandle.ofLoaded(targetMethodHandle, targetTypeLookup);
-                JavaConstant.MethodType specializedLambdaMethod = JavaConstant.MethodType.ofLoaded(specializedLambdaMethodType);
-                Class<?> targetType = JavaConstant.MethodHandle.lookupType(targetTypeLookup);
-                String lambdaClassName = targetType.getName() + LAMBDA_TYPE_INFIX + LAMBDA_NAME_COUNTER.incrementAndGet();
-                DynamicType.Builder<?> builder = byteBuddy
-                        .subclass(factoryMethod.getReturnType(), ConstructorStrategy.Default.NO_CONSTRUCTORS)
-                        .modifiers(TypeManifestation.FINAL, Visibility.PUBLIC)
-                        .implement(markerInterfaces)
-                        .name(lambdaClassName)
-                        .defineConstructor(Visibility.PUBLIC)
-                        .withParameters(factoryMethod.getParameterTypes())
-                        .intercept(ConstructorImplementation.INSTANCE)
-                        .method(named(lambdaMethodName)
-                                .and(takesArguments(lambdaMethod.getParameterTypes()))
-                                .and(returns(lambdaMethod.getReturnType())))
-                        .intercept(new LambdaMethodImplementation(targetMethod, specializedLambdaMethod));
-                int index = 0;
-                for (TypeDescription capturedType : factoryMethod.getParameterTypes()) {
-                    builder = builder.defineField(FIELD_PREFIX + ++index, capturedType, Visibility.PRIVATE, FieldManifestation.FINAL);
+            @SuppressFBWarnings(value = {"DE_MIGHT_IGNORE", "REC_CATCH_EXCEPTION"}, justification = "Exception should not be rethrown but trigger a fallback.")
+            private static Loader resolve() {
+                try {
+                    Class<?> type = Class.forName("java.lang.invoke.MethodHandles$Lookup", false, null);
+                    type.getMethod("defineHiddenClass",
+                            byte[].class,
+                            boolean.class,
+                            Class.forName("[Ljava.lang.invoke.MethodHandles$Lookup$ClassOption;", false, null));
+                    type.getMethod("defineHiddenClassWithClassData",
+                            byte[].class,
+                            Object.class,
+                            boolean.class,
+                            Class.forName("[Ljava.lang.invoke.MethodHandles$Lookup$ClassOption;", false, null));
+                    return Loader.UsingMethodHandleLookup.INSTANCE;
+                } catch (Exception ignored) {
+                    /* do nothing */
                 }
-                if (!factoryMethod.getParameterTypes().isEmpty()) {
-                    builder = builder.defineMethod(LAMBDA_FACTORY, factoryMethod.getReturnType(), Visibility.PRIVATE, Ownership.STATIC)
-                            .withParameters(factoryMethod.getParameterTypes())
-                            .intercept(FactoryImplementation.INSTANCE);
-                }
-                if (serializable) {
-                    if (!markerInterfaces.contains(Serializable.class)) {
-                        builder = builder.implement(Serializable.class);
-                    }
-                    builder = builder.defineMethod("writeReplace", Object.class, Visibility.PRIVATE)
-                            .intercept(new SerializationImplementation(new TypeDescription.ForLoadedType(targetType),
-                                    factoryMethod.getReturnType(),
-                                    lambdaMethodName,
-                                    lambdaMethod,
-                                    targetMethod,
-                                    JavaConstant.MethodType.ofLoaded(specializedLambdaMethodType)));
-                } else if (factoryMethod.getReturnType().isAssignableTo(Serializable.class)) {
-                    builder = builder.defineMethod("readObject", void.class, Visibility.PRIVATE)
-                            .withParameters(ObjectInputStream.class)
-                            .throwing(NotSerializableException.class)
-                            .intercept(ExceptionMethod.throwing(NotSerializableException.class, "Non-serializable lambda"))
-                            .defineMethod("writeObject", void.class, Visibility.PRIVATE)
-                            .withParameters(ObjectOutputStream.class)
-                            .throwing(NotSerializableException.class)
-                            .intercept(ExceptionMethod.throwing(NotSerializableException.class, "Non-serializable lambda"));
-                }
-                for (Object additionalBridgeType : additionalBridges) {
-                    JavaConstant.MethodType additionalBridge = JavaConstant.MethodType.ofLoaded(additionalBridgeType);
-                    builder = builder.defineMethod(lambdaMethodName, additionalBridge.getReturnType(), MethodManifestation.BRIDGE, Visibility.PUBLIC)
-                            .withParameters(additionalBridge.getParameterTypes())
-                            .intercept(new BridgeMethodImplementation(lambdaMethodName, lambdaMethod));
-                }
-                byte[] classFile = builder.make().getBytes();
-                for (ClassFileTransformer classFileTransformer : classFileTransformers) {
+                for (Loader.UsingUnsafe loader : Loader.UsingUnsafe.values()) {
                     try {
-                        byte[] transformedClassFile = classFileTransformer.transform(targetType.getClassLoader(),
-                                lambdaClassName.replace('.', '/'),
-                                NOT_PREVIOUSLY_DEFINED,
-                                targetType.getProtectionDomain(),
-                                classFile);
-                        classFile = transformedClassFile == null
-                                ? classFile
-                                : transformedClassFile;
-                    } catch (Throwable ignored) {
+                        Class.forName(loader.getType().replace('/', '.'),
+                                false,
+                                null).getMethod("defineAnonymousClass", Class.class, byte[].class, Object[].class);
+                        return loader;
+                    } catch (Exception ignored) {
                         /* do nothing */
                     }
                 }
-                return classFile;
+                return Loader.Unavailable.INSTANCE;
             }
 
             /**
-             * Implements a lambda class's executing transformer.
+             * The required stack size for this factory.
              */
-            @SuppressFBWarnings(value = "SE_BAD_FIELD", justification = "An enumeration does not serialize fields")
-            protected enum ConstructorImplementation implements Implementation {
+            private final int stackSize;
 
-                /**
-                 * The singleton instance.
-                 */
-                INSTANCE;
+            /**
+             * The required local variable length for this factory.
+             */
+            private final int localVariableLength;
 
-                /**
-                 * A reference to the {@link Object} class's default executing transformer.
-                 */
-                private final MethodDescription.InDefinedShape objectConstructor;
-
-                /**
-                 * Creates a new executing transformer implementation.
-                 */
-                ConstructorImplementation() {
-                    objectConstructor = TypeDescription.OBJECT.getDeclaredMethods().filter(isConstructor()).getOnly();
-                }
-
-                @Override
-                public ByteCodeAppender appender(Target implementationTarget) {
-                    return new Appender(implementationTarget.getInstrumentedType().getDeclaredFields());
-                }
-
-                @Override
-                public InstrumentedType prepare(InstrumentedType instrumentedType) {
-                    return instrumentedType;
-                }
-
-                /**
-                 * An appender to implement the executing transformer.
-                 */
-                @EqualsAndHashCode
-                protected static class Appender implements ByteCodeAppender {
-
-                    /**
-                     * The fields that are declared by the instrumented type.
-                     */
-                    private final List<FieldDescription.InDefinedShape> declaredFields;
-
-                    /**
-                     * Creates a new appender.
-                     *
-                     * @param declaredFields The fields that are declared by the instrumented type.
-                     */
-                    protected Appender(List<FieldDescription.InDefinedShape> declaredFields) {
-                        this.declaredFields = declaredFields;
-                    }
-
-                    @Override
-                    public Size apply(MethodVisitor methodVisitor, Context implementationContext, MethodDescription instrumentedMethod) {
-                        List<StackManipulation> fieldAssignments = new ArrayList<StackManipulation>(declaredFields.size() * 3);
-                        for (ParameterDescription parameterDescription : instrumentedMethod.getParameters()) {
-                            fieldAssignments.add(MethodVariableAccess.loadThis());
-                            fieldAssignments.add(MethodVariableAccess.load(parameterDescription));
-                            fieldAssignments.add(FieldAccess.forField(declaredFields.get(parameterDescription.getIndex())).write());
-                        }
-                        return new Size(new StackManipulation.Compound(
-                                MethodVariableAccess.loadThis(),
-                                MethodInvocation.invoke(INSTANCE.objectConstructor),
-                                new StackManipulation.Compound(fieldAssignments),
-                                MethodReturn.VOID
-                        ).apply(methodVisitor, implementationContext).getMaximalSize(), instrumentedMethod.getStackSize());
-                    }
-                }
+            /**
+             * Creates a new factory.
+             *
+             * @param stackSize           The required stack size for this factory.
+             * @param localVariableLength The required local variable length for this factory.
+             */
+            LambdaMetafactoryFactory(int stackSize, int localVariableLength) {
+                this.stackSize = stackSize;
+                this.localVariableLength = localVariableLength;
             }
 
             /**
-             * An implementation of a instance factory for a lambda expression's class.
+             * {@inheritDoc}
              */
-            protected enum FactoryImplementation implements Implementation {
-
-                /**
-                 * The singleton instance.
-                 */
-                INSTANCE;
-
-                @Override
-                public ByteCodeAppender appender(Target implementationTarget) {
-                    return new Appender(implementationTarget.getInstrumentedType());
-                }
-
-                @Override
-                public InstrumentedType prepare(InstrumentedType instrumentedType) {
-                    return instrumentedType;
-                }
-
-                /**
-                 * An appender for a lambda expression factory.
-                 */
-                @EqualsAndHashCode
-                protected static class Appender implements ByteCodeAppender {
-
-                    /**
-                     * The instrumented type.
-                     */
-                    private final TypeDescription instrumentedType;
-
-                    /**
-                     * Creates a new appender.
-                     *
-                     * @param instrumentedType The instrumented type.
-                     */
-                    protected Appender(TypeDescription instrumentedType) {
-                        this.instrumentedType = instrumentedType;
-                    }
-
-                    @Override
-                    public Size apply(MethodVisitor methodVisitor, Context implementationContext, MethodDescription instrumentedMethod) {
-                        return new Size(new StackManipulation.Compound(
-                                TypeCreation.of(instrumentedType),
-                                Duplication.SINGLE,
-                                MethodVariableAccess.allArgumentsOf(instrumentedMethod),
-                                MethodInvocation.invoke(instrumentedType.getDeclaredMethods().filter(isConstructor()).getOnly()),
-                                MethodReturn.REFERENCE
-                        ).apply(methodVisitor, implementationContext).getMaximalSize(), instrumentedMethod.getStackSize());
-                    }
-                }
-            }
-
-            /**
-             * Implements a lambda expression's functional method.
-             */
-            @EqualsAndHashCode
-            protected static class LambdaMethodImplementation implements Implementation {
-
-                /**
-                 * The handle of the target method of the lambda expression.
-                 */
-                private final JavaConstant.MethodHandle targetMethod;
-
-                /**
-                 * The specialized type of the lambda method.
-                 */
-                private final JavaConstant.MethodType specializedLambdaMethod;
-
-                /**
-                 * Creates a implementation of a lambda expression's functional method.
-                 *
-                 * @param targetMethod            The target method of the lambda expression.
-                 * @param specializedLambdaMethod The specialized type of the lambda method.
-                 */
-                protected LambdaMethodImplementation(JavaConstant.MethodHandle targetMethod, JavaConstant.MethodType specializedLambdaMethod) {
-                    this.targetMethod = targetMethod;
-                    this.specializedLambdaMethod = specializedLambdaMethod;
-                }
-
-                @Override
-                public ByteCodeAppender appender(Target implementationTarget) {
-                    return new Appender(targetMethod.getOwnerType()
-                            .getDeclaredMethods()
-                            .filter(hasMethodName(targetMethod.getName())
-                                    .and(returns(targetMethod.getReturnType()))
-                                    .and(takesArguments(targetMethod.getParameterTypes())))
-                            .getOnly(),
-                            specializedLambdaMethod,
-                            implementationTarget.getInstrumentedType().getDeclaredFields());
-                }
-
-                @Override
-                public InstrumentedType prepare(InstrumentedType instrumentedType) {
-                    return instrumentedType;
-                }
-
-                /**
-                 * An appender for a lambda expression's functional method.
-                 */
-                @EqualsAndHashCode
-                protected static class Appender implements ByteCodeAppender {
-
-                    /**
-                     * The target method of the lambda expression.
-                     */
-                    private final MethodDescription targetMethod;
-
-                    /**
-                     * The specialized type of the lambda method.
-                     */
-                    private final JavaConstant.MethodType specializedLambdaMethod;
-
-                    /**
-                     * The instrumented type's declared fields.
-                     */
-                    private final List<FieldDescription.InDefinedShape> declaredFields;
-
-                    /**
-                     * Creates an appender of a lambda expression's functional method.
-                     *
-                     * @param targetMethod            The target method of the lambda expression.
-                     * @param specializedLambdaMethod The specialized type of the lambda method.
-                     * @param declaredFields          The instrumented type's declared fields.
-                     */
-                    protected Appender(MethodDescription targetMethod,
-                                       JavaConstant.MethodType specializedLambdaMethod,
-                                       List<FieldDescription.InDefinedShape> declaredFields) {
-                        this.targetMethod = targetMethod;
-                        this.specializedLambdaMethod = specializedLambdaMethod;
-                        this.declaredFields = declaredFields;
-                    }
-
-                    @Override
-                    public Size apply(MethodVisitor methodVisitor, Context implementationContext, MethodDescription instrumentedMethod) {
-                        StackManipulation preparation = targetMethod.isConstructor()
-                                ? new StackManipulation.Compound(TypeCreation.of(targetMethod.getDeclaringType().asErasure()), Duplication.SINGLE)
-                                : StackManipulation.Trivial.INSTANCE;
-                        List<StackManipulation> fieldAccess = new ArrayList<StackManipulation>(declaredFields.size() * 2 + 1);
-                        for (FieldDescription.InDefinedShape fieldDescription : declaredFields) {
-                            fieldAccess.add(MethodVariableAccess.loadThis());
-                            fieldAccess.add(FieldAccess.forField(fieldDescription).read());
-                        }
-                        List<StackManipulation> parameterAccess = new ArrayList<StackManipulation>(instrumentedMethod.getParameters().size() * 2);
-                        for (ParameterDescription parameterDescription : instrumentedMethod.getParameters()) {
-                            parameterAccess.add(MethodVariableAccess.load(parameterDescription));
-                            parameterAccess.add(Assigner.DEFAULT.assign(parameterDescription.getType(),
-                                    specializedLambdaMethod.getParameterTypes().get(parameterDescription.getIndex()).asGenericType(),
-                                    Assigner.Typing.DYNAMIC));
-                        }
-                        return new Size(new StackManipulation.Compound(
-                                preparation,
-                                new StackManipulation.Compound(fieldAccess),
-                                new StackManipulation.Compound(parameterAccess),
-                                MethodInvocation.invoke(targetMethod),
-                                Assigner.DEFAULT.assign(targetMethod.isConstructor()
-                                                ? targetMethod.getDeclaringType().asGenericType()
-                                                : targetMethod.getReturnType(),
-                                        specializedLambdaMethod.getReturnType().asGenericType(),
-                                        Assigner.Typing.DYNAMIC),
-                                MethodReturn.of(specializedLambdaMethod.getReturnType())
-                        ).apply(methodVisitor, implementationContext).getMaximalSize(), instrumentedMethod.getStackSize());
-                    }
-                }
-            }
-
-            /**
-             * Implements the {@code writeReplace} method for serializable lambda expressions.
-             */
-            @EqualsAndHashCode
-            protected static class SerializationImplementation implements Implementation {
-
-                /**
-                 * The lambda expression's declaring type.
-                 */
-                private final TypeDescription targetType;
-
-                /**
-                 * The lambda expression's functional type.
-                 */
-                private final TypeDescription lambdaType;
-
-                /**
-                 * The lambda expression's functional method name.
-                 */
-                private final String lambdaMethodName;
-
-                /**
-                 * The method type of the lambda expression's functional method.
-                 */
-                private final JavaConstant.MethodType lambdaMethod;
-
-                /**
-                 * A handle that references the lambda expressions invocation target.
-                 */
-                private final JavaConstant.MethodHandle targetMethod;
-
-                /**
-                 * The specialized method type of the lambda expression's functional method.
-                 */
-                private final JavaConstant.MethodType specializedMethod;
-
-                /**
-                 * Creates a new implementation for a serializable's lambda expression's {@code writeReplace} method.
-                 *
-                 * @param targetType        The lambda expression's declaring type.
-                 * @param lambdaType        The lambda expression's functional type.
-                 * @param lambdaMethodName  The lambda expression's functional method name.
-                 * @param lambdaMethod      The method type of the lambda expression's functional method.
-                 * @param targetMethod      A handle that references the lambda expressions invocation target.
-                 * @param specializedMethod The specialized method type of the lambda expression's functional method.
-                 */
-                protected SerializationImplementation(TypeDescription targetType,
-                                                      TypeDescription lambdaType,
-                                                      String lambdaMethodName,
-                                                      JavaConstant.MethodType lambdaMethod,
-                                                      JavaConstant.MethodHandle targetMethod,
-                                                      JavaConstant.MethodType specializedMethod) {
-                    this.targetType = targetType;
-                    this.lambdaType = lambdaType;
-                    this.lambdaMethodName = lambdaMethodName;
-                    this.lambdaMethod = lambdaMethod;
-                    this.targetMethod = targetMethod;
-                    this.specializedMethod = specializedMethod;
-                }
-
-                @Override
-                public ByteCodeAppender appender(Target implementationTarget) {
-                    TypeDescription serializedLambda;
-                    try {
-                        serializedLambda = new TypeDescription.ForLoadedType(Class.forName("java.lang.invoke.SerializedLambda"));
-                    } catch (ClassNotFoundException exception) {
-                        throw new IllegalStateException("Cannot find class for lambda serialization", exception);
-                    }
-                    List<StackManipulation> lambdaArguments = new ArrayList<StackManipulation>(implementationTarget.getInstrumentedType().getDeclaredFields().size());
-                    for (FieldDescription.InDefinedShape fieldDescription : implementationTarget.getInstrumentedType().getDeclaredFields()) {
-                        lambdaArguments.add(new StackManipulation.Compound(MethodVariableAccess.loadThis(),
-                                FieldAccess.forField(fieldDescription).read(),
-                                Assigner.DEFAULT.assign(fieldDescription.getType(), TypeDescription.Generic.OBJECT, Assigner.Typing.STATIC)));
-                    }
-                    return new ByteCodeAppender.Simple(new StackManipulation.Compound(
-                            TypeCreation.of(serializedLambda),
-                            Duplication.SINGLE,
-                            ClassConstant.of(targetType),
-                            new TextConstant(lambdaType.getInternalName()),
-                            new TextConstant(lambdaMethodName),
-                            new TextConstant(lambdaMethod.getDescriptor()),
-                            IntegerConstant.forValue(targetMethod.getHandleType().getIdentifier()),
-                            new TextConstant(targetMethod.getOwnerType().getInternalName()),
-                            new TextConstant(targetMethod.getName()),
-                            new TextConstant(targetMethod.getDescriptor()),
-                            new TextConstant(specializedMethod.getDescriptor()),
-                            ArrayFactory.forType(TypeDescription.Generic.OBJECT).withValues(lambdaArguments),
-                            MethodInvocation.invoke(serializedLambda.getDeclaredMethods().filter(isConstructor()).getOnly()),
-                            MethodReturn.REFERENCE
-                    ));
-                }
-
-                @Override
-                public InstrumentedType prepare(InstrumentedType instrumentedType) {
-                    return instrumentedType;
-                }
-            }
-
-            /**
-             * Implements an explicit bridge method for a lambda expression.
-             */
-            @EqualsAndHashCode
-            protected static class BridgeMethodImplementation implements Implementation {
-
-                /**
-                 * The name of the lambda expression's functional method.
-                 */
-                private final String lambdaMethodName;
-
-                /**
-                 * The actual type of the lambda expression's functional method.
-                 */
-                private final JavaConstant.MethodType lambdaMethod;
-
-                /**
-                 * Creates a new bridge method implementation for a lambda expression.
-                 *
-                 * @param lambdaMethodName The name of the lambda expression's functional method.
-                 * @param lambdaMethod     The actual type of the lambda expression's functional method.
-                 */
-                protected BridgeMethodImplementation(String lambdaMethodName, JavaConstant.MethodType lambdaMethod) {
-                    this.lambdaMethodName = lambdaMethodName;
-                    this.lambdaMethod = lambdaMethod;
-                }
-
-                @Override
-                public ByteCodeAppender appender(Target implementationTarget) {
-                    return new Appender(implementationTarget.invokeSuper(new MethodDescription.SignatureToken(lambdaMethodName,
-                            lambdaMethod.getReturnType(),
-                            lambdaMethod.getParameterTypes())));
-                }
-
-                @Override
-                public InstrumentedType prepare(InstrumentedType instrumentedType) {
-                    return instrumentedType;
-                }
-
-                /**
-                 * An appender for implementing a bridge method for a lambda expression.
-                 */
-                @EqualsAndHashCode
-                protected static class Appender implements ByteCodeAppender {
-
-                    /**
-                     * The invocation of the bridge's target method.
-                     */
-                    private final SpecialMethodInvocation bridgeTargetInvocation;
-
-                    /**
-                     * Creates a new appender for invoking a lambda expression's bridge method target.
-                     *
-                     * @param bridgeTargetInvocation The invocation of the bridge's target method.
-                     */
-                    protected Appender(SpecialMethodInvocation bridgeTargetInvocation) {
-                        this.bridgeTargetInvocation = bridgeTargetInvocation;
-                    }
-
-                    @Override
-                    public Size apply(MethodVisitor methodVisitor, Context implementationContext, MethodDescription instrumentedMethod) {
-                        return new Compound(new Simple(
-                                MethodVariableAccess.allArgumentsOf(instrumentedMethod)
-                                        .asBridgeOf(bridgeTargetInvocation.getMethodDescription())
-                                        .prependThisReference(),
-                                bridgeTargetInvocation,
-                                bridgeTargetInvocation.getMethodDescription().getReturnType().asErasure().isAssignableTo(instrumentedMethod.getReturnType().asErasure())
-                                        ? StackManipulation.Trivial.INSTANCE
-                                        : TypeCasting.to(instrumentedMethod.getReceiverType()),
-                                MethodReturn.of(instrumentedMethod.getReturnType())
-
-                        )).apply(methodVisitor, implementationContext, instrumentedMethod);
-                    }
-                }
-            }
-        }
-
-        /**
-         * Implements the regular lambda meta factory. The implementation represents the following code:
-         * <blockquote><pre>
-         * public static CallSite metafactory(MethodHandles.Lookup caller,
-         *     String invokedName,
-         *     MethodType invokedType,
-         *     MethodType samMethodType,
-         *     MethodHandle implMethod,
-         *     MethodType instantiatedMethodType) throws Exception {
-         *   Unsafe unsafe = Unsafe.getUnsafe();
-         *   {@code Class<?>} lambdaClass = unsafe.defineAnonymousClass(caller.lookupClass(),
-         *       (byte[]) ClassLoader.getSystemClassLoader().loadClass("net.bytebuddy.agent.builder.LambdaFactory").getDeclaredMethod("make",
-         *           Object.class,
-         *           String.class,
-         *           Object.class,
-         *           Object.class,
-         *           Object.class,
-         *           Object.class,
-         *           boolean.class,
-         *           List.class,
-         *           List.class).invoke(null,
-         *               caller,
-         *               invokedName,
-         *               invokedType,
-         *               samMethodType,
-         *               implMethod,
-         *               instantiatedMethodType,
-         *               false,
-         *               Collections.emptyList(),
-         *               Collections.emptyList()),
-         *       null);
-         *   unsafe.ensureClassInitialized(lambdaClass);
-         *   return invokedType.parameterCount() == 0
-         *     ? new ConstantCallSite(MethodHandles.constant(invokedType.returnType(), lambdaClass.getDeclaredConstructors()[0].newInstance()))
-         *     : new ConstantCallSite(MethodHandles.Lookup.IMPL_LOOKUP.findStatic(lambdaClass, "get$Lambda", invokedType));
-         * </pre></blockquote>
-         */
-        protected enum MetaFactoryRedirection implements AsmVisitorWrapper.ForDeclaredMethods.MethodVisitorWrapper {
-
-            /**
-             * The singleton instance.
-             */
-            INSTANCE;
-
-            @Override
-            public MethodVisitor wrap(TypeDescription instrumentedType,
-                                      MethodDescription instrumentedMethod,
-                                      MethodVisitor methodVisitor,
-                                      Implementation.Context implementationContext,
-                                      TypePool typePool,
-                                      int writerFlags,
-                                      int readerFlags) {
-                methodVisitor.visitCode();
-                methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, UNSAFE_CLASS, "getUnsafe", "()L" + UNSAFE_CLASS + ";", false);
-                methodVisitor.visitVarInsn(Opcodes.ASTORE, 6);
-                methodVisitor.visitVarInsn(Opcodes.ALOAD, 6);
-                methodVisitor.visitVarInsn(Opcodes.ALOAD, 0);
-                methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/invoke/MethodHandles$Lookup", "lookupClass", "()Ljava/lang/Class;", false);
+            public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext, MethodDescription instrumentedMethod) {
+                onDispatch(methodVisitor);
                 methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/ClassLoader", "getSystemClassLoader", "()Ljava/lang/ClassLoader;", false);
                 methodVisitor.visitLdcInsn("net.bytebuddy.agent.builder.LambdaFactory");
                 methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/ClassLoader", "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;", false);
@@ -7114,34 +8705,30 @@ public interface AgentBuilder {
                 methodVisitor.visitInsn(Opcodes.AASTORE);
                 methodVisitor.visitInsn(Opcodes.DUP);
                 methodVisitor.visitIntInsn(Opcodes.BIPUSH, 6);
-                methodVisitor.visitInsn(Opcodes.ICONST_0);
+                methodVisitor.visitVarInsn(Opcodes.ILOAD, 6);
                 methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Boolean", "valueOf", "(Z)Ljava/lang/Boolean;", false);
                 methodVisitor.visitInsn(Opcodes.AASTORE);
                 methodVisitor.visitInsn(Opcodes.DUP);
                 methodVisitor.visitIntInsn(Opcodes.BIPUSH, 7);
-                methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Collections", "emptyList", "()Ljava/util/List;", false);
+                methodVisitor.visitVarInsn(Opcodes.ALOAD, 7);
                 methodVisitor.visitInsn(Opcodes.AASTORE);
                 methodVisitor.visitInsn(Opcodes.DUP);
                 methodVisitor.visitIntInsn(Opcodes.BIPUSH, 8);
-                methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Collections", "emptyList", "()Ljava/util/List;", false);
+                methodVisitor.visitVarInsn(Opcodes.ALOAD, 8);
                 methodVisitor.visitInsn(Opcodes.AASTORE);
                 methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/reflect/Method", "invoke", "(Ljava/lang/Object;[Ljava/lang/Object;)Ljava/lang/Object;", false);
                 methodVisitor.visitTypeInsn(Opcodes.CHECKCAST, "[B");
-                methodVisitor.visitInsn(Opcodes.ACONST_NULL);
-                methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, UNSAFE_CLASS, "defineAnonymousClass", "(Ljava/lang/Class;[B[Ljava/lang/Object;)Ljava/lang/Class;", false);
-                methodVisitor.visitVarInsn(Opcodes.ASTORE, 7);
-                methodVisitor.visitVarInsn(Opcodes.ALOAD, 6);
-                methodVisitor.visitVarInsn(Opcodes.ALOAD, 7);
-                methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, UNSAFE_CLASS, "ensureClassInitialized", "(Ljava/lang/Class;)V", false);
+                methodVisitor.visitVarInsn(Opcodes.ASTORE, 9);
+                LOADER.apply(methodVisitor);
                 methodVisitor.visitVarInsn(Opcodes.ALOAD, 2);
                 methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/invoke/MethodType", "parameterCount", "()I", false);
-                Label conditionalDefault = new Label();
-                methodVisitor.visitJumpInsn(Opcodes.IFNE, conditionalDefault);
+                Label first = new Label();
+                methodVisitor.visitJumpInsn(Opcodes.IFNE, first);
                 methodVisitor.visitTypeInsn(Opcodes.NEW, "java/lang/invoke/ConstantCallSite");
                 methodVisitor.visitInsn(Opcodes.DUP);
                 methodVisitor.visitVarInsn(Opcodes.ALOAD, 2);
                 methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/invoke/MethodType", "returnType", "()Ljava/lang/Class;", false);
-                methodVisitor.visitVarInsn(Opcodes.ALOAD, 7);
+                methodVisitor.visitVarInsn(Opcodes.ALOAD, 10);
                 methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/Class", "getDeclaredConstructors", "()[Ljava/lang/reflect/Constructor;", false);
                 methodVisitor.visitInsn(Opcodes.ICONST_0);
                 methodVisitor.visitInsn(Opcodes.AALOAD);
@@ -7150,322 +8737,1210 @@ public interface AgentBuilder {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/reflect/Constructor", "newInstance", "([Ljava/lang/Object;)Ljava/lang/Object;", false);
                 methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/invoke/MethodHandles", "constant", "(Ljava/lang/Class;Ljava/lang/Object;)Ljava/lang/invoke/MethodHandle;", false);
                 methodVisitor.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/invoke/ConstantCallSite", "<init>", "(Ljava/lang/invoke/MethodHandle;)V", false);
-                Label conditionalAlternative = new Label();
-                methodVisitor.visitJumpInsn(Opcodes.GOTO, conditionalAlternative);
-                methodVisitor.visitLabel(conditionalDefault);
-                methodVisitor.visitFrame(Opcodes.F_APPEND, 2, new Object[]{UNSAFE_CLASS, "java/lang/Class"}, 0, null);
+                Label second = new Label();
+                methodVisitor.visitJumpInsn(Opcodes.GOTO, second);
+                methodVisitor.visitLabel(first);
+                methodVisitor.visitFrame(Opcodes.F_FULL, 11, new Object[]{"java/lang/invoke/MethodHandles$Lookup", "java/lang/String", "java/lang/invoke/MethodType", "java/lang/invoke/MethodType", "java/lang/invoke/MethodHandle", "java/lang/invoke/MethodType", Opcodes.INTEGER, "java/util/List", "java/util/List", "[B", "java/lang/Class"}, 0, new Object[]{});
                 methodVisitor.visitTypeInsn(Opcodes.NEW, "java/lang/invoke/ConstantCallSite");
                 methodVisitor.visitInsn(Opcodes.DUP);
                 methodVisitor.visitFieldInsn(Opcodes.GETSTATIC, "java/lang/invoke/MethodHandles$Lookup", "IMPL_LOOKUP", "Ljava/lang/invoke/MethodHandles$Lookup;");
-                methodVisitor.visitVarInsn(Opcodes.ALOAD, 7);
+                methodVisitor.visitVarInsn(Opcodes.ALOAD, 10);
                 methodVisitor.visitLdcInsn("get$Lambda");
                 methodVisitor.visitVarInsn(Opcodes.ALOAD, 2);
                 methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/invoke/MethodHandles$Lookup", "findStatic", "(Ljava/lang/Class;Ljava/lang/String;Ljava/lang/invoke/MethodType;)Ljava/lang/invoke/MethodHandle;", false);
                 methodVisitor.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/invoke/ConstantCallSite", "<init>", "(Ljava/lang/invoke/MethodHandle;)V", false);
-                methodVisitor.visitLabel(conditionalAlternative);
+                methodVisitor.visitLabel(second);
                 methodVisitor.visitFrame(Opcodes.F_SAME1, 0, null, 1, new Object[]{"java/lang/invoke/CallSite"});
                 methodVisitor.visitInsn(Opcodes.ARETURN);
-                methodVisitor.visitMaxs(8, 8);
-                methodVisitor.visitEnd();
-                return IGNORE_ORIGINAL;
+                return new Size(Math.max(stackSize, LOADER.getStackSize()), Math.max(localVariableLength, LOADER.getLocalVariableLength()));
+            }
+
+            /**
+             * Invoked upon dispatch. As a result, all values that are presented to Byte Buddy's code generator
+             * must be arranged on the stack.
+             *
+             * @param methodVisitor The method visitor to use.
+             */
+            protected abstract void onDispatch(MethodVisitor methodVisitor);
+
+            /**
+             * A loader is responsible for loading a generated class file in the current VM.
+             */
+            protected interface Loader {
+
+                /**
+                 * Applies this loader.
+                 *
+                 * @param methodVisitor The method visitor to use.
+                 */
+                void apply(MethodVisitor methodVisitor);
+
+                /**
+                 * Returns the stack size that is required to implement this loader.
+                 *
+                 * @return The stack size that is required to implement this loader.
+                 */
+                int getStackSize();
+
+                /**
+                 * Returns the local variable length that is required to implement this loader.
+                 *
+                 * @return The local variable length that is required to implement this loader.
+                 */
+                int getLocalVariableLength();
+
+                /**
+                 * An implementation that indicates that no loader is available.
+                 */
+                enum Unavailable implements Loader {
+
+                    /**
+                     * The singleton instance.
+                     */
+                    INSTANCE;
+
+                    /**
+                     * {@inheritDoc}
+                     */
+                    public void apply(MethodVisitor methodVisitor) {
+                        throw new IllegalStateException("No lambda expression loading strategy available on current VM");
+                    }
+
+                    /**
+                     * {@inheritDoc}
+                     */
+                    public int getStackSize() {
+                        throw new IllegalStateException("No lambda expression loading strategy available on current VM");
+                    }
+
+                    /**
+                     * {@inheritDoc}
+                     */
+                    public int getLocalVariableLength() {
+                        throw new IllegalStateException("No lambda expression loading strategy available on current VM");
+                    }
+                }
+
+                /**
+                 * A loader that uses a method handle lookup object to load a class. This is implemented as follows:
+                 * <blockquote><pre>
+                 * MethodHandleInfo info = caller.revealDirect(implementation);
+                 * boolean classData = (Modifier.isProtected(info.getModifiers())
+                 *  {@code &&} !VerifyAccess.isSamePackage(caller.lookupClass(), info.getDeclaringClass()))
+                 *   || info.getReferenceKind() == Opcodes.H_INVOKESPECIAL;
+                 * MethodHandles.Lookup lookup;
+                 * if (classData) {
+                 *   lookup = caller.defineHiddenClassWithClassData(binaryRepresentation,
+                 *     info,
+                 *     true,
+                 *     MethodHandles.Lookup.ClassOption.NESTMATE,
+                 *     MethodHandles.Lookup.ClassOption.STRONG);
+                 * } else {
+                 *   lookup = caller.defineHiddenClass(binaryRepresentation,
+                 *     true,
+                 *     MethodHandles.Lookup.ClassOption.NESTMATE,
+                 *     MethodHandles.Lookup.ClassOption.STRONG);
+                 * }
+                 * {@code Class<?>} lambdaClass = lookup.lookupClass();
+                 * </pre></blockquote>
+                 */
+                enum UsingMethodHandleLookup implements Loader {
+
+                    /**
+                     * The singleton instance.
+                     */
+                    INSTANCE;
+
+                    /**
+                     * {@inheritDoc}
+                     */
+                    public void apply(MethodVisitor methodVisitor) {
+                        methodVisitor.visitVarInsn(Opcodes.ALOAD, 0);
+                        methodVisitor.visitVarInsn(Opcodes.ALOAD, 4);
+                        methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/invoke/MethodHandles$Lookup", "revealDirect", "(Ljava/lang/invoke/MethodHandle;)Ljava/lang/invoke/MethodHandleInfo;", false);
+                        methodVisitor.visitVarInsn(Opcodes.ASTORE, 10);
+                        methodVisitor.visitVarInsn(Opcodes.ALOAD, 10);
+                        methodVisitor.visitMethodInsn(Opcodes.INVOKEINTERFACE, "java/lang/invoke/MethodHandleInfo", "getModifiers", "()I", true);
+                        methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/reflect/Modifier", "isProtected", "(I)Z", false);
+                        Label first = new Label();
+                        methodVisitor.visitJumpInsn(Opcodes.IFEQ, first);
+                        methodVisitor.visitVarInsn(Opcodes.ALOAD, 0);
+                        methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/invoke/MethodHandles$Lookup", "lookupClass", "()Ljava/lang/Class;", false);
+                        methodVisitor.visitVarInsn(Opcodes.ALOAD, 10);
+                        methodVisitor.visitMethodInsn(Opcodes.INVOKEINTERFACE, "java/lang/invoke/MethodHandleInfo", "getDeclaringClass", "()Ljava/lang/Class;", true);
+                        methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "sun/invoke/util/VerifyAccess", "isSamePackage", "(Ljava/lang/Class;Ljava/lang/Class;)Z", false);
+                        Label second = new Label();
+                        methodVisitor.visitJumpInsn(Opcodes.IFEQ, second);
+                        methodVisitor.visitLabel(first);
+                        methodVisitor.visitFrame(Opcodes.F_FULL, 11, new Object[]{"java/lang/invoke/MethodHandles$Lookup", "java/lang/String", "java/lang/invoke/MethodType", "java/lang/invoke/MethodType", "java/lang/invoke/MethodHandle", "java/lang/invoke/MethodType", Opcodes.INTEGER, "java/util/List", "java/util/List", "[B", "java/lang/invoke/MethodHandleInfo"}, 0, new Object[]{});
+                        methodVisitor.visitVarInsn(Opcodes.ALOAD, 10);
+                        methodVisitor.visitMethodInsn(Opcodes.INVOKEINTERFACE, "java/lang/invoke/MethodHandleInfo", "getReferenceKind", "()I", true);
+                        methodVisitor.visitIntInsn(Opcodes.BIPUSH, 7);
+                        Label third = new Label();
+                        methodVisitor.visitJumpInsn(Opcodes.IF_ICMPNE, third);
+                        methodVisitor.visitLabel(second);
+                        methodVisitor.visitFrame(Opcodes.F_SAME, 0, null, 0, null);
+                        methodVisitor.visitInsn(Opcodes.ICONST_1);
+                        Label forth = new Label();
+                        methodVisitor.visitJumpInsn(Opcodes.GOTO, forth);
+                        methodVisitor.visitLabel(third);
+                        methodVisitor.visitFrame(Opcodes.F_SAME, 0, null, 0, null);
+                        methodVisitor.visitInsn(Opcodes.ICONST_0);
+                        methodVisitor.visitLabel(forth);
+                        methodVisitor.visitFrame(Opcodes.F_SAME1, 0, null, 1, new Object[]{Opcodes.INTEGER});
+                        methodVisitor.visitVarInsn(Opcodes.ISTORE, 11);
+                        methodVisitor.visitVarInsn(Opcodes.ILOAD, 11);
+                        Label fifth = new Label();
+                        methodVisitor.visitJumpInsn(Opcodes.IFEQ, fifth);
+                        methodVisitor.visitVarInsn(Opcodes.ALOAD, 0);
+                        methodVisitor.visitVarInsn(Opcodes.ALOAD, 9);
+                        methodVisitor.visitVarInsn(Opcodes.ALOAD, 10);
+                        methodVisitor.visitInsn(Opcodes.ICONST_1);
+                        methodVisitor.visitInsn(Opcodes.ICONST_2);
+                        methodVisitor.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/invoke/MethodHandles$Lookup$ClassOption");
+                        methodVisitor.visitInsn(Opcodes.DUP);
+                        methodVisitor.visitInsn(Opcodes.ICONST_0);
+                        methodVisitor.visitFieldInsn(Opcodes.GETSTATIC, "java/lang/invoke/MethodHandles$Lookup$ClassOption", "NESTMATE", "Ljava/lang/invoke/MethodHandles$Lookup$ClassOption;");
+                        methodVisitor.visitInsn(Opcodes.AASTORE);
+                        methodVisitor.visitInsn(Opcodes.DUP);
+                        methodVisitor.visitInsn(Opcodes.ICONST_1);
+                        methodVisitor.visitFieldInsn(Opcodes.GETSTATIC, "java/lang/invoke/MethodHandles$Lookup$ClassOption", "STRONG", "Ljava/lang/invoke/MethodHandles$Lookup$ClassOption;");
+                        methodVisitor.visitInsn(Opcodes.AASTORE);
+                        methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/invoke/MethodHandles$Lookup", "defineHiddenClassWithClassData", "([BLjava/lang/Object;Z[Ljava/lang/invoke/MethodHandles$Lookup$ClassOption;)Ljava/lang/invoke/MethodHandles$Lookup;", false);
+                        methodVisitor.visitVarInsn(Opcodes.ASTORE, 12);
+                        Label sixth = new Label();
+                        methodVisitor.visitLabel(sixth);
+                        Label seventh = new Label();
+                        methodVisitor.visitJumpInsn(Opcodes.GOTO, seventh);
+                        methodVisitor.visitLabel(fifth);
+                        methodVisitor.visitFrame(Opcodes.F_APPEND, 1, new Object[]{Opcodes.INTEGER}, 0, null);
+                        methodVisitor.visitVarInsn(Opcodes.ALOAD, 0);
+                        methodVisitor.visitVarInsn(Opcodes.ALOAD, 9);
+                        methodVisitor.visitInsn(Opcodes.ICONST_1);
+                        methodVisitor.visitInsn(Opcodes.ICONST_2);
+                        methodVisitor.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/invoke/MethodHandles$Lookup$ClassOption");
+                        methodVisitor.visitInsn(Opcodes.DUP);
+                        methodVisitor.visitInsn(Opcodes.ICONST_0);
+                        methodVisitor.visitFieldInsn(Opcodes.GETSTATIC, "java/lang/invoke/MethodHandles$Lookup$ClassOption", "NESTMATE", "Ljava/lang/invoke/MethodHandles$Lookup$ClassOption;");
+                        methodVisitor.visitInsn(Opcodes.AASTORE);
+                        methodVisitor.visitInsn(Opcodes.DUP);
+                        methodVisitor.visitInsn(Opcodes.ICONST_1);
+                        methodVisitor.visitFieldInsn(Opcodes.GETSTATIC, "java/lang/invoke/MethodHandles$Lookup$ClassOption", "STRONG", "Ljava/lang/invoke/MethodHandles$Lookup$ClassOption;");
+                        methodVisitor.visitInsn(Opcodes.AASTORE);
+                        methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/invoke/MethodHandles$Lookup", "defineHiddenClass", "([BZ[Ljava/lang/invoke/MethodHandles$Lookup$ClassOption;)Ljava/lang/invoke/MethodHandles$Lookup;", false);
+                        methodVisitor.visitVarInsn(Opcodes.ASTORE, 12);
+                        methodVisitor.visitLabel(seventh);
+                        methodVisitor.visitFrame(Opcodes.F_APPEND, 1, new Object[]{"java/lang/invoke/MethodHandles$Lookup"}, 0, null);
+                        methodVisitor.visitVarInsn(Opcodes.ALOAD, 12);
+                        methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/invoke/MethodHandles$Lookup", "lookupClass", "()Ljava/lang/Class;", false);
+                        methodVisitor.visitVarInsn(Opcodes.ASTORE, 10);
+                        methodVisitor.visitFrame(Opcodes.F_FULL, 10, new Object[]{"java/lang/invoke/MethodHandles$Lookup",
+                                "java/lang/String",
+                                "java/lang/invoke/MethodType",
+                                "java/lang/invoke/MethodType",
+                                "java/lang/invoke/MethodHandle",
+                                "java/lang/invoke/MethodType",
+                                Opcodes.INTEGER,
+                                "java/util/List",
+                                "java/util/List",
+                                "java/lang/Class"}, 0, null);
+                    }
+
+                    /**
+                     * {@inheritDoc}
+                     */
+                    public int getStackSize() {
+                        return 8;
+                    }
+
+                    /**
+                     * {@inheritDoc}
+                     */
+                    public int getLocalVariableLength() {
+                        return 15;
+                    }
+                }
+
+                /**
+                 * A loader that is using unsafe API to load a lambda implementation. The code for loading
+                 * the class looks similar to the following:
+                 * <blockquote><pre>
+                 * Unsafe unsafe = Unsafe.getUnsafe();
+                 * {@code Class<?>} lambdaClass = unsafe.defineAnonymousClass(caller.lookupClass(),
+                 *   binaryRepresentation,
+                 *   null);
+                 * unsafe.ensureClassInitialized(lambdaClass);
+                 * </pre></blockquote>
+                 */
+                enum UsingUnsafe implements Loader {
+
+                    /**
+                     * A loader that uses {@code jdk.internal.misc.Unsafe}.
+                     */
+                    JDK_INTERNAL_MISC_UNSAFE("jdk/internal/misc/Unsafe"),
+
+                    /**
+                     * A loader that uses {@code sun.misc.Unsafe}.
+                     */
+                    SUN_MISC_UNSAFE("sun/misc/Unsafe");
+
+                    /**
+                     * The internal name of the unsafe type.
+                     */
+                    private final String type;
+
+                    /**
+                     * Creates a new loader using unsafe API.
+                     *
+                     * @param type The internal name of the unsafe type.
+                     */
+                    UsingUnsafe(String type) {
+                        this.type = type;
+                    }
+
+                    /**
+                     * Returns the internal name of the unsafe type.
+                     *
+                     * @return The internal name of the unsafe type.
+                     */
+                    protected String getType() {
+                        return type;
+                    }
+
+                    /**
+                     * {@inheritDoc}
+                     */
+                    public void apply(MethodVisitor methodVisitor) {
+                        methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, type, "getUnsafe", "()L" + type + ";", false);
+                        methodVisitor.visitVarInsn(Opcodes.ASTORE, 11);
+                        methodVisitor.visitVarInsn(Opcodes.ALOAD, 11);
+                        methodVisitor.visitVarInsn(Opcodes.ALOAD, 0);
+                        methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/invoke/MethodHandles$Lookup", "lookupClass", "()Ljava/lang/Class;", false);
+                        methodVisitor.visitVarInsn(Opcodes.ALOAD, 9);
+                        methodVisitor.visitInsn(Opcodes.ACONST_NULL);
+                        methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, type, "defineAnonymousClass", "(Ljava/lang/Class;[B[Ljava/lang/Object;)Ljava/lang/Class;", false);
+                        methodVisitor.visitVarInsn(Opcodes.ASTORE, 10);
+                        methodVisitor.visitVarInsn(Opcodes.ALOAD, 11);
+                        methodVisitor.visitVarInsn(Opcodes.ALOAD, 10);
+                        methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, type, "ensureClassInitialized", "(Ljava/lang/Class;)V", false);
+                    }
+
+                    /**
+                     * {@inheritDoc}
+                     */
+                    public int getStackSize() {
+                        return 4;
+                    }
+
+                    /**
+                     * {@inheritDoc}
+                     */
+                    public int getLocalVariableLength() {
+                        return 13;
+                    }
+                }
             }
         }
 
         /**
-         * Implements the alternative lambda meta factory. The implementation represents the following code:
-         * <blockquote><pre>
-         * public static CallSite altMetafactory(MethodHandles.Lookup caller,
-         *     String invokedName,
-         *     MethodType invokedType,
-         *     Object... args) throws Exception {
-         *   int flags = (Integer) args[3];
-         *   int argIndex = 4;
-         *   {@code Class<?>[]} markerInterface;
-         *   if ((flags {@code &} FLAG_MARKERS) != 0) {
-         *     int markerCount = (Integer) args[argIndex++];
-         *     markerInterface = new {@code Class<?>}[markerCount];
-         *     System.arraycopy(args, argIndex, markerInterface, 0, markerCount);
-         *     argIndex += markerCount;
-         *   } else {
-         *     markerInterface = new {@code Class<?>}[0];
-         *   }
-         *   MethodType[] additionalBridge;
-         *   if ((flags {@code &} FLAG_BRIDGES) != 0) {
-         *     int bridgeCount = (Integer) args[argIndex++];
-         *     additionalBridge = new MethodType[bridgeCount];
-         *     System.arraycopy(args, argIndex, additionalBridge, 0, bridgeCount);
-         *     // argIndex += bridgeCount;
-         *   } else {
-         *     additionalBridge = new MethodType[0];
-         *   }
-         *   Unsafe unsafe = Unsafe.getUnsafe();
-         *   {@code Class<?>} lambdaClass = unsafe.defineAnonymousClass(caller.lookupClass(),
-         *       (byte[]) ClassLoader.getSystemClassLoader().loadClass("net.bytebuddy.agent.builder.LambdaFactory").getDeclaredMethod("make",
-         *           Object.class,
-         *           String.class,
-         *           Object.class,
-         *           Object.class,
-         *           Object.class,
-         *           Object.class,
-         *           boolean.class,
-         *           List.class,
-         *           List.class).invoke(null,
-         *               caller,
-         *               invokedName,
-         *               invokedType,
-         *               args[0],
-         *               args[1],
-         *               args[2],
-         *               (flags {@code &} FLAG_SERIALIZABLE) != 0,
-         *               Arrays.asList(markerInterface),
-         *               Arrays.asList(additionalBridge)),
-         *       null);
-         *   unsafe.ensureClassInitialized(lambdaClass);
-         *   return invokedType.parameterCount() == 0
-         *     ? new ConstantCallSite(MethodHandles.constant(invokedType.returnType(), lambdaClass.getDeclaredConstructors()[0].newInstance()))
-         *     : new ConstantCallSite(MethodHandles.Lookup.IMPL_LOOKUP.findStatic(lambdaClass, "get$Lambda", invokedType));
-         * }
-         * </pre></blockquote>
+         * A factory that creates instances that represent lambda expressions.
          */
-        protected enum AlternativeMetaFactoryRedirection implements AsmVisitorWrapper.ForDeclaredMethods.MethodVisitorWrapper {
+        @HashCodeAndEqualsPlugin.Enhance
+        protected static class LambdaInstanceFactory {
 
             /**
-             * The singleton instance.
+             * The name of a factory for a lambda expression.
              */
-            INSTANCE;
+            private static final String LAMBDA_FACTORY = "get$Lambda";
 
+            /**
+             * A prefix for a field that represents a property of a lambda expression.
+             */
+            private static final String FIELD_PREFIX = "arg$";
+
+            /**
+             * The infix to use for naming classes that represent lambda expression. The additional prefix
+             * is necessary because the subsequent counter is not sufficient to keep names unique compared
+             * to the original factory.
+             */
+            private static final String LAMBDA_TYPE_INFIX = "$$Lambda$ByteBuddy$";
+
+            /**
+             * A type-safe constant to express that a class is not already loaded when applying a class file transformer.
+             */
+            @AlwaysNull
+            private static final Class<?> NOT_PREVIOUSLY_DEFINED = null;
+
+            /**
+             * A counter for naming lambda expressions randomly.
+             */
+            private static final AtomicInteger LAMBDA_NAME_COUNTER = new AtomicInteger();
+
+            /**
+             * The Byte Buddy instance to use for creating lambda objects.
+             */
+            private final ByteBuddy byteBuddy;
+
+            /**
+             * Creates a new lambda instance factory.
+             *
+             * @param byteBuddy The Byte Buddy instance to use for creating lambda objects.
+             */
+            protected LambdaInstanceFactory(ByteBuddy byteBuddy) {
+                this.byteBuddy = byteBuddy;
+            }
+
+            /**
+             * Applies this lambda meta factory.
+             *
+             * @param targetTypeLookup            A lookup context representing the creating class of this lambda expression.
+             * @param lambdaMethodName            The name of the lambda expression's represented method.
+             * @param factoryMethodType           The type of the lambda expression's represented method.
+             * @param lambdaMethodType            The type of the lambda expression's factory method.
+             * @param targetMethodHandle          A handle representing the target of the lambda expression's method.
+             * @param specializedLambdaMethodType A specialization of the type of the lambda expression's represented method.
+             * @param serializable                {@code true} if the lambda expression should be serializable.
+             * @param markerInterfaces            A list of interfaces for the lambda expression to represent.
+             * @param additionalBridges           A list of additional bridge methods to be implemented by the lambda expression.
+             * @param classFileTransformers       A collection of class file transformers to apply when creating the class.
+             * @return A binary representation of the transformed class file.
+             */
+            public byte[] make(Object targetTypeLookup,
+                               String lambdaMethodName,
+                               Object factoryMethodType,
+                               Object lambdaMethodType,
+                               Object targetMethodHandle,
+                               Object specializedLambdaMethodType,
+                               boolean serializable,
+                               List<Class<?>> markerInterfaces,
+                               List<?> additionalBridges,
+                               Collection<? extends ClassFileTransformer> classFileTransformers) {
+                JavaConstant.MethodType factoryMethod = JavaConstant.MethodType.ofLoaded(factoryMethodType);
+                JavaConstant.MethodType lambdaMethod = JavaConstant.MethodType.ofLoaded(lambdaMethodType);
+                JavaConstant.MethodHandle targetMethod = JavaConstant.MethodHandle.ofLoaded(targetMethodHandle, targetTypeLookup);
+                JavaConstant.MethodType specializedLambdaMethod = JavaConstant.MethodType.ofLoaded(specializedLambdaMethodType);
+                Class<?> targetType = JavaConstant.MethodHandle.lookupType(targetTypeLookup);
+                String lambdaClassName = targetType.getName() + LAMBDA_TYPE_INFIX + LAMBDA_NAME_COUNTER.incrementAndGet();
+                DynamicType.Builder<?> builder = byteBuddy
+                        .subclass(factoryMethod.getReturnType(), ConstructorStrategy.Default.NO_CONSTRUCTORS)
+                        .modifiers(TypeManifestation.FINAL, Visibility.PUBLIC)
+                        .implement(markerInterfaces)
+                        .name(lambdaClassName)
+                        .defineConstructor(Visibility.PUBLIC)
+                        .withParameters(factoryMethod.getParameterTypes())
+                        .intercept(ConstructorImplementation.INSTANCE)
+                        .method(named(lambdaMethodName)
+                                .and(takesArguments(lambdaMethod.getParameterTypes()))
+                                .and(returns(lambdaMethod.getReturnType())))
+                        .intercept(new LambdaMethodImplementation(TypeDescription.ForLoadedType.of(targetType), targetMethod, specializedLambdaMethod));
+                int index = 0;
+                for (TypeDescription capturedType : factoryMethod.getParameterTypes()) {
+                    builder = builder.defineField(FIELD_PREFIX + ++index, capturedType, Visibility.PRIVATE, FieldManifestation.FINAL);
+                }
+                if (!factoryMethod.getParameterTypes().isEmpty()) {
+                    builder = builder.defineMethod(LAMBDA_FACTORY, factoryMethod.getReturnType(), Visibility.PRIVATE, Ownership.STATIC)
+                            .withParameters(factoryMethod.getParameterTypes())
+                            .intercept(FactoryImplementation.INSTANCE);
+                }
+                if (serializable) {
+                    if (!markerInterfaces.contains(Serializable.class)) {
+                        builder = builder.implement(Serializable.class);
+                    }
+                    builder = builder.defineMethod("writeReplace", Object.class, Visibility.PRIVATE)
+                            .intercept(new SerializationImplementation(TypeDescription.ForLoadedType.of(targetType),
+                                    factoryMethod.getReturnType(),
+                                    lambdaMethodName,
+                                    lambdaMethod,
+                                    targetMethod,
+                                    JavaConstant.MethodType.ofLoaded(specializedLambdaMethodType)));
+                } else if (factoryMethod.getReturnType().isAssignableTo(Serializable.class)) {
+                    builder = builder.defineMethod("readObject", void.class, Visibility.PRIVATE)
+                            .withParameters(ObjectInputStream.class)
+                            .throwing(NotSerializableException.class)
+                            .intercept(ExceptionMethod.throwing(NotSerializableException.class, "Non-serializable lambda"))
+                            .defineMethod("writeObject", void.class, Visibility.PRIVATE)
+                            .withParameters(ObjectOutputStream.class)
+                            .throwing(NotSerializableException.class)
+                            .intercept(ExceptionMethod.throwing(NotSerializableException.class, "Non-serializable lambda"));
+                }
+                for (Object additionalBridgeType : additionalBridges) {
+                    JavaConstant.MethodType additionalBridge = JavaConstant.MethodType.ofLoaded(additionalBridgeType);
+                    builder = builder.defineMethod(lambdaMethodName, additionalBridge.getReturnType(), MethodManifestation.BRIDGE, Visibility.PUBLIC)
+                            .withParameters(additionalBridge.getParameterTypes())
+                            .intercept(new BridgeMethodImplementation(lambdaMethodName, lambdaMethod));
+                }
+                byte[] classFile = builder.make().getBytes();
+                for (ClassFileTransformer classFileTransformer : classFileTransformers) {
+                    try {
+                        byte[] transformedClassFile = classFileTransformer.transform(targetType.getClassLoader(),
+                                lambdaClassName.replace('.', '/'),
+                                NOT_PREVIOUSLY_DEFINED,
+                                targetType.getProtectionDomain(),
+                                classFile);
+                        classFile = transformedClassFile == null
+                                ? classFile
+                                : transformedClassFile;
+                    } catch (Throwable ignored) {
+                        /* do nothing */
+                    }
+                }
+                return classFile;
+            }
+
+            /**
+             * Implements a lambda class's executing transformer.
+             */
+            protected enum ConstructorImplementation implements Implementation {
+
+                /**
+                 * The singleton instance.
+                 */
+                INSTANCE;
+
+                /**
+                 * A reference to the {@link Object} class's default executing transformer.
+                 */
+                private final transient MethodDescription.InDefinedShape objectConstructor;
+
+                /**
+                 * Creates a new executing transformer implementation.
+                 */
+                ConstructorImplementation() {
+                    objectConstructor = TypeDescription.ForLoadedType.of(Object.class).getDeclaredMethods().filter(isConstructor()).getOnly();
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public ByteCodeAppender appender(Target implementationTarget) {
+                    return new Appender(implementationTarget.getInstrumentedType().getDeclaredFields());
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public InstrumentedType prepare(InstrumentedType instrumentedType) {
+                    return instrumentedType;
+                }
+
+                /**
+                 * An appender to implement the executing transformer.
+                 */
+                @HashCodeAndEqualsPlugin.Enhance
+                protected static class Appender implements ByteCodeAppender {
+
+                    /**
+                     * The fields that are declared by the instrumented type.
+                     */
+                    private final List<FieldDescription.InDefinedShape> declaredFields;
+
+                    /**
+                     * Creates a new appender.
+                     *
+                     * @param declaredFields The fields that are declared by the instrumented type.
+                     */
+                    protected Appender(List<FieldDescription.InDefinedShape> declaredFields) {
+                        this.declaredFields = declaredFields;
+                    }
+
+                    /**
+                     * {@inheritDoc}
+                     */
+                    public Size apply(MethodVisitor methodVisitor, Context implementationContext, MethodDescription instrumentedMethod) {
+                        List<StackManipulation> fieldAssignments = new ArrayList<StackManipulation>(declaredFields.size() * 3);
+                        for (ParameterDescription parameterDescription : instrumentedMethod.getParameters()) {
+                            fieldAssignments.add(MethodVariableAccess.loadThis());
+                            fieldAssignments.add(MethodVariableAccess.load(parameterDescription));
+                            fieldAssignments.add(FieldAccess.forField(declaredFields.get(parameterDescription.getIndex())).write());
+                        }
+                        return new Size(new StackManipulation.Compound(
+                                MethodVariableAccess.loadThis(),
+                                MethodInvocation.invoke(INSTANCE.objectConstructor),
+                                new StackManipulation.Compound(fieldAssignments),
+                                MethodReturn.VOID
+                        ).apply(methodVisitor, implementationContext).getMaximalSize(), instrumentedMethod.getStackSize());
+                    }
+                }
+            }
+
+            /**
+             * An implementation of a instance factory for a lambda expression's class.
+             */
+            protected enum FactoryImplementation implements Implementation {
+
+                /**
+                 * The singleton instance.
+                 */
+                INSTANCE;
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public ByteCodeAppender appender(Target implementationTarget) {
+                    return new Appender(implementationTarget.getInstrumentedType());
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public InstrumentedType prepare(InstrumentedType instrumentedType) {
+                    return instrumentedType;
+                }
+
+                /**
+                 * An appender for a lambda expression factory.
+                 */
+                @HashCodeAndEqualsPlugin.Enhance
+                protected static class Appender implements ByteCodeAppender {
+
+                    /**
+                     * The instrumented type.
+                     */
+                    private final TypeDescription instrumentedType;
+
+                    /**
+                     * Creates a new appender.
+                     *
+                     * @param instrumentedType The instrumented type.
+                     */
+                    protected Appender(TypeDescription instrumentedType) {
+                        this.instrumentedType = instrumentedType;
+                    }
+
+                    /**
+                     * {@inheritDoc}
+                     */
+                    public Size apply(MethodVisitor methodVisitor, Context implementationContext, MethodDescription instrumentedMethod) {
+                        return new Size(new StackManipulation.Compound(
+                                TypeCreation.of(instrumentedType),
+                                Duplication.SINGLE,
+                                MethodVariableAccess.allArgumentsOf(instrumentedMethod),
+                                MethodInvocation.invoke(instrumentedType.getDeclaredMethods().filter(isConstructor()).getOnly()),
+                                MethodReturn.REFERENCE
+                        ).apply(methodVisitor, implementationContext).getMaximalSize(), instrumentedMethod.getStackSize());
+                    }
+                }
+            }
+
+            /**
+             * Implements a lambda expression's functional method.
+             */
+            @HashCodeAndEqualsPlugin.Enhance
+            protected static class LambdaMethodImplementation implements Implementation {
+
+                /**
+                 * The type that defines the lambda expression.
+                 */
+                private final TypeDescription targetType;
+
+                /**
+                 * The handle of the target method of the lambda expression.
+                 */
+                private final JavaConstant.MethodHandle targetMethod;
+
+                /**
+                 * The specialized type of the lambda method.
+                 */
+                private final JavaConstant.MethodType specializedLambdaMethod;
+
+                /**
+                 * Creates a implementation of a lambda expression's functional method.
+                 *
+                 * @param targetType              The type that defines the lambda expression.
+                 * @param targetMethod            The target method of the lambda expression.
+                 * @param specializedLambdaMethod The specialized type of the lambda method.
+                 */
+                protected LambdaMethodImplementation(TypeDescription targetType,
+                                                     JavaConstant.MethodHandle targetMethod,
+                                                     JavaConstant.MethodType specializedLambdaMethod) {
+                    this.targetType = targetType;
+                    this.targetMethod = targetMethod;
+                    this.specializedLambdaMethod = specializedLambdaMethod;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public ByteCodeAppender appender(Target implementationTarget) {
+                    return Appender.of(targetMethod.getOwnerType()
+                                    .getDeclaredMethods()
+                                    .filter(hasMethodName(targetMethod.getName())
+                                            .and(returns(targetMethod.getReturnType()))
+                                            .and(takesArguments(targetMethod.getParameterTypes())))
+                                    .getOnly(),
+                            specializedLambdaMethod,
+                            implementationTarget.getInstrumentedType().getDeclaredFields(),
+                            targetMethod.getHandleType(),
+                            targetType);
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public InstrumentedType prepare(InstrumentedType instrumentedType) {
+                    return instrumentedType;
+                }
+
+                /**
+                 * An appender for a lambda expression's functional method.
+                 */
+                @HashCodeAndEqualsPlugin.Enhance
+                protected static class Appender implements ByteCodeAppender {
+
+                    /**
+                     * A dispatcher using method handle lookup data, if available.
+                     */
+                    private static final Dispatcher LOOKUP_DATA_DISPATCHER = dispatcher();
+
+                    /**
+                     * Resolves the dispatcher to use for special method invocations.
+                     *
+                     * @return An appropriate dispatcher for the current VM.
+                     */
+                    @SuppressFBWarnings(value = "REC_CATCH_EXCEPTION", justification = "Exception should not be rethrown but trigger a fallback.")
+                    private static Dispatcher dispatcher() {
+                        try {
+                            Class<?> type = Class.forName("java.lang.invoke.MethodHandles$Lookup", false, null);
+                            type.getMethod("classData", type, String.class, Class.class);
+                            return new Dispatcher.UsingMethodHandle(new MethodDescription.ForLoadedMethod(Class.forName("java.lang.invoke.MethodHandle",
+                                    false,
+                                    null).getMethod("invokeExact", Object[].class)));
+                        } catch (Exception ignored) {
+                            return Dispatcher.UsingDirectInvocation.INSTANCE;
+                        }
+                    }
+
+                    /**
+                     * The target method of the lambda expression.
+                     */
+                    private final MethodDescription targetMethod;
+
+                    /**
+                     * The specialized type of the lambda method.
+                     */
+                    private final JavaConstant.MethodType specializedLambdaMethod;
+
+                    /**
+                     * The instrumented type's declared fields.
+                     */
+                    private final List<FieldDescription.InDefinedShape> declaredFields;
+
+                    /**
+                     * The dispatcher to use.
+                     */
+                    private final Dispatcher dispatcher;
+
+                    /**
+                     * Creates an appender of a lambda expression's functional method.
+                     *
+                     * @param targetMethod            The target method of the lambda expression.
+                     * @param specializedLambdaMethod The specialized type of the lambda method.
+                     * @param declaredFields          The instrumented type's declared fields.
+                     * @param dispatcher              The dispatcher to use.
+                     */
+                    protected Appender(MethodDescription targetMethod,
+                                       JavaConstant.MethodType specializedLambdaMethod,
+                                       List<FieldDescription.InDefinedShape> declaredFields,
+                                       Dispatcher dispatcher) {
+                        this.targetMethod = targetMethod;
+                        this.specializedLambdaMethod = specializedLambdaMethod;
+                        this.declaredFields = declaredFields;
+                        this.dispatcher = dispatcher;
+                    }
+
+                    /**
+                     * Resolves an appropriate appender for this lambda expression.
+                     *
+                     * @param targetMethod            The target method of the lambda expression.
+                     * @param specializedLambdaMethod The specialized type of the lambda method.
+                     * @param declaredFields          The instrumented type's declared fields.
+                     * @param handleType              The handle type of the lambda expression's method handle.
+                     * @param targetType              The target type that defines the lambda expression.
+                     * @return An appropriate byte code appender.
+                     */
+                    protected static ByteCodeAppender of(MethodDescription targetMethod,
+                                                         JavaConstant.MethodType specializedLambdaMethod,
+                                                         List<FieldDescription.InDefinedShape> declaredFields,
+                                                         JavaConstant.MethodHandle.HandleType handleType,
+                                                         TypeDescription targetType) {
+                        return new Appender(targetMethod,
+                                specializedLambdaMethod,
+                                declaredFields,
+                                handleType == JavaConstant.MethodHandle.HandleType.INVOKE_SPECIAL || !targetMethod.getDeclaringType().asErasure().isVisibleTo(targetType)
+                                        ? LOOKUP_DATA_DISPATCHER
+                                        : Dispatcher.UsingDirectInvocation.INSTANCE);
+                    }
+
+                    /**
+                     * {@inheritDoc}
+                     */
+                    public Size apply(MethodVisitor methodVisitor, Context implementationContext, MethodDescription instrumentedMethod) {
+                        List<StackManipulation> fieldAccess = new ArrayList<StackManipulation>(declaredFields.size() * 2 + 1);
+                        for (FieldDescription.InDefinedShape fieldDescription : declaredFields) {
+                            fieldAccess.add(MethodVariableAccess.loadThis());
+                            fieldAccess.add(FieldAccess.forField(fieldDescription).read());
+                        }
+                        List<StackManipulation> parameterAccess = new ArrayList<StackManipulation>(instrumentedMethod.getParameters().size() * 2);
+                        for (ParameterDescription parameterDescription : instrumentedMethod.getParameters()) {
+                            parameterAccess.add(MethodVariableAccess.load(parameterDescription));
+                            parameterAccess.add(Assigner.DEFAULT.assign(parameterDescription.getType(),
+                                    specializedLambdaMethod.getParameterTypes().get(parameterDescription.getIndex()).asGenericType(),
+                                    Assigner.Typing.DYNAMIC));
+                        }
+                        return new Size(new StackManipulation.Compound(
+                                targetMethod.isConstructor()
+                                        ? new StackManipulation.Compound(TypeCreation.of(targetMethod.getDeclaringType().asErasure()), Duplication.SINGLE)
+                                        : StackManipulation.Trivial.INSTANCE,
+                                dispatcher.initialize(),
+                                new StackManipulation.Compound(fieldAccess),
+                                new StackManipulation.Compound(parameterAccess),
+                                dispatcher.invoke(targetMethod),
+                                Assigner.DEFAULT.assign(targetMethod.isConstructor()
+                                                ? targetMethod.getDeclaringType().asGenericType()
+                                                : targetMethod.getReturnType(),
+                                        specializedLambdaMethod.getReturnType().asGenericType(),
+                                        Assigner.Typing.DYNAMIC),
+                                MethodReturn.of(specializedLambdaMethod.getReturnType())
+                        ).apply(methodVisitor, implementationContext).getMaximalSize(), instrumentedMethod.getStackSize());
+                    }
+
+                    /**
+                     * A dispatcher for a lambda expression's implementation.
+                     */
+                    protected interface Dispatcher {
+
+                        /**
+                         * Initializes this invocation.
+                         *
+                         * @return A stack manipulation that represents the initialization.
+                         */
+                        StackManipulation initialize();
+
+                        /**
+                         * Invokes this invocation.
+                         *
+                         * @param methodDescription A description of the invoked method.
+                         * @return A stack manipulation that represents the invocation.
+                         */
+                        StackManipulation invoke(MethodDescription methodDescription);
+
+                        /**
+                         * An invocation that is using a direct call to the target method.
+                         */
+                        enum UsingDirectInvocation implements Dispatcher {
+
+                            /**
+                             * The singleton instance.
+                             */
+                            INSTANCE;
+
+                            /**
+                             * {@inheritDoc}
+                             */
+                            public StackManipulation initialize() {
+                                return StackManipulation.Trivial.INSTANCE;
+                            }
+
+                            /**
+                             * {@inheritDoc}
+                             */
+                            public StackManipulation invoke(MethodDescription methodDescription) {
+                                return MethodInvocation.invoke(methodDescription);
+                            }
+                        }
+
+                        /**
+                         * An invocation that is using an exact invocation of a method handle.
+                         */
+                        @HashCodeAndEqualsPlugin.Enhance
+                        class UsingMethodHandle extends StackManipulation.AbstractBase implements Dispatcher {
+
+                            /**
+                             * A description of {@code java.lang.invoke.MethodHandle#invokeExact(Object...)}.
+                             */
+                            private final MethodDescription.InDefinedShape invokeExact;
+
+                            /**
+                             * Creates a new dispatcher that is using a method handle.
+                             *
+                             * @param invokeExact A description of {@code java.lang.invoke.MethodHandle#invokeExact(Object...)}.
+                             */
+                            protected UsingMethodHandle(MethodDescription.InDefinedShape invokeExact) {
+                                this.invokeExact = invokeExact;
+                            }
+
+                            /**
+                             * {@inheritDoc}
+                             */
+                            public StackManipulation initialize() {
+                                return this;
+                            }
+
+                            /**
+                             * {@inheritDoc}
+                             */
+                            public StackManipulation invoke(MethodDescription methodDescription) {
+                                return MethodInvocation.invoke(invokeExact);
+                            }
+
+                            /**
+                             * {@inheritDoc}
+                             */
+                            public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
+                                methodVisitor.visitLdcInsn(new ConstantDynamic(JavaConstant.Dynamic.DEFAULT_NAME,
+                                        "Ljava/lang/invoke/MethodHandle;",
+                                        new Handle(Opcodes.H_INVOKESTATIC,
+                                                "java/lang/invoke/MethodHandles",
+                                                "classData",
+                                                "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;Ljava/lang/Class;)Ljava/lang/Object;",
+                                                false)));
+                                return new Size(1, 1);
+                            }
+                        }
+                    }
+                }
+            }
+
+            /**
+             * Implements the {@code writeReplace} method for serializable lambda expressions.
+             */
+            @HashCodeAndEqualsPlugin.Enhance
+            protected static class SerializationImplementation implements Implementation {
+
+                /**
+                 * The lambda expression's declaring type.
+                 */
+                private final TypeDescription targetType;
+
+                /**
+                 * The lambda expression's functional type.
+                 */
+                private final TypeDescription lambdaType;
+
+                /**
+                 * The lambda expression's functional method name.
+                 */
+                private final String lambdaMethodName;
+
+                /**
+                 * The method type of the lambda expression's functional method.
+                 */
+                private final JavaConstant.MethodType lambdaMethod;
+
+                /**
+                 * A handle that references the lambda expressions invocation target.
+                 */
+                private final JavaConstant.MethodHandle targetMethod;
+
+                /**
+                 * The specialized method type of the lambda expression's functional method.
+                 */
+                private final JavaConstant.MethodType specializedMethod;
+
+                /**
+                 * Creates a new implementation for a serializable's lambda expression's {@code writeReplace} method.
+                 *
+                 * @param targetType        The lambda expression's declaring type.
+                 * @param lambdaType        The lambda expression's functional type.
+                 * @param lambdaMethodName  The lambda expression's functional method name.
+                 * @param lambdaMethod      The method type of the lambda expression's functional method.
+                 * @param targetMethod      A handle that references the lambda expressions invocation target.
+                 * @param specializedMethod The specialized method type of the lambda expression's functional method.
+                 */
+                protected SerializationImplementation(TypeDescription targetType,
+                                                      TypeDescription lambdaType,
+                                                      String lambdaMethodName,
+                                                      JavaConstant.MethodType lambdaMethod,
+                                                      JavaConstant.MethodHandle targetMethod,
+                                                      JavaConstant.MethodType specializedMethod) {
+                    this.targetType = targetType;
+                    this.lambdaType = lambdaType;
+                    this.lambdaMethodName = lambdaMethodName;
+                    this.lambdaMethod = lambdaMethod;
+                    this.targetMethod = targetMethod;
+                    this.specializedMethod = specializedMethod;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public ByteCodeAppender appender(Target implementationTarget) {
+                    TypeDescription serializedLambda;
+                    try {
+                        serializedLambda = TypeDescription.ForLoadedType.of(Class.forName("java.lang.invoke.SerializedLambda"));
+                    } catch (ClassNotFoundException exception) {
+                        throw new IllegalStateException("Cannot find class for lambda serialization", exception);
+                    }
+                    List<StackManipulation> lambdaArguments = new ArrayList<StackManipulation>(implementationTarget.getInstrumentedType().getDeclaredFields().size());
+                    for (FieldDescription.InDefinedShape fieldDescription : implementationTarget.getInstrumentedType().getDeclaredFields()) {
+                        lambdaArguments.add(new StackManipulation.Compound(MethodVariableAccess.loadThis(),
+                                FieldAccess.forField(fieldDescription).read(),
+                                Assigner.DEFAULT.assign(fieldDescription.getType(), TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class), Assigner.Typing.STATIC)));
+                    }
+                    return new ByteCodeAppender.Simple(new StackManipulation.Compound(
+                            TypeCreation.of(serializedLambda),
+                            Duplication.SINGLE,
+                            ClassConstant.of(targetType),
+                            new TextConstant(lambdaType.getInternalName()),
+                            new TextConstant(lambdaMethodName),
+                            new TextConstant(lambdaMethod.getDescriptor()),
+                            IntegerConstant.forValue(targetMethod.getHandleType().getIdentifier()),
+                            new TextConstant(targetMethod.getOwnerType().getInternalName()),
+                            new TextConstant(targetMethod.getName()),
+                            new TextConstant(targetMethod.getDescriptor()),
+                            new TextConstant(specializedMethod.getDescriptor()),
+                            ArrayFactory.forType(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class)).withValues(lambdaArguments),
+                            MethodInvocation.invoke(serializedLambda.getDeclaredMethods().filter(isConstructor()).getOnly()),
+                            MethodReturn.REFERENCE
+                    ));
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public InstrumentedType prepare(InstrumentedType instrumentedType) {
+                    return instrumentedType;
+                }
+            }
+
+            /**
+             * Implements an explicit bridge method for a lambda expression.
+             */
+            @HashCodeAndEqualsPlugin.Enhance
+            protected static class BridgeMethodImplementation implements Implementation {
+
+                /**
+                 * The name of the lambda expression's functional method.
+                 */
+                private final String lambdaMethodName;
+
+                /**
+                 * The actual type of the lambda expression's functional method.
+                 */
+                private final JavaConstant.MethodType lambdaMethod;
+
+                /**
+                 * Creates a new bridge method implementation for a lambda expression.
+                 *
+                 * @param lambdaMethodName The name of the lambda expression's functional method.
+                 * @param lambdaMethod     The actual type of the lambda expression's functional method.
+                 */
+                protected BridgeMethodImplementation(String lambdaMethodName, JavaConstant.MethodType lambdaMethod) {
+                    this.lambdaMethodName = lambdaMethodName;
+                    this.lambdaMethod = lambdaMethod;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public ByteCodeAppender appender(Target implementationTarget) {
+                    return new Appender(implementationTarget.invokeSuper(new MethodDescription.SignatureToken(lambdaMethodName,
+                            lambdaMethod.getReturnType(),
+                            lambdaMethod.getParameterTypes())));
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public InstrumentedType prepare(InstrumentedType instrumentedType) {
+                    return instrumentedType;
+                }
+
+                /**
+                 * An appender for implementing a bridge method for a lambda expression.
+                 */
+                @HashCodeAndEqualsPlugin.Enhance
+                protected static class Appender implements ByteCodeAppender {
+
+                    /**
+                     * The invocation of the bridge's target method.
+                     */
+                    private final SpecialMethodInvocation bridgeTargetInvocation;
+
+                    /**
+                     * Creates a new appender for invoking a lambda expression's bridge method target.
+                     *
+                     * @param bridgeTargetInvocation The invocation of the bridge's target method.
+                     */
+                    protected Appender(SpecialMethodInvocation bridgeTargetInvocation) {
+                        this.bridgeTargetInvocation = bridgeTargetInvocation;
+                    }
+
+                    /**
+                     * {@inheritDoc}
+                     */
+                    public Size apply(MethodVisitor methodVisitor, Context implementationContext, MethodDescription instrumentedMethod) {
+                        return new Compound(new Simple(
+                                MethodVariableAccess.allArgumentsOf(instrumentedMethod)
+                                        .asBridgeOf(bridgeTargetInvocation.getMethodDescription())
+                                        .prependThisReference(),
+                                bridgeTargetInvocation,
+                                bridgeTargetInvocation.getMethodDescription().getReturnType().asErasure().isAssignableTo(instrumentedMethod.getReturnType().asErasure())
+                                        ? StackManipulation.Trivial.INSTANCE
+                                        : TypeCasting.to(instrumentedMethod.getReturnType()),
+                                MethodReturn.of(instrumentedMethod.getReturnType())
+
+                        )).apply(methodVisitor, implementationContext, instrumentedMethod);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Determines how patching a {@link ResettableClassFileTransformer} resolves the transformer exchange.
+     */
+    enum PatchMode {
+
+        /**
+         * Allows for a short period where neither class file transformer is registered. This might allow
+         * for classes to execute without instrumentation if they are loaded in a short moment where neither
+         * transformer is registered. In some rare cases, this might also cause that these classes are not
+         * instrumented as a result of the patching.
+         */
+        GAP {
             @Override
-            public MethodVisitor wrap(TypeDescription instrumentedType,
-                                      MethodDescription instrumentedMethod,
-                                      MethodVisitor methodVisitor,
-                                      Implementation.Context implementationContext,
-                                      TypePool typePool,
-                                      int writerFlags,
-                                      int readerFlags) {
-                methodVisitor.visitCode();
-                methodVisitor.visitVarInsn(Opcodes.ALOAD, 3);
-                methodVisitor.visitInsn(Opcodes.ICONST_3);
-                methodVisitor.visitInsn(Opcodes.AALOAD);
-                methodVisitor.visitTypeInsn(Opcodes.CHECKCAST, "java/lang/Integer");
-                methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/Integer", "intValue", "()I", false);
-                methodVisitor.visitVarInsn(Opcodes.ISTORE, 4);
-                methodVisitor.visitInsn(Opcodes.ICONST_4);
-                methodVisitor.visitVarInsn(Opcodes.ISTORE, 5);
-                methodVisitor.visitVarInsn(Opcodes.ILOAD, 4);
-                methodVisitor.visitInsn(Opcodes.ICONST_2);
-                methodVisitor.visitInsn(Opcodes.IAND);
-                Label markerInterfaceLoop = new Label();
-                methodVisitor.visitJumpInsn(Opcodes.IFEQ, markerInterfaceLoop);
-                methodVisitor.visitVarInsn(Opcodes.ALOAD, 3);
-                methodVisitor.visitVarInsn(Opcodes.ILOAD, 5);
-                methodVisitor.visitIincInsn(5, 1);
-                methodVisitor.visitInsn(Opcodes.AALOAD);
-                methodVisitor.visitTypeInsn(Opcodes.CHECKCAST, "java/lang/Integer");
-                methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/Integer", "intValue", "()I", false);
-                methodVisitor.visitVarInsn(Opcodes.ISTORE, 7);
-                methodVisitor.visitVarInsn(Opcodes.ILOAD, 7);
-                methodVisitor.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/Class");
-                methodVisitor.visitVarInsn(Opcodes.ASTORE, 6);
-                methodVisitor.visitVarInsn(Opcodes.ALOAD, 3);
-                methodVisitor.visitVarInsn(Opcodes.ILOAD, 5);
-                methodVisitor.visitVarInsn(Opcodes.ALOAD, 6);
-                methodVisitor.visitInsn(Opcodes.ICONST_0);
-                methodVisitor.visitVarInsn(Opcodes.ILOAD, 7);
-                methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/System", "arraycopy", "(Ljava/lang/Object;ILjava/lang/Object;II)V", false);
-                methodVisitor.visitVarInsn(Opcodes.ILOAD, 5);
-                methodVisitor.visitVarInsn(Opcodes.ILOAD, 7);
-                methodVisitor.visitInsn(Opcodes.IADD);
-                methodVisitor.visitVarInsn(Opcodes.ISTORE, 5);
-                Label markerInterfaceExit = new Label();
-                methodVisitor.visitJumpInsn(Opcodes.GOTO, markerInterfaceExit);
-                methodVisitor.visitLabel(markerInterfaceLoop);
-                methodVisitor.visitFrame(Opcodes.F_APPEND, 2, new Object[]{Opcodes.INTEGER, Opcodes.INTEGER}, 0, null);
-                methodVisitor.visitInsn(Opcodes.ICONST_0);
-                methodVisitor.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/Class");
-                methodVisitor.visitVarInsn(Opcodes.ASTORE, 6);
-                methodVisitor.visitLabel(markerInterfaceExit);
-                methodVisitor.visitFrame(Opcodes.F_APPEND, 1, new Object[]{"[Ljava/lang/Class;"}, 0, null);
-                methodVisitor.visitVarInsn(Opcodes.ILOAD, 4);
-                methodVisitor.visitInsn(Opcodes.ICONST_4);
-                methodVisitor.visitInsn(Opcodes.IAND);
-                Label additionalBridgesLoop = new Label();
-                methodVisitor.visitJumpInsn(Opcodes.IFEQ, additionalBridgesLoop);
-                methodVisitor.visitVarInsn(Opcodes.ALOAD, 3);
-                methodVisitor.visitVarInsn(Opcodes.ILOAD, 5);
-                methodVisitor.visitIincInsn(5, 1);
-                methodVisitor.visitInsn(Opcodes.AALOAD);
-                methodVisitor.visitTypeInsn(Opcodes.CHECKCAST, "java/lang/Integer");
-                methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/Integer", "intValue", "()I", false);
-                methodVisitor.visitVarInsn(Opcodes.ISTORE, 8);
-                methodVisitor.visitVarInsn(Opcodes.ILOAD, 8);
-                methodVisitor.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/invoke/MethodType");
-                methodVisitor.visitVarInsn(Opcodes.ASTORE, 7);
-                methodVisitor.visitVarInsn(Opcodes.ALOAD, 3);
-                methodVisitor.visitVarInsn(Opcodes.ILOAD, 5);
-                methodVisitor.visitVarInsn(Opcodes.ALOAD, 7);
-                methodVisitor.visitInsn(Opcodes.ICONST_0);
-                methodVisitor.visitVarInsn(Opcodes.ILOAD, 8);
-                methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/System", "arraycopy", "(Ljava/lang/Object;ILjava/lang/Object;II)V", false);
-                Label additionalBridgesExit = new Label();
-                methodVisitor.visitJumpInsn(Opcodes.GOTO, additionalBridgesExit);
-                methodVisitor.visitLabel(additionalBridgesLoop);
-                methodVisitor.visitFrame(Opcodes.F_SAME, 0, null, 0, null);
-                methodVisitor.visitInsn(Opcodes.ICONST_0);
-                methodVisitor.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/invoke/MethodType");
-                methodVisitor.visitVarInsn(Opcodes.ASTORE, 7);
-                methodVisitor.visitLabel(additionalBridgesExit);
-                methodVisitor.visitFrame(Opcodes.F_APPEND, 1, new Object[]{"[Ljava/lang/invoke/MethodType;"}, 0, null);
-                methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, UNSAFE_CLASS, "getUnsafe", "()L" + UNSAFE_CLASS + ";", false);
-                methodVisitor.visitVarInsn(Opcodes.ASTORE, 8);
-                methodVisitor.visitVarInsn(Opcodes.ALOAD, 8);
-                methodVisitor.visitVarInsn(Opcodes.ALOAD, 0);
-                methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/invoke/MethodHandles$Lookup", "lookupClass", "()Ljava/lang/Class;", false);
-                methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/ClassLoader", "getSystemClassLoader", "()Ljava/lang/ClassLoader;", false);
-                methodVisitor.visitLdcInsn("net.bytebuddy.agent.builder.LambdaFactory");
-                methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/ClassLoader", "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;", false);
-                methodVisitor.visitLdcInsn("make");
-                methodVisitor.visitIntInsn(Opcodes.BIPUSH, 9);
-                methodVisitor.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/Class");
-                methodVisitor.visitInsn(Opcodes.DUP);
-                methodVisitor.visitInsn(Opcodes.ICONST_0);
-                methodVisitor.visitLdcInsn(Type.getType("Ljava/lang/Object;"));
-                methodVisitor.visitInsn(Opcodes.AASTORE);
-                methodVisitor.visitInsn(Opcodes.DUP);
-                methodVisitor.visitInsn(Opcodes.ICONST_1);
-                methodVisitor.visitLdcInsn(Type.getType("Ljava/lang/String;"));
-                methodVisitor.visitInsn(Opcodes.AASTORE);
-                methodVisitor.visitInsn(Opcodes.DUP);
-                methodVisitor.visitInsn(Opcodes.ICONST_2);
-                methodVisitor.visitLdcInsn(Type.getType("Ljava/lang/Object;"));
-                methodVisitor.visitInsn(Opcodes.AASTORE);
-                methodVisitor.visitInsn(Opcodes.DUP);
-                methodVisitor.visitInsn(Opcodes.ICONST_3);
-                methodVisitor.visitLdcInsn(Type.getType("Ljava/lang/Object;"));
-                methodVisitor.visitInsn(Opcodes.AASTORE);
-                methodVisitor.visitInsn(Opcodes.DUP);
-                methodVisitor.visitInsn(Opcodes.ICONST_4);
-                methodVisitor.visitLdcInsn(Type.getType("Ljava/lang/Object;"));
-                methodVisitor.visitInsn(Opcodes.AASTORE);
-                methodVisitor.visitInsn(Opcodes.DUP);
-                methodVisitor.visitInsn(Opcodes.ICONST_5);
-                methodVisitor.visitLdcInsn(Type.getType("Ljava/lang/Object;"));
-                methodVisitor.visitInsn(Opcodes.AASTORE);
-                methodVisitor.visitInsn(Opcodes.DUP);
-                methodVisitor.visitIntInsn(Opcodes.BIPUSH, 6);
-                methodVisitor.visitFieldInsn(Opcodes.GETSTATIC, "java/lang/Boolean", "TYPE", "Ljava/lang/Class;");
-                methodVisitor.visitInsn(Opcodes.AASTORE);
-                methodVisitor.visitInsn(Opcodes.DUP);
-                methodVisitor.visitIntInsn(Opcodes.BIPUSH, 7);
-                methodVisitor.visitLdcInsn(Type.getType("Ljava/util/List;"));
-                methodVisitor.visitInsn(Opcodes.AASTORE);
-                methodVisitor.visitInsn(Opcodes.DUP);
-                methodVisitor.visitIntInsn(Opcodes.BIPUSH, 8);
-                methodVisitor.visitLdcInsn(Type.getType("Ljava/util/List;"));
-                methodVisitor.visitInsn(Opcodes.AASTORE);
-                methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/Class", "getDeclaredMethod", "(Ljava/lang/String;[Ljava/lang/Class;)Ljava/lang/reflect/Method;", false);
-                methodVisitor.visitInsn(Opcodes.ACONST_NULL);
-                methodVisitor.visitIntInsn(Opcodes.BIPUSH, 9);
-                methodVisitor.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/Object");
-                methodVisitor.visitInsn(Opcodes.DUP);
-                methodVisitor.visitInsn(Opcodes.ICONST_0);
-                methodVisitor.visitVarInsn(Opcodes.ALOAD, 0);
-                methodVisitor.visitInsn(Opcodes.AASTORE);
-                methodVisitor.visitInsn(Opcodes.DUP);
-                methodVisitor.visitInsn(Opcodes.ICONST_1);
-                methodVisitor.visitVarInsn(Opcodes.ALOAD, 1);
-                methodVisitor.visitInsn(Opcodes.AASTORE);
-                methodVisitor.visitInsn(Opcodes.DUP);
-                methodVisitor.visitInsn(Opcodes.ICONST_2);
-                methodVisitor.visitVarInsn(Opcodes.ALOAD, 2);
-                methodVisitor.visitInsn(Opcodes.AASTORE);
-                methodVisitor.visitInsn(Opcodes.DUP);
-                methodVisitor.visitInsn(Opcodes.ICONST_3);
-                methodVisitor.visitVarInsn(Opcodes.ALOAD, 3);
-                methodVisitor.visitInsn(Opcodes.ICONST_0);
-                methodVisitor.visitInsn(Opcodes.AALOAD);
-                methodVisitor.visitInsn(Opcodes.AASTORE);
-                methodVisitor.visitInsn(Opcodes.DUP);
-                methodVisitor.visitInsn(Opcodes.ICONST_4);
-                methodVisitor.visitVarInsn(Opcodes.ALOAD, 3);
-                methodVisitor.visitInsn(Opcodes.ICONST_1);
-                methodVisitor.visitInsn(Opcodes.AALOAD);
-                methodVisitor.visitInsn(Opcodes.AASTORE);
-                methodVisitor.visitInsn(Opcodes.DUP);
-                methodVisitor.visitInsn(Opcodes.ICONST_5);
-                methodVisitor.visitVarInsn(Opcodes.ALOAD, 3);
-                methodVisitor.visitInsn(Opcodes.ICONST_2);
-                methodVisitor.visitInsn(Opcodes.AALOAD);
-                methodVisitor.visitInsn(Opcodes.AASTORE);
-                methodVisitor.visitInsn(Opcodes.DUP);
-                methodVisitor.visitIntInsn(Opcodes.BIPUSH, 6);
-                methodVisitor.visitVarInsn(Opcodes.ILOAD, 4);
-                methodVisitor.visitInsn(Opcodes.ICONST_1);
-                methodVisitor.visitInsn(Opcodes.IAND);
-                Label callSiteConditional = new Label();
-                methodVisitor.visitJumpInsn(Opcodes.IFEQ, callSiteConditional);
-                methodVisitor.visitInsn(Opcodes.ICONST_1);
-                Label callSiteAlternative = new Label();
-                methodVisitor.visitJumpInsn(Opcodes.GOTO, callSiteAlternative);
-                methodVisitor.visitLabel(callSiteConditional);
-                methodVisitor.visitFrame(Opcodes.F_FULL, 9, new Object[]{"java/lang/invoke/MethodHandles$Lookup", "java/lang/String", "java/lang/invoke/MethodType", "[Ljava/lang/Object;", Opcodes.INTEGER, Opcodes.INTEGER, "[Ljava/lang/Class;", "[Ljava/lang/invoke/MethodType;", UNSAFE_CLASS}, 7, new Object[]{UNSAFE_CLASS, "java/lang/Class", "java/lang/reflect/Method", Opcodes.NULL, "[Ljava/lang/Object;", "[Ljava/lang/Object;", Opcodes.INTEGER});
-                methodVisitor.visitInsn(Opcodes.ICONST_0);
-                methodVisitor.visitLabel(callSiteAlternative);
-                methodVisitor.visitFrame(Opcodes.F_FULL, 9, new Object[]{"java/lang/invoke/MethodHandles$Lookup", "java/lang/String", "java/lang/invoke/MethodType", "[Ljava/lang/Object;", Opcodes.INTEGER, Opcodes.INTEGER, "[Ljava/lang/Class;", "[Ljava/lang/invoke/MethodType;", UNSAFE_CLASS}, 8, new Object[]{UNSAFE_CLASS, "java/lang/Class", "java/lang/reflect/Method", Opcodes.NULL, "[Ljava/lang/Object;", "[Ljava/lang/Object;", Opcodes.INTEGER, Opcodes.INTEGER});
-                methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Boolean", "valueOf", "(Z)Ljava/lang/Boolean;", false);
-                methodVisitor.visitInsn(Opcodes.AASTORE);
-                methodVisitor.visitInsn(Opcodes.DUP);
-                methodVisitor.visitIntInsn(Opcodes.BIPUSH, 7);
-                methodVisitor.visitVarInsn(Opcodes.ALOAD, 6);
-                methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Arrays", "asList", "([Ljava/lang/Object;)Ljava/util/List;", false);
-                methodVisitor.visitInsn(Opcodes.AASTORE);
-                methodVisitor.visitInsn(Opcodes.DUP);
-                methodVisitor.visitIntInsn(Opcodes.BIPUSH, 8);
-                methodVisitor.visitVarInsn(Opcodes.ALOAD, 7);
-                methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Arrays", "asList", "([Ljava/lang/Object;)Ljava/util/List;", false);
-                methodVisitor.visitInsn(Opcodes.AASTORE);
-                methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/reflect/Method", "invoke", "(Ljava/lang/Object;[Ljava/lang/Object;)Ljava/lang/Object;", false);
-                methodVisitor.visitTypeInsn(Opcodes.CHECKCAST, "[B");
-                methodVisitor.visitInsn(Opcodes.ACONST_NULL);
-                methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, UNSAFE_CLASS, "defineAnonymousClass", "(Ljava/lang/Class;[B[Ljava/lang/Object;)Ljava/lang/Class;", false);
-                methodVisitor.visitVarInsn(Opcodes.ASTORE, 9);
-                methodVisitor.visitVarInsn(Opcodes.ALOAD, 8);
-                methodVisitor.visitVarInsn(Opcodes.ALOAD, 9);
-                methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, UNSAFE_CLASS, "ensureClassInitialized", "(Ljava/lang/Class;)V", false);
-                methodVisitor.visitVarInsn(Opcodes.ALOAD, 2);
-                methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/invoke/MethodType", "parameterCount", "()I", false);
-                Label callSiteJump = new Label();
-                methodVisitor.visitJumpInsn(Opcodes.IFNE, callSiteJump);
-                methodVisitor.visitTypeInsn(Opcodes.NEW, "java/lang/invoke/ConstantCallSite");
-                methodVisitor.visitInsn(Opcodes.DUP);
-                methodVisitor.visitVarInsn(Opcodes.ALOAD, 2);
-                methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/invoke/MethodType", "returnType", "()Ljava/lang/Class;", false);
-                methodVisitor.visitVarInsn(Opcodes.ALOAD, 9);
-                methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/Class", "getDeclaredConstructors", "()[Ljava/lang/reflect/Constructor;", false);
-                methodVisitor.visitInsn(Opcodes.ICONST_0);
-                methodVisitor.visitInsn(Opcodes.AALOAD);
-                methodVisitor.visitInsn(Opcodes.ICONST_0);
-                methodVisitor.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/Object");
-                methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/reflect/Constructor", "newInstance", "([Ljava/lang/Object;)Ljava/lang/Object;", false);
-                methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/invoke/MethodHandles", "constant", "(Ljava/lang/Class;Ljava/lang/Object;)Ljava/lang/invoke/MethodHandle;", false);
-                methodVisitor.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/invoke/ConstantCallSite", "<init>", "(Ljava/lang/invoke/MethodHandle;)V", false);
-                Label callSiteExit = new Label();
-                methodVisitor.visitJumpInsn(Opcodes.GOTO, callSiteExit);
-                methodVisitor.visitLabel(callSiteJump);
-                methodVisitor.visitFrame(Opcodes.F_APPEND, 1, new Object[]{"java/lang/Class"}, 0, null);
-                methodVisitor.visitTypeInsn(Opcodes.NEW, "java/lang/invoke/ConstantCallSite");
-                methodVisitor.visitInsn(Opcodes.DUP);
-                methodVisitor.visitFieldInsn(Opcodes.GETSTATIC, "java/lang/invoke/MethodHandles$Lookup", "IMPL_LOOKUP", "Ljava/lang/invoke/MethodHandles$Lookup;");
-                methodVisitor.visitVarInsn(Opcodes.ALOAD, 9);
-                methodVisitor.visitLdcInsn("get$Lambda");
-                methodVisitor.visitVarInsn(Opcodes.ALOAD, 2);
-                methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/invoke/MethodHandles$Lookup", "findStatic", "(Ljava/lang/Class;Ljava/lang/String;Ljava/lang/invoke/MethodType;)Ljava/lang/invoke/MethodHandle;", false);
-                methodVisitor.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/invoke/ConstantCallSite", "<init>", "(Ljava/lang/invoke/MethodHandle;)V", false);
-                methodVisitor.visitLabel(callSiteExit);
-                methodVisitor.visitFrame(Opcodes.F_SAME1, 0, null, 1, new Object[]{"java/lang/invoke/CallSite"});
-                methodVisitor.visitInsn(Opcodes.ARETURN);
-                methodVisitor.visitMaxs(9, 10);
-                methodVisitor.visitEnd();
-                return IGNORE_ORIGINAL;
+            protected Handler toHandler(ResettableClassFileTransformer classFileTransformer) {
+                return new Handler.ForPatchWithGap(classFileTransformer);
+            }
+        },
+
+        /**
+         * Allows for a short period where both class file transformer are registered. This might allow
+         * for classes to apply both instrumentations. In some rare cases, this might also cause that both
+         * instrumentations are permanently applied.
+         */
+        OVERLAP {
+            @Override
+            protected Handler toHandler(ResettableClassFileTransformer classFileTransformer) {
+                return new Handler.ForPatchWithOverlap(classFileTransformer);
+            }
+        };
+
+        /**
+         * Resolves this strategy to a handler.
+         *
+         * @param classFileTransformer The class file transformer to deregister.
+         * @return The handler to apply.
+         */
+        protected abstract Handler toHandler(ResettableClassFileTransformer classFileTransformer);
+
+        /**
+         * A handler to allow for callbacks prior and after registering a {@link ClassFileTransformer}.
+         */
+        protected interface Handler {
+
+            /**
+             * Invoked prior to registering a class file transformer.
+             *
+             * @param instrumentation The instrumentation to use.
+             */
+            void onBeforeRegistration(Instrumentation instrumentation);
+
+            /**
+             * Invoked right after registering a class file transformer.
+             *
+             * @param instrumentation The instrumentation to use.
+             */
+            void onAfterRegistration(Instrumentation instrumentation);
+
+            /**
+             * A non-operational handler.
+             */
+            enum NoOp implements Handler {
+
+                /**
+                 * The singleton instance.
+                 */
+                INSTANCE;
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public void onBeforeRegistration(Instrumentation instrumentation) {
+                    /* do nothing */
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public void onAfterRegistration(Instrumentation instrumentation) {
+                    /* do nothing */
+                }
+            }
+
+            /**
+             * A handler for patching by {@link PatchMode#GAP}.
+             */
+            @HashCodeAndEqualsPlugin.Enhance
+            class ForPatchWithGap implements Handler {
+
+                /**
+                 * The class file transformer to deregister.
+                 */
+                private final ResettableClassFileTransformer classFileTransformer;
+
+                /**
+                 * Creates a new handler.
+                 *
+                 * @param classFileTransformer The class file transformer to deregister.
+                 */
+                protected ForPatchWithGap(ResettableClassFileTransformer classFileTransformer) {
+                    this.classFileTransformer = classFileTransformer;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public void onBeforeRegistration(Instrumentation instrumentation) {
+                    if (!classFileTransformer.reset(instrumentation, RedefinitionStrategy.DISABLED)) {
+                        throw new IllegalArgumentException("Failed to deregister patched class file transformer: " + classFileTransformer);
+                    }
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public void onAfterRegistration(Instrumentation instrumentation) {
+                    /* do nothing */
+                }
+            }
+
+            /**
+             * A handler for patching by {@link PatchMode#OVERLAP}.
+             */
+            @HashCodeAndEqualsPlugin.Enhance
+            class ForPatchWithOverlap implements Handler {
+
+                /**
+                 * The class file transformer to deregister.
+                 */
+                private final ResettableClassFileTransformer classFileTransformer;
+
+                /**
+                 * Creates a new handler.
+                 *
+                 * @param classFileTransformer The class file transformer to deregister.
+                 */
+                protected ForPatchWithOverlap(ResettableClassFileTransformer classFileTransformer) {
+                    this.classFileTransformer = classFileTransformer;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public void onBeforeRegistration(Instrumentation instrumentation) {
+                    /* do nothing */
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public void onAfterRegistration(Instrumentation instrumentation) {
+                    if (!classFileTransformer.reset(instrumentation, RedefinitionStrategy.DISABLED)) {
+                        throw new IllegalArgumentException("Failed to deregister patched class file transformer: " + classFileTransformer);
+                    }
+                }
             }
         }
     }
@@ -7477,10 +9952,11 @@ public interface AgentBuilder {
      * <p>
      * By default, Byte Buddy ignores any types loaded by the bootstrap class loader and
      * any synthetic type. Self-injection and rebasing is enabled. In order to avoid class format changes, set
-     * {@link AgentBuilder#disableBootstrapInjection()}). All types are parsed without their debugging information ({@link PoolStrategy.Default#FAST}).
+     * {@link AgentBuilder#disableClassFormatChanges()}. All types are parsed without their debugging information
+     * ({@link PoolStrategy.Default#FAST}).
      * </p>
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class Default implements AgentBuilder {
 
         /**
@@ -7489,25 +9965,27 @@ public interface AgentBuilder {
         private static final String INSTALLER_TYPE = "net.bytebuddy.agent.Installer";
 
         /**
-         * The name of the {@code net.bytebuddy.agent.Installer} getter for reading an installed {@link Instrumentation}.
+         * The name of the getter for {@code net.bytebuddy.agent.Installer} to read the {@link Instrumentation}.
          */
-        private static final String INSTRUMENTATION_GETTER = "getInstrumentation";
-
-        /**
-         * Indicator for access to a static member via reflection to make the code more readable.
-         */
-        private static final Object STATIC_MEMBER = null;
+        private static final String INSTALLER_GETTER = "getInstrumentation";
 
         /**
          * The value that is to be returned from a {@link java.lang.instrument.ClassFileTransformer} to indicate
          * that no class file transformation is to be applied.
          */
+        @AlwaysNull
         private static final byte[] NO_TRANSFORMATION = null;
 
         /**
-         * Indicates that a loaded type should be considered as non-available.
+         * A type-safe constant to express that a class is not already loaded when applying a class file transformer.
          */
-        private static final Class<?> NO_LOADED_TYPE = null;
+        @AlwaysNull
+        private static final Class<?> NOT_PREVIOUSLY_DEFINED = null;
+
+        /**
+         * A dipatcher to use for interacting with the instrumentation API.
+         */
+        private static final Dispatcher DISPATCHER = doPrivileged(JavaDispatcher.of(Dispatcher.class));
 
         /**
          * The default circularity lock that assures that no agent created by any agent builder within this
@@ -7531,7 +10009,7 @@ public interface AgentBuilder {
         protected final CircularityLock circularityLock;
 
         /**
-         * The type locator to use.
+         * The pool strategy to use.
          */
         protected final PoolStrategy poolStrategy;
 
@@ -7546,9 +10024,24 @@ public interface AgentBuilder {
         protected final LocationStrategy locationStrategy;
 
         /**
+         * A class file locator to be used for additional lookup of globally available types.
+         */
+        protected final ClassFileLocator classFileLocator;
+
+        /**
          * The native method strategy to use.
          */
         protected final NativeMethodStrategy nativeMethodStrategy;
+
+        /**
+         * The warmup strategy to use.
+         */
+        protected final WarmupStrategy warmupStrategy;
+
+        /**
+         * A decorator to wrap the created class file transformer.
+         */
+        protected final TransformerDecorator transformerDecorator;
 
         /**
          * The initialization strategy to use for creating classes.
@@ -7581,9 +10074,9 @@ public interface AgentBuilder {
         protected final RedefinitionStrategy.ResubmissionStrategy redefinitionResubmissionStrategy;
 
         /**
-         * The injection strategy for injecting classes into the bootstrap class loader.
+         * The injection strategy for injecting classes into a class loader.
          */
-        protected final BootstrapInjectionStrategy bootstrapInjectionStrategy;
+        protected final InjectionStrategy injectionStrategy;
 
         /**
          * A strategy to determine of the {@code LambdaMetafactory} should be instrumented to allow for the instrumentation
@@ -7602,6 +10095,11 @@ public interface AgentBuilder {
         protected final FallbackStrategy fallbackStrategy;
 
         /**
+         * The class file buffer strategy to use.
+         */
+        protected final ClassFileBufferStrategy classFileBufferStrategy;
+
+        /**
          * The installation listener to notify.
          */
         protected final InstallationListener installationListener;
@@ -7609,12 +10107,12 @@ public interface AgentBuilder {
         /**
          * Identifies types that should not be instrumented.
          */
-        protected final RawMatcher ignoredTypeMatcher;
+        protected final RawMatcher ignoreMatcher;
 
         /**
          * The transformation object for handling type transformations.
          */
-        protected final Transformation transformation;
+        protected final List<Transformation> transformations;
 
         /**
          * Creates a new default agent builder that uses a default {@link net.bytebuddy.ByteBuddy} instance for creating classes.
@@ -7626,7 +10124,7 @@ public interface AgentBuilder {
         /**
          * Creates a new agent builder with default settings. By default, Byte Buddy ignores any types loaded by the bootstrap class loader, any
          * type within a {@code net.bytebuddy} package and any synthetic type. Self-injection and rebasing is enabled. In order to avoid class format
-         * changes, set {@link AgentBuilder#disableBootstrapInjection()}). All types are parsed without their debugging information
+         * changes, set {@link AgentBuilder#disableClassFormatChanges()}. All types are parsed without their debugging information
          * ({@link PoolStrategy.Default#FAST}).
          *
          * @param byteBuddy The Byte Buddy instance to be used.
@@ -7638,22 +10136,29 @@ public interface AgentBuilder {
                     PoolStrategy.Default.FAST,
                     TypeStrategy.Default.REBASE,
                     LocationStrategy.ForClassLoader.STRONG,
+                    ClassFileLocator.NoOp.INSTANCE,
                     NativeMethodStrategy.Disabled.INSTANCE,
+                    WarmupStrategy.NoOp.INSTANCE,
+                    TransformerDecorator.NoOp.INSTANCE,
                     new InitializationStrategy.SelfInjection.Split(),
                     RedefinitionStrategy.DISABLED,
                     RedefinitionStrategy.DiscoveryStrategy.SinglePass.INSTANCE,
                     RedefinitionStrategy.BatchAllocator.ForTotal.INSTANCE,
                     RedefinitionStrategy.Listener.NoOp.INSTANCE,
                     RedefinitionStrategy.ResubmissionStrategy.Disabled.INSTANCE,
-                    BootstrapInjectionStrategy.Disabled.INSTANCE,
+                    InjectionStrategy.UsingReflection.INSTANCE,
                     LambdaInstrumentationStrategy.DISABLED,
                     DescriptionStrategy.Default.HYBRID,
                     FallbackStrategy.ByThrowableType.ofOptionalTypes(),
+                    ClassFileBufferStrategy.Default.RETAINING,
                     InstallationListener.NoOp.INSTANCE,
                     new RawMatcher.Disjunction(
-                            new RawMatcher.ForElementMatchers(any(), isBootstrapClassLoader()),
-                            new RawMatcher.ForElementMatchers(nameStartsWith("net.bytebuddy.").or(nameStartsWith("sun.reflect.")).<TypeDescription>or(isSynthetic()))),
-                    Transformation.Ignored.INSTANCE);
+                            new RawMatcher.ForElementMatchers(any(), isBootstrapClassLoader().or(isExtensionClassLoader())),
+                            new RawMatcher.ForElementMatchers(nameStartsWith("net.bytebuddy.")
+                                    .and(not(ElementMatchers.nameStartsWith(NamingStrategy.BYTE_BUDDY_RENAME_PACKAGE + ".")))
+                                    .or(nameStartsWith("sun.reflect.").or(nameStartsWith("jdk.internal.reflect.")))
+                                    .<TypeDescription>or(isSynthetic()))),
+                    Collections.<Transformation>emptyList());
         }
 
         /**
@@ -7662,24 +10167,28 @@ public interface AgentBuilder {
          * @param byteBuddy                        The Byte Buddy instance to be used.
          * @param listener                         The listener to notify on transformations.
          * @param circularityLock                  The circularity lock to use.
-         * @param poolStrategy                     The type locator to use.
+         * @param poolStrategy                     The pool strategy to use.
          * @param typeStrategy                     The definition handler to use.
          * @param locationStrategy                 The location strategy to use.
+         * @param classFileLocator                 A class file locator to be used for additional lookup of globally available types.
          * @param nativeMethodStrategy             The native method strategy to apply.
+         * @param warmupStrategy                   The warmup strategy to use.
+         * @param transformerDecorator             A decorator to wrap the created class file transformer.
          * @param initializationStrategy           The initialization strategy to use for transformed types.
          * @param redefinitionStrategy             The redefinition strategy to apply.
          * @param redefinitionDiscoveryStrategy    The discovery strategy for loaded types to be redefined.
          * @param redefinitionBatchAllocator       The batch allocator for the redefinition strategy to apply.
          * @param redefinitionListener             The redefinition listener for the redefinition strategy to apply.
          * @param redefinitionResubmissionStrategy The resubmission strategy to apply.
-         * @param bootstrapInjectionStrategy       The injection strategy for injecting classes into the bootstrap class loader.
+         * @param injectionStrategy                The injection strategy for injecting classes into a class loader.
          * @param lambdaInstrumentationStrategy    A strategy to determine of the {@code LambdaMetafactory} should be instrumented to allow for the
          *                                         instrumentation of classes that represent lambda expressions.
          * @param descriptionStrategy              The description strategy for resolving type descriptions for types.
          * @param fallbackStrategy                 The fallback strategy to apply.
+         * @param classFileBufferStrategy          The class file buffer strategy to use.
          * @param installationListener             The installation listener to notify.
-         * @param ignoredTypeMatcher               Identifies types that should not be instrumented.
-         * @param transformation                   The transformation object for handling type transformations.
+         * @param ignoreMatcher                    Identifies types that should not be instrumented.
+         * @param transformations                  The transformations to apply for any non-ignored type.
          */
         protected Default(ByteBuddy byteBuddy,
                           Listener listener,
@@ -7687,40 +10196,60 @@ public interface AgentBuilder {
                           PoolStrategy poolStrategy,
                           TypeStrategy typeStrategy,
                           LocationStrategy locationStrategy,
+                          ClassFileLocator classFileLocator,
                           NativeMethodStrategy nativeMethodStrategy,
+                          WarmupStrategy warmupStrategy,
+                          TransformerDecorator transformerDecorator,
                           InitializationStrategy initializationStrategy,
                           RedefinitionStrategy redefinitionStrategy,
                           RedefinitionStrategy.DiscoveryStrategy redefinitionDiscoveryStrategy,
                           RedefinitionStrategy.BatchAllocator redefinitionBatchAllocator,
                           RedefinitionStrategy.Listener redefinitionListener,
                           RedefinitionStrategy.ResubmissionStrategy redefinitionResubmissionStrategy,
-                          BootstrapInjectionStrategy bootstrapInjectionStrategy,
+                          InjectionStrategy injectionStrategy,
                           LambdaInstrumentationStrategy lambdaInstrumentationStrategy,
                           DescriptionStrategy descriptionStrategy,
                           FallbackStrategy fallbackStrategy,
+                          ClassFileBufferStrategy classFileBufferStrategy,
                           InstallationListener installationListener,
-                          RawMatcher ignoredTypeMatcher,
-                          Transformation transformation) {
+                          RawMatcher ignoreMatcher,
+                          List<Transformation> transformations) {
             this.byteBuddy = byteBuddy;
             this.listener = listener;
             this.circularityLock = circularityLock;
             this.poolStrategy = poolStrategy;
             this.typeStrategy = typeStrategy;
             this.locationStrategy = locationStrategy;
+            this.classFileLocator = classFileLocator;
             this.nativeMethodStrategy = nativeMethodStrategy;
+            this.warmupStrategy = warmupStrategy;
+            this.transformerDecorator = transformerDecorator;
             this.initializationStrategy = initializationStrategy;
             this.redefinitionStrategy = redefinitionStrategy;
             this.redefinitionDiscoveryStrategy = redefinitionDiscoveryStrategy;
             this.redefinitionBatchAllocator = redefinitionBatchAllocator;
             this.redefinitionListener = redefinitionListener;
             this.redefinitionResubmissionStrategy = redefinitionResubmissionStrategy;
-            this.bootstrapInjectionStrategy = bootstrapInjectionStrategy;
+            this.injectionStrategy = injectionStrategy;
             this.lambdaInstrumentationStrategy = lambdaInstrumentationStrategy;
             this.descriptionStrategy = descriptionStrategy;
             this.fallbackStrategy = fallbackStrategy;
+            this.classFileBufferStrategy = classFileBufferStrategy;
             this.installationListener = installationListener;
-            this.ignoredTypeMatcher = ignoredTypeMatcher;
-            this.transformation = transformation;
+            this.ignoreMatcher = ignoreMatcher;
+            this.transformations = transformations;
+        }
+
+        /**
+         * A proxy for {@code java.security.AccessController#doPrivileged} that is activated if available.
+         *
+         * @param action The action to execute from a privileged context.
+         * @param <T>    The type of the action's resolved value.
+         * @return The action's resolved value.
+         */
+        @AccessControllerPlugin.Enhance
+        private static <T> T doPrivileged(PrivilegedAction<T> action) {
+            return action.run();
         }
 
         /**
@@ -7762,7 +10291,7 @@ public interface AgentBuilder {
          * @return An appropriate agent builder.
          */
         public static AgentBuilder of(EntryPoint entryPoint, List<? extends Plugin> plugins) {
-            return of(entryPoint, ClassFileVersion.ofThisVm(), plugins);
+            return of(entryPoint, ClassFileVersion.ofThisVm(ClassFileVersion.JAVA_V5), plugins);
         }
 
         /**
@@ -7815,7 +10344,9 @@ public interface AgentBuilder {
             return agentBuilder;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public AgentBuilder with(ByteBuddy byteBuddy) {
             return new Default(byteBuddy,
                     listener,
@@ -7823,23 +10354,29 @@ public interface AgentBuilder {
                     poolStrategy,
                     typeStrategy,
                     locationStrategy,
+                    classFileLocator,
                     nativeMethodStrategy,
+                    warmupStrategy,
+                    transformerDecorator,
                     initializationStrategy,
                     redefinitionStrategy,
                     redefinitionDiscoveryStrategy,
                     redefinitionBatchAllocator,
                     redefinitionListener,
                     redefinitionResubmissionStrategy,
-                    bootstrapInjectionStrategy,
+                    injectionStrategy,
                     lambdaInstrumentationStrategy,
                     descriptionStrategy,
                     fallbackStrategy,
+                    classFileBufferStrategy,
                     installationListener,
-                    ignoredTypeMatcher,
-                    transformation);
+                    ignoreMatcher,
+                    transformations);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public AgentBuilder with(Listener listener) {
             return new Default(byteBuddy,
                     new Listener.Compound(this.listener, listener),
@@ -7847,23 +10384,29 @@ public interface AgentBuilder {
                     poolStrategy,
                     typeStrategy,
                     locationStrategy,
+                    classFileLocator,
                     nativeMethodStrategy,
+                    warmupStrategy,
+                    transformerDecorator,
                     initializationStrategy,
                     redefinitionStrategy,
                     redefinitionDiscoveryStrategy,
                     redefinitionBatchAllocator,
                     redefinitionListener,
                     redefinitionResubmissionStrategy,
-                    bootstrapInjectionStrategy,
+                    injectionStrategy,
                     lambdaInstrumentationStrategy,
                     descriptionStrategy,
                     fallbackStrategy,
+                    classFileBufferStrategy,
                     installationListener,
-                    ignoredTypeMatcher,
-                    transformation);
+                    ignoreMatcher,
+                    transformations);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public AgentBuilder with(CircularityLock circularityLock) {
             return new Default(byteBuddy,
                     listener,
@@ -7871,23 +10414,29 @@ public interface AgentBuilder {
                     poolStrategy,
                     typeStrategy,
                     locationStrategy,
+                    classFileLocator,
                     nativeMethodStrategy,
+                    warmupStrategy,
+                    transformerDecorator,
                     initializationStrategy,
                     redefinitionStrategy,
                     redefinitionDiscoveryStrategy,
                     redefinitionBatchAllocator,
                     redefinitionListener,
                     redefinitionResubmissionStrategy,
-                    bootstrapInjectionStrategy,
+                    injectionStrategy,
                     lambdaInstrumentationStrategy,
                     descriptionStrategy,
                     fallbackStrategy,
+                    classFileBufferStrategy,
                     installationListener,
-                    ignoredTypeMatcher,
-                    transformation);
+                    ignoreMatcher,
+                    transformations);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public AgentBuilder with(TypeStrategy typeStrategy) {
             return new Default(byteBuddy,
                     listener,
@@ -7895,23 +10444,29 @@ public interface AgentBuilder {
                     poolStrategy,
                     typeStrategy,
                     locationStrategy,
+                    classFileLocator,
                     nativeMethodStrategy,
+                    warmupStrategy,
+                    transformerDecorator,
                     initializationStrategy,
                     redefinitionStrategy,
                     redefinitionDiscoveryStrategy,
                     redefinitionBatchAllocator,
                     redefinitionListener,
                     redefinitionResubmissionStrategy,
-                    bootstrapInjectionStrategy,
+                    injectionStrategy,
                     lambdaInstrumentationStrategy,
                     descriptionStrategy,
                     fallbackStrategy,
+                    classFileBufferStrategy,
                     installationListener,
-                    ignoredTypeMatcher,
-                    transformation);
+                    ignoreMatcher,
+                    transformations);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public AgentBuilder with(PoolStrategy poolStrategy) {
             return new Default(byteBuddy,
                     listener,
@@ -7919,23 +10474,29 @@ public interface AgentBuilder {
                     poolStrategy,
                     typeStrategy,
                     locationStrategy,
+                    classFileLocator,
                     nativeMethodStrategy,
+                    warmupStrategy,
+                    transformerDecorator,
                     initializationStrategy,
                     redefinitionStrategy,
                     redefinitionDiscoveryStrategy,
                     redefinitionBatchAllocator,
                     redefinitionListener,
                     redefinitionResubmissionStrategy,
-                    bootstrapInjectionStrategy,
+                    injectionStrategy,
                     lambdaInstrumentationStrategy,
                     descriptionStrategy,
                     fallbackStrategy,
+                    classFileBufferStrategy,
                     installationListener,
-                    ignoredTypeMatcher,
-                    transformation);
+                    ignoreMatcher,
+                    transformations);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public AgentBuilder with(LocationStrategy locationStrategy) {
             return new Default(byteBuddy,
                     listener,
@@ -7943,23 +10504,57 @@ public interface AgentBuilder {
                     poolStrategy,
                     typeStrategy,
                     locationStrategy,
+                    classFileLocator,
                     nativeMethodStrategy,
+                    warmupStrategy,
+                    transformerDecorator,
                     initializationStrategy,
                     redefinitionStrategy,
                     redefinitionDiscoveryStrategy,
                     redefinitionBatchAllocator,
                     redefinitionListener,
                     redefinitionResubmissionStrategy,
-                    bootstrapInjectionStrategy,
+                    injectionStrategy,
                     lambdaInstrumentationStrategy,
                     descriptionStrategy,
                     fallbackStrategy,
+                    classFileBufferStrategy,
                     installationListener,
-                    ignoredTypeMatcher,
-                    transformation);
+                    ignoreMatcher,
+                    transformations);
         }
 
         @Override
+        public AgentBuilder with(ClassFileLocator classFileLocator) {
+            return new Default(byteBuddy,
+                    listener,
+                    circularityLock,
+                    poolStrategy,
+                    typeStrategy,
+                    locationStrategy,
+                    new ClassFileLocator.Compound(this.classFileLocator, classFileLocator),
+                    nativeMethodStrategy,
+                    warmupStrategy,
+                    transformerDecorator,
+                    initializationStrategy,
+                    redefinitionStrategy,
+                    redefinitionDiscoveryStrategy,
+                    redefinitionBatchAllocator,
+                    redefinitionListener,
+                    redefinitionResubmissionStrategy,
+                    injectionStrategy,
+                    lambdaInstrumentationStrategy,
+                    descriptionStrategy,
+                    fallbackStrategy,
+                    classFileBufferStrategy,
+                    installationListener,
+                    ignoreMatcher,
+                    transformations);
+        }
+
+        /**
+         * {@inheritDoc}
+         */
         public AgentBuilder enableNativeMethodPrefix(String prefix) {
             return new Default(byteBuddy,
                     listener,
@@ -7967,23 +10562,29 @@ public interface AgentBuilder {
                     poolStrategy,
                     typeStrategy,
                     locationStrategy,
+                    classFileLocator,
                     NativeMethodStrategy.ForPrefix.of(prefix),
+                    warmupStrategy,
+                    transformerDecorator,
                     initializationStrategy,
                     redefinitionStrategy,
                     redefinitionDiscoveryStrategy,
                     redefinitionBatchAllocator,
                     redefinitionListener,
                     redefinitionResubmissionStrategy,
-                    bootstrapInjectionStrategy,
+                    injectionStrategy,
                     lambdaInstrumentationStrategy,
                     descriptionStrategy,
                     fallbackStrategy,
+                    classFileBufferStrategy,
                     installationListener,
-                    ignoredTypeMatcher,
-                    transformation);
+                    ignoreMatcher,
+                    transformations);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public AgentBuilder disableNativeMethodPrefix() {
             return new Default(byteBuddy,
                     listener,
@@ -7991,23 +10592,104 @@ public interface AgentBuilder {
                     poolStrategy,
                     typeStrategy,
                     locationStrategy,
+                    classFileLocator,
                     NativeMethodStrategy.Disabled.INSTANCE,
+                    warmupStrategy,
+                    transformerDecorator,
                     initializationStrategy,
                     redefinitionStrategy,
                     redefinitionDiscoveryStrategy,
                     redefinitionBatchAllocator,
                     redefinitionListener,
                     redefinitionResubmissionStrategy,
-                    bootstrapInjectionStrategy,
+                    injectionStrategy,
                     lambdaInstrumentationStrategy,
                     descriptionStrategy,
                     fallbackStrategy,
+                    classFileBufferStrategy,
                     installationListener,
-                    ignoredTypeMatcher,
-                    transformation);
+                    ignoreMatcher,
+                    transformations);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
+        public AgentBuilder warmUp(Class<?>... type) {
+            return warmUp(Arrays.asList(type));
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public AgentBuilder warmUp(Collection<Class<?>> types) {
+            if (types.isEmpty()) {
+                return this;
+            }
+            for (Class<?> type : types) {
+                if (type.isPrimitive() || type.isArray()) {
+                    throw new IllegalArgumentException("Cannot warm up primitive or array type: " + type);
+                }
+            }
+            return new Default(byteBuddy,
+                    listener,
+                    circularityLock,
+                    poolStrategy,
+                    typeStrategy,
+                    locationStrategy,
+                    classFileLocator,
+                    nativeMethodStrategy,
+                    warmupStrategy.with(types),
+                    transformerDecorator,
+                    initializationStrategy,
+                    redefinitionStrategy,
+                    redefinitionDiscoveryStrategy,
+                    redefinitionBatchAllocator,
+                    redefinitionListener,
+                    redefinitionResubmissionStrategy,
+                    injectionStrategy,
+                    lambdaInstrumentationStrategy,
+                    descriptionStrategy,
+                    fallbackStrategy,
+                    classFileBufferStrategy,
+                    installationListener,
+                    ignoreMatcher,
+                    transformations);
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public AgentBuilder with(TransformerDecorator transformerDecorator) {
+            return new Default(byteBuddy,
+                    listener,
+                    circularityLock,
+                    poolStrategy,
+                    typeStrategy,
+                    locationStrategy,
+                    classFileLocator,
+                    nativeMethodStrategy,
+                    warmupStrategy,
+                    new TransformerDecorator.Compound(this.transformerDecorator, transformerDecorator),
+                    initializationStrategy,
+                    redefinitionStrategy,
+                    redefinitionDiscoveryStrategy,
+                    redefinitionBatchAllocator,
+                    redefinitionListener,
+                    redefinitionResubmissionStrategy,
+                    injectionStrategy,
+                    lambdaInstrumentationStrategy,
+                    descriptionStrategy,
+                    fallbackStrategy,
+                    classFileBufferStrategy,
+                    installationListener,
+                    ignoreMatcher,
+                    transformations);
+        }
+
+        /**
+         * {@inheritDoc}
+         */
         public RedefinitionListenable.WithoutBatchStrategy with(RedefinitionStrategy redefinitionStrategy) {
             return new Redefining(byteBuddy,
                     listener,
@@ -8015,23 +10697,29 @@ public interface AgentBuilder {
                     poolStrategy,
                     typeStrategy,
                     locationStrategy,
+                    classFileLocator,
                     nativeMethodStrategy,
+                    warmupStrategy,
+                    transformerDecorator,
                     initializationStrategy,
                     redefinitionStrategy,
                     RedefinitionStrategy.DiscoveryStrategy.SinglePass.INSTANCE,
                     RedefinitionStrategy.BatchAllocator.ForTotal.INSTANCE,
                     RedefinitionStrategy.Listener.NoOp.INSTANCE,
                     RedefinitionStrategy.ResubmissionStrategy.Disabled.INSTANCE,
-                    bootstrapInjectionStrategy,
+                    injectionStrategy,
                     lambdaInstrumentationStrategy,
                     descriptionStrategy,
                     fallbackStrategy,
+                    classFileBufferStrategy,
                     installationListener,
-                    ignoredTypeMatcher,
-                    transformation);
+                    ignoreMatcher,
+                    transformations);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public AgentBuilder with(InitializationStrategy initializationStrategy) {
             return new Default(byteBuddy,
                     listener,
@@ -8039,23 +10727,29 @@ public interface AgentBuilder {
                     poolStrategy,
                     typeStrategy,
                     locationStrategy,
+                    classFileLocator,
                     nativeMethodStrategy,
+                    warmupStrategy,
+                    transformerDecorator,
                     initializationStrategy,
                     redefinitionStrategy,
                     redefinitionDiscoveryStrategy,
                     redefinitionBatchAllocator,
                     redefinitionListener,
                     redefinitionResubmissionStrategy,
-                    bootstrapInjectionStrategy,
+                    injectionStrategy,
                     lambdaInstrumentationStrategy,
                     descriptionStrategy,
                     fallbackStrategy,
+                    classFileBufferStrategy,
                     installationListener,
-                    ignoredTypeMatcher,
-                    transformation);
+                    ignoreMatcher,
+                    transformations);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public AgentBuilder with(LambdaInstrumentationStrategy lambdaInstrumentationStrategy) {
             return new Default(byteBuddy,
                     listener,
@@ -8063,23 +10757,29 @@ public interface AgentBuilder {
                     poolStrategy,
                     typeStrategy,
                     locationStrategy,
+                    classFileLocator,
                     nativeMethodStrategy,
+                    warmupStrategy,
+                    transformerDecorator,
                     initializationStrategy,
                     redefinitionStrategy,
                     redefinitionDiscoveryStrategy,
                     redefinitionBatchAllocator,
                     redefinitionListener,
                     redefinitionResubmissionStrategy,
-                    bootstrapInjectionStrategy,
+                    injectionStrategy,
                     lambdaInstrumentationStrategy,
                     descriptionStrategy,
                     fallbackStrategy,
+                    classFileBufferStrategy,
                     installationListener,
-                    ignoredTypeMatcher,
-                    transformation);
+                    ignoreMatcher,
+                    transformations);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public AgentBuilder with(DescriptionStrategy descriptionStrategy) {
             return new Default(byteBuddy,
                     listener,
@@ -8087,23 +10787,29 @@ public interface AgentBuilder {
                     poolStrategy,
                     typeStrategy,
                     locationStrategy,
+                    classFileLocator,
                     nativeMethodStrategy,
+                    warmupStrategy,
+                    transformerDecorator,
                     initializationStrategy,
                     redefinitionStrategy,
                     redefinitionDiscoveryStrategy,
                     redefinitionBatchAllocator,
                     redefinitionListener,
                     redefinitionResubmissionStrategy,
-                    bootstrapInjectionStrategy,
+                    injectionStrategy,
                     lambdaInstrumentationStrategy,
                     descriptionStrategy,
                     fallbackStrategy,
+                    classFileBufferStrategy,
                     installationListener,
-                    ignoredTypeMatcher,
-                    transformation);
+                    ignoreMatcher,
+                    transformations);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public AgentBuilder with(FallbackStrategy fallbackStrategy) {
             return new Default(byteBuddy,
                     listener,
@@ -8111,23 +10817,59 @@ public interface AgentBuilder {
                     poolStrategy,
                     typeStrategy,
                     locationStrategy,
+                    classFileLocator,
                     nativeMethodStrategy,
+                    warmupStrategy,
+                    transformerDecorator,
                     initializationStrategy,
                     redefinitionStrategy,
                     redefinitionDiscoveryStrategy,
                     redefinitionBatchAllocator,
                     redefinitionListener,
                     redefinitionResubmissionStrategy,
-                    bootstrapInjectionStrategy,
+                    injectionStrategy,
                     lambdaInstrumentationStrategy,
                     descriptionStrategy,
                     fallbackStrategy,
+                    classFileBufferStrategy,
                     installationListener,
-                    ignoredTypeMatcher,
-                    transformation);
+                    ignoreMatcher,
+                    transformations);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
+        public AgentBuilder with(ClassFileBufferStrategy classFileBufferStrategy) {
+            return new Default(byteBuddy,
+                    listener,
+                    circularityLock,
+                    poolStrategy,
+                    typeStrategy,
+                    locationStrategy,
+                    classFileLocator,
+                    nativeMethodStrategy,
+                    warmupStrategy,
+                    transformerDecorator,
+                    initializationStrategy,
+                    redefinitionStrategy,
+                    redefinitionDiscoveryStrategy,
+                    redefinitionBatchAllocator,
+                    redefinitionListener,
+                    redefinitionResubmissionStrategy,
+                    injectionStrategy,
+                    lambdaInstrumentationStrategy,
+                    descriptionStrategy,
+                    fallbackStrategy,
+                    classFileBufferStrategy,
+                    installationListener,
+                    ignoreMatcher,
+                    transformations);
+        }
+
+        /**
+         * {@inheritDoc}
+         */
         public AgentBuilder with(InstallationListener installationListener) {
             return new Default(byteBuddy,
                     listener,
@@ -8135,199 +10877,199 @@ public interface AgentBuilder {
                     poolStrategy,
                     typeStrategy,
                     locationStrategy,
+                    classFileLocator,
                     nativeMethodStrategy,
+                    warmupStrategy,
+                    transformerDecorator,
                     initializationStrategy,
                     redefinitionStrategy,
                     redefinitionDiscoveryStrategy,
                     redefinitionBatchAllocator,
                     redefinitionListener,
                     redefinitionResubmissionStrategy,
-                    bootstrapInjectionStrategy,
+                    injectionStrategy,
                     lambdaInstrumentationStrategy,
                     descriptionStrategy,
                     fallbackStrategy,
+                    classFileBufferStrategy,
                     new InstallationListener.Compound(this.installationListener, installationListener),
-                    ignoredTypeMatcher,
-                    transformation);
+                    ignoreMatcher,
+                    transformations);
         }
 
-        @Override
-        public AgentBuilder enableBootstrapInjection(Instrumentation instrumentation, File folder) {
+        /**
+         * {@inheritDoc}
+         */
+        public AgentBuilder with(InjectionStrategy injectionStrategy) {
             return new Default(byteBuddy,
                     listener,
                     circularityLock,
                     poolStrategy,
                     typeStrategy,
                     locationStrategy,
+                    classFileLocator,
                     nativeMethodStrategy,
+                    warmupStrategy,
+                    transformerDecorator,
                     initializationStrategy,
                     redefinitionStrategy,
                     redefinitionDiscoveryStrategy,
                     redefinitionBatchAllocator,
                     redefinitionListener,
                     redefinitionResubmissionStrategy,
-                    new BootstrapInjectionStrategy.Enabled(folder, instrumentation),
+                    injectionStrategy,
                     lambdaInstrumentationStrategy,
                     descriptionStrategy,
                     fallbackStrategy,
+                    classFileBufferStrategy,
                     installationListener,
-                    ignoredTypeMatcher,
-                    transformation);
+                    ignoreMatcher,
+                    transformations);
         }
 
-        @Override
-        public AgentBuilder enableUnsafeBootstrapInjection() {
-            return new Default(byteBuddy,
-                    listener,
-                    circularityLock,
-                    poolStrategy,
-                    typeStrategy,
-                    locationStrategy,
-                    nativeMethodStrategy,
-                    initializationStrategy,
-                    redefinitionStrategy,
-                    redefinitionDiscoveryStrategy,
-                    redefinitionBatchAllocator,
-                    redefinitionListener,
-                    redefinitionResubmissionStrategy,
-                    BootstrapInjectionStrategy.Unsafe.INSTANCE,
-                    lambdaInstrumentationStrategy,
-                    descriptionStrategy,
-                    fallbackStrategy,
-                    installationListener,
-                    ignoredTypeMatcher,
-                    transformation);
-        }
-
-        @Override
-        public AgentBuilder disableBootstrapInjection() {
-            return new Default(byteBuddy,
-                    listener,
-                    circularityLock,
-                    poolStrategy,
-                    typeStrategy,
-                    locationStrategy,
-                    nativeMethodStrategy,
-                    initializationStrategy,
-                    redefinitionStrategy,
-                    redefinitionDiscoveryStrategy,
-                    redefinitionBatchAllocator,
-                    redefinitionListener,
-                    redefinitionResubmissionStrategy,
-                    BootstrapInjectionStrategy.Disabled.INSTANCE,
-                    lambdaInstrumentationStrategy,
-                    descriptionStrategy,
-                    fallbackStrategy,
-                    installationListener,
-                    ignoredTypeMatcher,
-                    transformation);
-        }
-
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public AgentBuilder disableClassFormatChanges() {
             return new Default(byteBuddy.with(Implementation.Context.Disabled.Factory.INSTANCE),
                     listener,
                     circularityLock,
                     poolStrategy,
-                    TypeStrategy.Default.REDEFINE_FROZEN,
+                    typeStrategy == TypeStrategy.Default.DECORATE
+                            ? TypeStrategy.Default.DECORATE
+                            : TypeStrategy.Default.REDEFINE_FROZEN,
                     locationStrategy,
+                    classFileLocator,
                     NativeMethodStrategy.Disabled.INSTANCE,
+                    warmupStrategy,
+                    transformerDecorator,
                     InitializationStrategy.NoOp.INSTANCE,
                     redefinitionStrategy,
                     redefinitionDiscoveryStrategy,
                     redefinitionBatchAllocator,
                     redefinitionListener,
                     redefinitionResubmissionStrategy,
-                    bootstrapInjectionStrategy,
+                    injectionStrategy,
                     lambdaInstrumentationStrategy,
                     descriptionStrategy,
                     fallbackStrategy,
+                    classFileBufferStrategy,
                     installationListener,
-                    ignoredTypeMatcher,
-                    transformation);
+                    ignoreMatcher,
+                    transformations);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public AgentBuilder assureReadEdgeTo(Instrumentation instrumentation, Class<?>... type) {
             return JavaModule.isSupported()
                     ? with(Listener.ModuleReadEdgeCompleting.of(instrumentation, false, type))
                     : this;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public AgentBuilder assureReadEdgeTo(Instrumentation instrumentation, JavaModule... module) {
             return assureReadEdgeTo(instrumentation, Arrays.asList(module));
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public AgentBuilder assureReadEdgeTo(Instrumentation instrumentation, Collection<? extends JavaModule> modules) {
             return with(new Listener.ModuleReadEdgeCompleting(instrumentation, false, new HashSet<JavaModule>(modules)));
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public AgentBuilder assureReadEdgeFromAndTo(Instrumentation instrumentation, Class<?>... type) {
             return JavaModule.isSupported()
                     ? with(Listener.ModuleReadEdgeCompleting.of(instrumentation, true, type))
                     : this;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public AgentBuilder assureReadEdgeFromAndTo(Instrumentation instrumentation, JavaModule... module) {
             return assureReadEdgeFromAndTo(instrumentation, Arrays.asList(module));
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public AgentBuilder assureReadEdgeFromAndTo(Instrumentation instrumentation, Collection<? extends JavaModule> modules) {
             return with(new Listener.ModuleReadEdgeCompleting(instrumentation, true, new HashSet<JavaModule>(modules)));
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Identified.Narrowable type(RawMatcher matcher) {
-            return new Transforming(matcher, Transformer.NoOp.INSTANCE, false);
+            return new Transforming(matcher, Collections.<Transformer>emptyList(), false);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Identified.Narrowable type(ElementMatcher<? super TypeDescription> typeMatcher) {
             return type(typeMatcher, any());
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Identified.Narrowable type(ElementMatcher<? super TypeDescription> typeMatcher, ElementMatcher<? super ClassLoader> classLoaderMatcher) {
             return type(typeMatcher, classLoaderMatcher, any());
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Identified.Narrowable type(ElementMatcher<? super TypeDescription> typeMatcher,
                                           ElementMatcher<? super ClassLoader> classLoaderMatcher,
                                           ElementMatcher<? super JavaModule> moduleMatcher) {
             return type(new RawMatcher.ForElementMatchers(typeMatcher, classLoaderMatcher, not(supportsModules()).or(moduleMatcher)));
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Ignored ignore(ElementMatcher<? super TypeDescription> typeMatcher) {
             return ignore(typeMatcher, any());
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Ignored ignore(ElementMatcher<? super TypeDescription> typeMatcher, ElementMatcher<? super ClassLoader> classLoaderMatcher) {
             return ignore(typeMatcher, classLoaderMatcher, any());
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Ignored ignore(ElementMatcher<? super TypeDescription> typeMatcher,
                               ElementMatcher<? super ClassLoader> classLoaderMatcher,
                               ElementMatcher<? super JavaModule> moduleMatcher) {
             return ignore(new RawMatcher.ForElementMatchers(typeMatcher, classLoaderMatcher, not(supportsModules()).or(moduleMatcher)));
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Ignored ignore(RawMatcher rawMatcher) {
             return new Ignoring(rawMatcher);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public ResettableClassFileTransformer makeRaw() {
-            return makeRaw(listener, InstallationListener.NoOp.INSTANCE);
+            return makeRaw(listener, InstallationListener.NoOp.INSTANCE, RedefinitionStrategy.ResubmissionEnforcer.Disabled.INSTANCE);
         }
 
         /**
@@ -8335,65 +11077,152 @@ public interface AgentBuilder {
          *
          * @param listener             The listener to supply.
          * @param installationListener The installation listener to notify.
+         * @param resubmissionEnforcer The resubmission enforcer to use.
          * @return The resettable class file transformer to use.
          */
-        private ResettableClassFileTransformer makeRaw(Listener listener, InstallationListener installationListener) {
+        private ResettableClassFileTransformer makeRaw(Listener listener,
+                                                       InstallationListener installationListener,
+                                                       RedefinitionStrategy.ResubmissionEnforcer resubmissionEnforcer) {
             return ExecutingTransformer.FACTORY.make(byteBuddy,
                     listener,
                     poolStrategy,
                     typeStrategy,
                     locationStrategy,
+                    classFileLocator,
                     nativeMethodStrategy,
                     initializationStrategy,
-                    bootstrapInjectionStrategy,
+                    injectionStrategy,
                     lambdaInstrumentationStrategy,
                     descriptionStrategy,
                     fallbackStrategy,
+                    classFileBufferStrategy,
                     installationListener,
-                    ignoredTypeMatcher,
-                    transformation,
+                    ignoreMatcher,
+                    resubmissionEnforcer,
+                    transformations,
                     circularityLock);
         }
 
-        @Override
+        /**
+         * Resolves the instrumentation provided by {@code net.bytebuddy.agent.Installer}.
+         *
+         * @return The installed instrumentation instance.
+         */
+        private static Instrumentation resolveByteBuddyAgentInstrumentation() {
+            try {
+                Class<?> installer = ClassLoader.getSystemClassLoader().loadClass(INSTALLER_TYPE);
+                JavaModule source = JavaModule.ofType(AgentBuilder.class), target = JavaModule.ofType(installer);
+                if (source != null && !source.canRead(target)) {
+                    Class<?> module = Class.forName("java.lang.Module");
+                    module.getMethod("addReads", module).invoke(source.unwrap(), target.unwrap());
+                }
+                return (Instrumentation) installer.getMethod(INSTALLER_GETTER).invoke(null);
+            } catch (RuntimeException exception) {
+                throw exception;
+            } catch (Exception exception) {
+                throw new IllegalStateException("The Byte Buddy agent is not installed or not accessible", exception);
+            }
+        }
+
+        /**
+         * {@inheritDoc}
+         */
         public ResettableClassFileTransformer installOn(Instrumentation instrumentation) {
+            return doInstall(instrumentation, new Transformation.SimpleMatcher(ignoreMatcher, transformations), PatchMode.Handler.NoOp.INSTANCE);
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public ResettableClassFileTransformer installOnByteBuddyAgent() {
+            return installOn(resolveByteBuddyAgentInstrumentation());
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public ResettableClassFileTransformer patchOn(Instrumentation instrumentation, ResettableClassFileTransformer classFileTransformer) {
+            return patchOn(instrumentation, classFileTransformer, PatchMode.OVERLAP);
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public ResettableClassFileTransformer patchOn(Instrumentation instrumentation, ResettableClassFileTransformer classFileTransformer, PatchMode patchMode) {
+            return doInstall(instrumentation, new Transformation.DifferentialMatcher(ignoreMatcher, transformations, classFileTransformer), patchMode.toHandler(classFileTransformer));
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public ResettableClassFileTransformer patchOnByteBuddyAgent(ResettableClassFileTransformer classFileTransformer) {
+            return patchOnByteBuddyAgent(classFileTransformer, PatchMode.OVERLAP);
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public ResettableClassFileTransformer patchOnByteBuddyAgent(ResettableClassFileTransformer classFileTransformer, PatchMode patchMode) {
+            return patchOn(resolveByteBuddyAgentInstrumentation(), classFileTransformer, patchMode);
+        }
+
+        /**
+         * Installs the class file transformer.
+         *
+         * @param instrumentation The instrumentation to install the matcher on.
+         * @param matcher         The matcher to identify redefined types.
+         * @param handler         The handler to use for implementing a patch mode.
+         * @return The created class file transformer.
+         */
+        private ResettableClassFileTransformer doInstall(Instrumentation instrumentation, RawMatcher matcher, PatchMode.Handler handler) {
             if (!circularityLock.acquire()) {
                 throw new IllegalStateException("Could not acquire the circularity lock upon installation.");
             }
             try {
                 RedefinitionStrategy.ResubmissionStrategy.Installation installation = redefinitionResubmissionStrategy.apply(instrumentation,
+                        poolStrategy,
                         locationStrategy,
+                        descriptionStrategy,
+                        fallbackStrategy,
                         listener,
                         installationListener,
                         circularityLock,
-                        new RawMatcher.Conjunction(new RawMatcher.Inversion(ignoredTypeMatcher), transformation),
+                        new Transformation.SimpleMatcher(ignoreMatcher, transformations),
                         redefinitionStrategy,
                         redefinitionBatchAllocator,
                         redefinitionListener);
-                ResettableClassFileTransformer classFileTransformer = makeRaw(installation.getListener(), installation.getInstallationListener());
+                ResettableClassFileTransformer classFileTransformer = transformerDecorator.decorate(makeRaw(installation.getListener(),
+                        installation.getInstallationListener(),
+                        installation.getResubmissionEnforcer()));
                 installation.getInstallationListener().onBeforeInstall(instrumentation, classFileTransformer);
                 try {
-                    instrumentation.addTransformer(classFileTransformer, redefinitionStrategy.isRetransforming());
-                    if (nativeMethodStrategy.isEnabled(instrumentation)) {
-                        instrumentation.setNativeMethodPrefix(classFileTransformer, nativeMethodStrategy.getPrefix());
+                    warmupStrategy.apply(classFileTransformer,
+                            locationStrategy,
+                            redefinitionStrategy,
+                            circularityLock,
+                            installation.getInstallationListener());
+                    handler.onBeforeRegistration(instrumentation);
+                    if (redefinitionStrategy.isRetransforming()) {
+                        DISPATCHER.addTransformer(instrumentation, classFileTransformer, true);
+                    } else {
+                        instrumentation.addTransformer(classFileTransformer);
                     }
+                    handler.onAfterRegistration(instrumentation);
+                    nativeMethodStrategy.apply(instrumentation, classFileTransformer);
                     lambdaInstrumentationStrategy.apply(byteBuddy, instrumentation, classFileTransformer);
-                    if (redefinitionStrategy.isEnabled()) {
-                        redefinitionStrategy.apply(instrumentation,
-                                installation.getListener(),
-                                circularityLock,
-                                poolStrategy,
-                                locationStrategy,
-                                redefinitionDiscoveryStrategy,
-                                redefinitionBatchAllocator,
-                                redefinitionListener,
-                                lambdaInstrumentationStrategy,
-                                descriptionStrategy,
-                                fallbackStrategy,
-                                transformation,
-                                ignoredTypeMatcher);
-                    }
-                } catch (Throwable throwable) {
+                    redefinitionStrategy.apply(instrumentation,
+                            poolStrategy,
+                            locationStrategy,
+                            descriptionStrategy,
+                            fallbackStrategy,
+                            redefinitionDiscoveryStrategy,
+                            lambdaInstrumentationStrategy,
+                            installation.getListener(),
+                            redefinitionListener,
+                            matcher,
+                            redefinitionBatchAllocator,
+                            circularityLock);
+                } catch (@MaybeNull Throwable throwable) {
                     throwable = installation.getInstallationListener().onError(instrumentation, classFileTransformer, throwable);
                     if (throwable != null) {
                         instrumentation.removeTransformer(classFileTransformer);
@@ -8407,118 +11236,44 @@ public interface AgentBuilder {
             }
         }
 
-        @Override
-        public ResettableClassFileTransformer installOnByteBuddyAgent() {
-            try {
-                return installOn((Instrumentation) ClassLoader.getSystemClassLoader()
-                        .loadClass(INSTALLER_TYPE)
-                        .getMethod(INSTRUMENTATION_GETTER)
-                        .invoke(STATIC_MEMBER));
-            } catch (RuntimeException exception) {
-                throw exception;
-            } catch (Exception exception) {
-                throw new IllegalStateException("The Byte Buddy agent is not installed or not accessible", exception);
-            }
-        }
-
         /**
-         * An injection strategy for injecting classes into the bootstrap class loader.
+         * A dispatcher for interacting with the instrumentation API.
          */
-        protected interface BootstrapInjectionStrategy {
+        @JavaDispatcher.Proxied("java.lang.instrument.Instrumentation")
+        protected interface Dispatcher {
 
             /**
-             * Creates an injector for the bootstrap class loader.
+             * Returns {@code true} if the supplied instrumentation instance supports setting native method prefixes.
              *
-             * @param protectionDomain The protection domain to be used.
-             * @return A class injector for the bootstrap class loader.
+             * @param instrumentation The instrumentation instance to use.
+             * @return {@code true} if the supplied instrumentation instance supports native method prefixes.
              */
-            ClassInjector make(ProtectionDomain protectionDomain);
+            @JavaDispatcher.Defaults
+            boolean isNativeMethodPrefixSupported(Instrumentation instrumentation);
 
             /**
-             * A disabled bootstrap injection strategy.
+             * Sets a native method prefix for the supplied class file transformer.
+             *
+             * @param instrumentation      The instrumentation instance to use.
+             * @param classFileTransformer The class file transformer for which the prefix is set.
+             * @param prefix               The prefix to set.
              */
-            enum Disabled implements BootstrapInjectionStrategy {
-
-                /**
-                 * The singleton instance.
-                 */
-                INSTANCE;
-
-                @Override
-                public ClassInjector make(ProtectionDomain protectionDomain) {
-                    throw new IllegalStateException("Injecting classes into the bootstrap class loader was not enabled");
-                }
-            }
+            void setNativeMethodPrefix(Instrumentation instrumentation, ClassFileTransformer classFileTransformer, String prefix);
 
             /**
-             * A bootstrap injection strategy relying on {@code sun.misc.Unsafe}.
+             * Adds a class file transformer to an instrumentation instance.
+             *
+             * @param instrumentation      The instrumentation instance to use for registration.
+             * @param classFileTransformer The class file transformer to register.
+             * @param canRetransform       {@code true} if the class file transformer is capable of retransformation.
              */
-            enum Unsafe implements BootstrapInjectionStrategy {
-
-                /**
-                 * The singleton instance.
-                 */
-                INSTANCE;
-
-                @Override
-                public ClassInjector make(ProtectionDomain protectionDomain) {
-                    return new ClassInjector.UsingUnsafe(ClassLoadingStrategy.BOOTSTRAP_LOADER, protectionDomain);
-                }
-
-                @Override
-                public String toString() {
-                    return "AgentBuilder.Default.BootstrapInjectionStrategy.Unsafe." + name();
-                }
-            }
-
-            /**
-             * An enabled bootstrap injection strategy.
-             */
-            @EqualsAndHashCode
-            class Enabled implements BootstrapInjectionStrategy {
-
-                /**
-                 * The folder in which jar files are to be saved.
-                 */
-                private final File folder;
-
-                /**
-                 * The instrumentation to use for appending jar files.
-                 */
-                private final Instrumentation instrumentation;
-
-                /**
-                 * Creates a new enabled bootstrap class loader injection strategy.
-                 *
-                 * @param folder          The folder in which jar files are to be saved.
-                 * @param instrumentation The instrumentation to use for appending jar files.
-                 */
-                public Enabled(File folder, Instrumentation instrumentation) {
-                    this.folder = folder;
-                    this.instrumentation = instrumentation;
-                }
-
-                @Override
-                public ClassInjector make(ProtectionDomain protectionDomain) {
-                    return ClassInjector.UsingInstrumentation.of(folder,
-                            ClassInjector.UsingInstrumentation.Target.BOOTSTRAP,
-                            instrumentation);
-                }
-            }
+            void addTransformer(Instrumentation instrumentation, ClassFileTransformer classFileTransformer, boolean canRetransform);
         }
 
         /**
          * A strategy for determining if a native method name prefix should be used when rebasing methods.
          */
         protected interface NativeMethodStrategy {
-
-            /**
-             * Determines if this strategy enables name prefixing for native methods.
-             *
-             * @param instrumentation The instrumentation used.
-             * @return {@code true} if this strategy indicates that a native method prefix should be used.
-             */
-            boolean isEnabled(Instrumentation instrumentation);
 
             /**
              * Resolves the method name transformer for this strategy.
@@ -8528,11 +11283,12 @@ public interface AgentBuilder {
             MethodNameTransformer resolve();
 
             /**
-             * Returns the method prefix if the strategy is enabled. This method must only be called if this strategy enables prefixing.
+             * Applies this native method strategy.
              *
-             * @return The method prefix.
+             * @param instrumentation      The instrumentation to apply this strategy upon.
+             * @param classFileTransformer The class file transformer being registered.
              */
-            String getPrefix();
+            void apply(Instrumentation instrumentation, ClassFileTransformer classFileTransformer);
 
             /**
              * A native method strategy that suffixes method names with a random suffix and disables native method rebasement.
@@ -8544,26 +11300,25 @@ public interface AgentBuilder {
                  */
                 INSTANCE;
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public MethodNameTransformer resolve() {
                     return MethodNameTransformer.Suffixing.withRandomSuffix();
                 }
 
-                @Override
-                public boolean isEnabled(Instrumentation instrumentation) {
-                    return false;
-                }
-
-                @Override
-                public String getPrefix() {
-                    throw new IllegalStateException("A disabled native method strategy does not define a method name prefix");
+                /**
+                 * {@inheritDoc}
+                 */
+                public void apply(Instrumentation instrumentation, ClassFileTransformer classFileTransformer) {
+                    /* do nothing */
                 }
             }
 
             /**
              * A native method strategy that prefixes method names with a fixed value for supporting rebasing of native methods.
              */
-            @EqualsAndHashCode
+            @HashCodeAndEqualsPlugin.Enhance
             class ForPrefix implements NativeMethodStrategy {
 
                 /**
@@ -8593,570 +11348,492 @@ public interface AgentBuilder {
                     return new ForPrefix(prefix);
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public MethodNameTransformer resolve() {
                     return new MethodNameTransformer.Prefixing(prefix);
                 }
 
-                @Override
-                public boolean isEnabled(Instrumentation instrumentation) {
-                    if (!instrumentation.isNativeMethodPrefixSupported()) {
+                /**
+                 * {@inheritDoc}
+                 */
+                public void apply(Instrumentation instrumentation, ClassFileTransformer classFileTransformer) {
+                    if (!DISPATCHER.isNativeMethodPrefixSupported(instrumentation)) {
                         throw new IllegalArgumentException("A prefix for native methods is not supported: " + instrumentation);
                     }
-                    return true;
-                }
-
-                @Override
-                public String getPrefix() {
-                    return prefix;
+                    DISPATCHER.setNativeMethodPrefix(instrumentation, classFileTransformer, prefix);
                 }
             }
         }
 
         /**
-         * A transformation serves as a handler for modifying a class.
+         * A strategy to warm up a {@link ClassFileTransformer} before using it to eagerly load classes and to avoid
+         * circularity errors when classes are loaded during actual transformation for the first time.
          */
-        protected interface Transformation extends RawMatcher {
+        protected interface WarmupStrategy {
 
             /**
-             * Resolves an attempted transformation to a specific transformation.
+             * Applies this warm up strategy.
              *
-             * @param typeDescription     A description of the type that is to be transformed.
-             * @param classLoader         The class loader of the type being transformed.
-             * @param module              The transformed type's module or {@code null} if the current VM does not support modules.
-             * @param classBeingRedefined In case of a type redefinition, the loaded type being transformed or {@code null} if that is not the case.
-             * @param loaded              {@code true} if the instrumented type is loaded.
-             * @param protectionDomain    The protection domain of the type being transformed.
-             * @param typePool            The type pool to apply during type creation.
-             * @return A resolution for the given type.
+             * @param classFileTransformer The class file transformer to warm up.
+             * @param locationStrategy     The location strategy to use.
+             * @param redefinitionStrategy The redefinition strategy being used.
+             * @param circularityLock      The circularity lock to use.
+             * @param listener             The listener to notify over warmup events.
              */
-            Resolution resolve(TypeDescription typeDescription,
-                               ClassLoader classLoader,
-                               JavaModule module,
-                               Class<?> classBeingRedefined,
-                               boolean loaded,
-                               ProtectionDomain protectionDomain,
-                               TypePool typePool);
+            void apply(ResettableClassFileTransformer classFileTransformer,
+                       LocationStrategy locationStrategy,
+                       RedefinitionStrategy redefinitionStrategy,
+                       CircularityLock circularityLock,
+                       InstallationListener listener);
 
             /**
-             * A resolution to a transformation.
+             * Adds the provided types to this warmup strategy.
+             *
+             * @param types The types to add.
+             * @return An appropriate warmup strategy.
              */
-            interface Resolution {
-
-                /**
-                 * Returns the sort of this resolution.
-                 *
-                 * @return The sort of this resolution.
-                 */
-                Sort getSort();
-
-                /**
-                 * Resolves this resolution as a decorator of the supplied resolution.
-                 *
-                 * @param resolution The resolution for which this resolution should serve as a decorator.
-                 * @return A resolution where this resolution is applied as a decorator if this resolution is alive.
-                 */
-                Resolution asDecoratorOf(Resolution resolution);
-
-                /**
-                 * Resolves this resolution as a decorator of the supplied resolution.
-                 *
-                 * @param resolution The resolution for which this resolution should serve as a decorator.
-                 * @return A resolution where this resolution is applied as a decorator if this resolution is alive.
-                 */
-                Resolution prepend(Decoratable resolution);
-
-                /**
-                 * Transforms a type or returns {@code null} if a type is not to be transformed.
-                 *
-                 * @param initializationStrategy     The initialization strategy to use.
-                 * @param classFileLocator           The class file locator to use.
-                 * @param typeStrategy               The definition handler to use.
-                 * @param byteBuddy                  The Byte Buddy instance to use.
-                 * @param methodNameTransformer      The method name transformer to be used.
-                 * @param bootstrapInjectionStrategy The bootstrap injection strategy to be used.
-                 * @param accessControlContext       The access control context to be used.
-                 * @param listener                   The listener to be invoked to inform about an applied or non-applied transformation.
-                 * @return The class file of the transformed class or {@code null} if no transformation is attempted.
-                 */
-                byte[] apply(InitializationStrategy initializationStrategy,
-                             ClassFileLocator classFileLocator,
-                             TypeStrategy typeStrategy,
-                             ByteBuddy byteBuddy,
-                             NativeMethodStrategy methodNameTransformer,
-                             BootstrapInjectionStrategy bootstrapInjectionStrategy,
-                             AccessControlContext accessControlContext,
-                             Listener listener);
-
-                /**
-                 * Describes a specific sort of a {@link Resolution}.
-                 */
-                enum Sort {
-
-                    /**
-                     * A terminal resolution. After discovering such a resolution, no further transformers are considered.
-                     */
-                    TERMINAL(true),
-
-                    /**
-                     * A resolution that can serve as a decorator for another resolution. After discovering such a resolution
-                     * further transformations are considered where the represented resolution is prepended if applicable.
-                     */
-                    DECORATOR(true),
-
-                    /**
-                     * A non-resolved resolution.
-                     */
-                    UNDEFINED(false);
-
-                    /**
-                     * Indicates if this sort represents an active resolution.
-                     */
-                    private final boolean alive;
-
-                    /**
-                     * Creates a new resolution sort.
-                     *
-                     * @param alive Indicates if this sort represents an active resolution.
-                     */
-                    Sort(boolean alive) {
-                        this.alive = alive;
-                    }
-
-                    /**
-                     * Returns {@code true} if this resolution is alive.
-                     *
-                     * @return {@code true} if this resolution is alive.
-                     */
-                    protected boolean isAlive() {
-                        return alive;
-                    }
-                }
-
-                /**
-                 * A resolution that can be decorated by a transformer.
-                 */
-                interface Decoratable extends Resolution {
-
-                    /**
-                     * Appends the supplied transformer to this resolution.
-                     *
-                     * @param transformer The transformer to append to the transformer that is represented bz this instance.
-                     * @return A new resolution with the supplied transformer appended to this transformer.
-                     */
-                    Resolution append(Transformer transformer);
-                }
-
-                /**
-                 * A canonical implementation of a non-resolved resolution.
-                 */
-                @EqualsAndHashCode
-                class Unresolved implements Resolution {
-
-                    /**
-                     * The type that is not transformed.
-                     */
-                    private final TypeDescription typeDescription;
-
-                    /**
-                     * The unresolved type's class loader.
-                     */
-                    private final ClassLoader classLoader;
-
-                    /**
-                     * The non-transformed type's module or {@code null} if the current VM does not support modules.
-                     */
-                    private final JavaModule module;
-
-                    /**
-                     * {@code true} if the type is already loaded.
-                     */
-                    private final boolean loaded;
-
-                    /**
-                     * Creates a new unresolved resolution.
-                     *
-                     * @param typeDescription The type that is not transformed.
-                     * @param classLoader     The unresolved type's class loader.
-                     * @param module          The non-transformed type's module or {@code null} if the current VM does not support modules.
-                     * @param loaded          {@code true} if the type is already loaded.
-                     */
-                    protected Unresolved(TypeDescription typeDescription, ClassLoader classLoader, JavaModule module, boolean loaded) {
-                        this.typeDescription = typeDescription;
-                        this.classLoader = classLoader;
-                        this.module = module;
-                        this.loaded = loaded;
-                    }
-
-                    @Override
-                    public Sort getSort() {
-                        return Sort.UNDEFINED;
-                    }
-
-                    @Override
-                    public Resolution asDecoratorOf(Resolution resolution) {
-                        return resolution;
-                    }
-
-                    @Override
-                    public Resolution prepend(Decoratable resolution) {
-                        return resolution;
-                    }
-
-                    @Override
-                    public byte[] apply(InitializationStrategy initializationStrategy,
-                                        ClassFileLocator classFileLocator,
-                                        TypeStrategy typeStrategy,
-                                        ByteBuddy byteBuddy,
-                                        NativeMethodStrategy methodNameTransformer,
-                                        BootstrapInjectionStrategy bootstrapInjectionStrategy,
-                                        AccessControlContext accessControlContext,
-                                        Listener listener) {
-                        listener.onIgnored(typeDescription, classLoader, module, loaded);
-                        return NO_TRANSFORMATION;
-                    }
-                }
-            }
+            WarmupStrategy with(Collection<Class<?>> types);
 
             /**
-             * A transformation that does not attempt to transform any type.
+             * A non-operational warmup strategy.
              */
-            enum Ignored implements Transformation {
+            enum NoOp implements WarmupStrategy {
 
                 /**
                  * The singleton instance.
                  */
                 INSTANCE;
 
-                @Override
-                public boolean matches(TypeDescription typeDescription,
-                                       ClassLoader classLoader,
-                                       JavaModule module,
-                                       Class<?> classBeingRedefined,
-                                       ProtectionDomain protectionDomain) {
-                    return false;
+                /**
+                 * {@inheritDoc}
+                 */
+                public void apply(ResettableClassFileTransformer classFileTransformer,
+                                  LocationStrategy locationStrategy,
+                                  RedefinitionStrategy redefinitionStrategy,
+                                  CircularityLock circularityLock,
+                                  InstallationListener listener) {
+                    /* do nothing */
                 }
 
-                @Override
-                public Resolution resolve(TypeDescription typeDescription,
-                                          ClassLoader classLoader,
-                                          JavaModule module,
-                                          Class<?> classBeingRedefined,
-                                          boolean loaded,
-                                          ProtectionDomain protectionDomain,
-                                          TypePool typePool) {
-                    return new Resolution.Unresolved(typeDescription, classLoader, module, loaded);
+                /**
+                 * {@inheritDoc}
+                 */
+                public WarmupStrategy with(Collection<Class<?>> types) {
+                    return new Enabled(new LinkedHashSet<Class<?>>(types));
                 }
             }
 
             /**
-             * A simple, active transformation.
+             * An enabled warmup strategy.
              */
-            @EqualsAndHashCode
-            class Simple implements Transformation {
+            @HashCodeAndEqualsPlugin.Enhance
+            class Enabled implements WarmupStrategy {
 
                 /**
-                 * The raw matcher that is represented by this transformation.
+                 * A dispatcher for invoking a {@link ClassFileTransformer} when the module system is available.
                  */
-                private final RawMatcher rawMatcher;
+                private static final Dispatcher DISPATCHER = Default.doPrivileged(JavaDispatcher.of(Dispatcher.class));
 
                 /**
-                 * The transformer that is represented by this transformation.
+                 * The types to warm up.
                  */
-                private final Transformer transformer;
+                private final Set<Class<?>> types;
 
                 /**
-                 * {@code true} if this transformer serves as a decorator.
-                 */
-                private final boolean decorator;
-
-                /**
-                 * Creates a new transformation.
+                 * Creates a new enabled warmup strategy.
                  *
-                 * @param rawMatcher  The raw matcher that is represented by this transformation.
-                 * @param transformer The transformer that is represented by this transformation.
-                 * @param decorator   {@code true} if this transformer serves as a decorator.
+                 * @param types The types to warm up.
                  */
-                protected Simple(RawMatcher rawMatcher, Transformer transformer, boolean decorator) {
-                    this.rawMatcher = rawMatcher;
-                    this.transformer = transformer;
-                    this.decorator = decorator;
-                }
-
-                @Override
-                public boolean matches(TypeDescription typeDescription,
-                                       ClassLoader classLoader,
-                                       JavaModule module,
-                                       Class<?> classBeingRedefined,
-                                       ProtectionDomain protectionDomain) {
-                    return rawMatcher.matches(typeDescription, classLoader, module, classBeingRedefined, protectionDomain);
-                }
-
-                @Override
-                public Transformation.Resolution resolve(TypeDescription typeDescription,
-                                                         ClassLoader classLoader,
-                                                         JavaModule module,
-                                                         Class<?> classBeingRedefined,
-                                                         boolean loaded,
-                                                         ProtectionDomain protectionDomain,
-                                                         TypePool typePool) {
-                    return matches(typeDescription, classLoader, module, classBeingRedefined, protectionDomain)
-                            ? new Resolution(typeDescription, classLoader, module, protectionDomain, loaded, typePool, transformer, decorator)
-                            : new Transformation.Resolution.Unresolved(typeDescription, classLoader, module, loaded);
+                protected Enabled(Set<Class<?>> types) {
+                    this.types = types;
                 }
 
                 /**
-                 * A resolution that performs a type transformation.
+                 * {@inheritDoc}
                  */
-                @EqualsAndHashCode
-                protected static class Resolution implements Transformation.Resolution.Decoratable {
-
-                    /**
-                     * A description of the transformed type.
-                     */
-                    private final TypeDescription typeDescription;
-
-                    /**
-                     * The class loader of the transformed type.
-                     */
-                    private final ClassLoader classLoader;
-
-                    /**
-                     * The transformed type's module or {@code null} if the current VM does not support modules.
-                     */
-                    private final JavaModule module;
-
-                    /**
-                     * The protection domain of the transformed type.
-                     */
-                    private final ProtectionDomain protectionDomain;
-
-                    /**
-                     * {@code true} if the transformed type is already loaded.
-                     */
-                    private final boolean loaded;
-
-                    /**
-                     * The type pool to apply during type creation.
-                     */
-                    private final TypePool typePool;
-
-                    /**
-                     * The transformer to be applied.
-                     */
-                    private final Transformer transformer;
-
-                    /**
-                     * {@code true} if this transformer serves as a decorator.
-                     */
-                    private final boolean decorator;
-
-                    /**
-                     * Creates a new active transformation.
-                     *
-                     * @param typeDescription  A description of the transformed type.
-                     * @param classLoader      The class loader of the transformed type.
-                     * @param module           The transformed type's module or {@code null} if the current VM does not support modules.
-                     * @param protectionDomain The protection domain of the transformed type.
-                     * @param loaded           {@code true} if the transformed type is already loaded.
-                     * @param typePool         The type pool to apply during type creation.
-                     * @param transformer      The transformer to be applied.
-                     * @param decorator        {@code true} if this transformer serves as a decorator.
-                     */
-                    protected Resolution(TypeDescription typeDescription,
-                                         ClassLoader classLoader,
-                                         JavaModule module,
-                                         ProtectionDomain protectionDomain,
-                                         boolean loaded,
-                                         TypePool typePool,
-                                         Transformer transformer,
-                                         boolean decorator) {
-                        this.typeDescription = typeDescription;
-                        this.classLoader = classLoader;
-                        this.module = module;
-                        this.protectionDomain = protectionDomain;
-                        this.loaded = loaded;
-                        this.typePool = typePool;
-                        this.transformer = transformer;
-                        this.decorator = decorator;
-                    }
-
-                    @Override
-                    public Sort getSort() {
-                        return decorator
-                                ? Sort.DECORATOR
-                                : Sort.TERMINAL;
-                    }
-
-                    @Override
-                    public Transformation.Resolution asDecoratorOf(Transformation.Resolution resolution) {
-                        return resolution.prepend(this);
-                    }
-
-                    @Override
-                    public Transformation.Resolution prepend(Decoratable resolution) {
-                        return resolution.append(transformer);
-                    }
-
-                    @Override
-                    public Transformation.Resolution append(Transformer transformer) {
-                        return new Resolution(typeDescription,
-                                classLoader,
-                                module,
-                                protectionDomain,
-                                loaded,
-                                typePool,
-                                new Transformer.Compound(this.transformer, transformer),
-                                decorator);
-                    }
-
-                    @Override
-                    public byte[] apply(InitializationStrategy initializationStrategy,
-                                        ClassFileLocator classFileLocator,
-                                        TypeStrategy typeStrategy,
-                                        ByteBuddy byteBuddy,
-                                        NativeMethodStrategy methodNameTransformer,
-                                        BootstrapInjectionStrategy bootstrapInjectionStrategy,
-                                        AccessControlContext accessControlContext,
-                                        Listener listener) {
-                        InitializationStrategy.Dispatcher dispatcher = initializationStrategy.dispatcher();
-                        DynamicType.Unloaded<?> dynamicType = dispatcher.apply(transformer.transform(typeStrategy.builder(typeDescription,
-                                byteBuddy,
-                                classFileLocator,
-                                methodNameTransformer.resolve()), typeDescription, classLoader, module)).make(TypeResolutionStrategy.Disabled.INSTANCE, typePool);
-                        dispatcher.register(dynamicType, classLoader, new BootstrapClassLoaderCapableInjectorFactory(bootstrapInjectionStrategy,
-                                classLoader,
-                                protectionDomain));
-                        listener.onTransformation(typeDescription, classLoader, module, loaded, dynamicType);
-                        return dynamicType.getBytes();
-                    }
-
-                    /**
-                     * An injector factory that resolves to a bootstrap class loader injection if this is necessary and enabled.
-                     */
-                    @EqualsAndHashCode
-                    protected static class BootstrapClassLoaderCapableInjectorFactory implements InitializationStrategy.Dispatcher.InjectorFactory {
-
-                        /**
-                         * The bootstrap injection strategy being used.
-                         */
-                        private final BootstrapInjectionStrategy bootstrapInjectionStrategy;
-
-                        /**
-                         * The class loader for which to create an injection factory.
-                         */
-                        private final ClassLoader classLoader;
-
-                        /**
-                         * The protection domain of the created classes.
-                         */
-                        private final ProtectionDomain protectionDomain;
-
-                        /**
-                         * Creates a new bootstrap class loader capable injector factory.
-                         *
-                         * @param bootstrapInjectionStrategy The bootstrap injection strategy being used.
-                         * @param classLoader                The class loader for which to create an injection factory.
-                         * @param protectionDomain           The protection domain of the created classes.
-                         */
-                        protected BootstrapClassLoaderCapableInjectorFactory(BootstrapInjectionStrategy bootstrapInjectionStrategy,
-                                                                             ClassLoader classLoader,
-                                                                             ProtectionDomain protectionDomain) {
-                            this.bootstrapInjectionStrategy = bootstrapInjectionStrategy;
-                            this.classLoader = classLoader;
-                            this.protectionDomain = protectionDomain;
-                        }
-
-                        @Override
-                        public ClassInjector resolve() {
-                            return classLoader == null
-                                    ? bootstrapInjectionStrategy.make(protectionDomain)
-                                    : new ClassInjector.UsingReflection(classLoader, protectionDomain);
+                public void apply(ResettableClassFileTransformer classFileTransformer,
+                                  LocationStrategy locationStrategy,
+                                  RedefinitionStrategy redefinitionStrategy,
+                                  CircularityLock circularityLock,
+                                  InstallationListener listener) {
+                    listener.onBeforeWarmUp(types, classFileTransformer);
+                    boolean transformed = false;
+                    Map<Class<?>, byte[]> results = new LinkedHashMap<Class<?>, byte[]>();
+                    for (Class<?> type : types) {
+                        try {
+                            JavaModule module = JavaModule.ofType(type);
+                            byte[] binaryRepresentation = locationStrategy.classFileLocator(type.getClassLoader(), module)
+                                    .locate(type.getName())
+                                    .resolve();
+                            circularityLock.release();
+                            try {
+                                byte[] result;
+                                if (module == null) {
+                                    result = classFileTransformer.transform(type.getClassLoader(),
+                                            Type.getInternalName(type),
+                                            NOT_PREVIOUSLY_DEFINED,
+                                            type.getProtectionDomain(),
+                                            binaryRepresentation);
+                                    transformed |= result != null;
+                                    if (redefinitionStrategy.isEnabled()) {
+                                        result = classFileTransformer.transform(type.getClassLoader(),
+                                                Type.getInternalName(type),
+                                                type,
+                                                type.getProtectionDomain(),
+                                                binaryRepresentation);
+                                        transformed |= result != null;
+                                    }
+                                } else {
+                                    result = DISPATCHER.transform(classFileTransformer,
+                                            module.unwrap(),
+                                            type.getClassLoader(),
+                                            Type.getInternalName(type),
+                                            NOT_PREVIOUSLY_DEFINED,
+                                            type.getProtectionDomain(),
+                                            binaryRepresentation);
+                                    transformed |= result != null;
+                                    if (redefinitionStrategy.isEnabled()) {
+                                        result = DISPATCHER.transform(classFileTransformer,
+                                                module.unwrap(),
+                                                type.getClassLoader(),
+                                                Type.getInternalName(type),
+                                                type,
+                                                type.getProtectionDomain(),
+                                                binaryRepresentation);
+                                        transformed |= result != null;
+                                    }
+                                }
+                                results.put(type, result);
+                            } finally {
+                                circularityLock.acquire();
+                            }
+                        } catch (Throwable throwable) {
+                            listener.onWarmUpError(type, classFileTransformer, throwable);
+                            results.put(type, NO_TRANSFORMATION);
                         }
                     }
+                    listener.onAfterWarmUp(results, classFileTransformer, transformed);
                 }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public WarmupStrategy with(Collection<Class<?>> types) {
+                    Set<Class<?>> combined = new LinkedHashSet<Class<?>>(this.types);
+                    combined.addAll(types);
+                    return new Enabled(combined);
+                }
+
+                /**
+                 * A dispatcher to interact with a {@link ClassFileTransformer} when the module system is active.
+                 */
+                @JavaDispatcher.Proxied("java.lang.instrument.ClassFileTransformer")
+                protected interface Dispatcher {
+
+                    /**
+                     * Transforms a class.
+                     *
+                     * @param target               The transformer to use for transformation.
+                     * @param module               The Java module of the transformed class.
+                     * @param classLoader          The class loader of the transformed class or {@code null} if loaded by the boot loader.
+                     * @param name                 The internal name of the transformed class.
+                     * @param classBeingRedefined  The class being redefined or {@code null} if not a retransformation.
+                     * @param protectionDomain     The class's protection domain.
+                     * @param binaryRepresentation The class's binary representation.
+                     * @return The transformed class file or {@code null} if untransformed.
+                     * @throws IllegalClassFormatException If the class file cannot be generated.
+                     */
+                    @MaybeNull
+                    byte[] transform(ClassFileTransformer target,
+                                     @MaybeNull @JavaDispatcher.Proxied("java.lang.Module") Object module,
+                                     @MaybeNull ClassLoader classLoader,
+                                     String name,
+                                     @MaybeNull Class<?> classBeingRedefined,
+                                     ProtectionDomain protectionDomain,
+                                     byte[] binaryRepresentation) throws IllegalClassFormatException;
+                }
+            }
+        }
+
+        /**
+         * A transformation to apply.
+         */
+        @HashCodeAndEqualsPlugin.Enhance
+        protected static class Transformation {
+
+            /**
+             * Indicates that a type should not be ignored.
+             */
+            @AlwaysNull
+            private static final byte[] NONE = null;
+
+            /**
+             * The matcher to identify types for transformation.
+             */
+            private final RawMatcher matcher;
+
+            /**
+             * A list of transformers to apply.
+             */
+            private final List<Transformer> transformers;
+
+            /**
+             * {@code true} if this transformation is terminal.
+             */
+            private final boolean terminal;
+
+            /**
+             * Creates a new transformation.
+             *
+             * @param matcher      The matcher to identify types eligable for transformation.
+             * @param transformers A list of transformers to apply.
+             * @param terminal     Indicates that this transformation is terminal.
+             */
+            protected Transformation(RawMatcher matcher, List<Transformer> transformers, boolean terminal) {
+                this.matcher = matcher;
+                this.transformers = transformers;
+                this.terminal = terminal;
             }
 
             /**
-             * A compound transformation that applied several transformation in the given order and applies the first active transformation.
+             * Returns the matcher to identify types for transformation.
+             *
+             * @return The matcher to identify types for transformation.
              */
-            @EqualsAndHashCode
-            class Compound implements Transformation {
+            protected RawMatcher getMatcher() {
+                return matcher;
+            }
+
+            /**
+             * Returns a list of transformers to apply.
+             *
+             * @return A list of transformers to apply.
+             */
+            protected List<Transformer> getTransformers() {
+                return transformers;
+            }
+
+            /**
+             * Returns {@code true} if this transformation is terminal.
+             *
+             * @return {@code true} if this transformation is terminal.
+             */
+            protected boolean isTerminal() {
+                return terminal;
+            }
+
+            /**
+             * A matcher that matches any type that is touched by a transformer without being ignored.
+             */
+            @HashCodeAndEqualsPlugin.Enhance
+            protected static class SimpleMatcher implements RawMatcher {
 
                 /**
-                 * The list of transformations to apply in their application order.
+                 * Identifies types that should not be instrumented.
+                 */
+                private final RawMatcher ignoreMatcher;
+
+                /**
+                 * The transformations to apply on non-ignored types.
                  */
                 private final List<Transformation> transformations;
 
                 /**
-                 * Creates a new compound transformation.
+                 * Creates a new simple matcher.
                  *
-                 * @param transformation An array of transformations to apply in their application order.
+                 * @param ignoreMatcher   Identifies types that should not be instrumented.
+                 * @param transformations The transformations to apply on non-ignored types.
                  */
-                protected Compound(Transformation... transformation) {
-                    this(Arrays.asList(transformation));
+                protected SimpleMatcher(RawMatcher ignoreMatcher, List<Transformation> transformations) {
+                    this.ignoreMatcher = ignoreMatcher;
+                    this.transformations = transformations;
                 }
 
                 /**
-                 * Creates a new compound transformation.
-                 *
-                 * @param transformations A list of transformations to apply in their application order.
+                 * {@inheritDoc}
                  */
-                protected Compound(List<? extends Transformation> transformations) {
-                    this.transformations = new ArrayList<Transformation>();
-                    for (Transformation transformation : transformations) {
-                        if (transformation instanceof Compound) {
-                            this.transformations.addAll(((Compound) transformation).transformations);
-                        } else if (!(transformation instanceof Ignored)) {
-                            this.transformations.add(transformation);
-                        }
-                    }
-                }
-
-                @Override
                 public boolean matches(TypeDescription typeDescription,
-                                       ClassLoader classLoader,
-                                       JavaModule module,
-                                       Class<?> classBeingRedefined,
+                                       @MaybeNull ClassLoader classLoader,
+                                       @MaybeNull JavaModule module,
+                                       @MaybeNull Class<?> classBeingRedefined,
                                        ProtectionDomain protectionDomain) {
+                    if (ignoreMatcher.matches(typeDescription, classLoader, module, classBeingRedefined, protectionDomain)) {
+                        return false;
+                    }
                     for (Transformation transformation : transformations) {
-                        if (transformation.matches(typeDescription, classLoader, module, classBeingRedefined, protectionDomain)) {
+                        if (transformation.getMatcher().matches(typeDescription, classLoader, module, classBeingRedefined, protectionDomain)) {
                             return true;
                         }
                     }
                     return false;
                 }
+            }
 
-                @Override
-                public Resolution resolve(TypeDescription typeDescription,
-                                          ClassLoader classLoader,
-                                          JavaModule module,
-                                          Class<?> classBeingRedefined,
-                                          boolean loaded,
-                                          ProtectionDomain protectionDomain,
-                                          TypePool typePool) {
-                    Resolution current = new Resolution.Unresolved(typeDescription, classLoader, module, classBeingRedefined != null);
+            /**
+             * A matcher that considers the differential of two transformers' transformations.
+             */
+            @HashCodeAndEqualsPlugin.Enhance
+            protected static class DifferentialMatcher implements RawMatcher {
+
+                /**
+                 * Identifies types that should not be instrumented.
+                 */
+                private final RawMatcher ignoreMatcher;
+
+                /**
+                 * The transformations to apply on non-ignored types.
+                 */
+                private final List<Transformation> transformations;
+
+                /**
+                 * The class file transformer representing the differential.
+                 */
+                private final ResettableClassFileTransformer classFileTransformer;
+
+                /**
+                 * Creates a new differential matcher.
+                 *
+                 * @param ignoreMatcher        Identifies types that should not be instrumented.
+                 * @param transformations      The transformations to apply on non-ignored types.
+                 * @param classFileTransformer The class file transformer representing the differential.
+                 */
+                protected DifferentialMatcher(RawMatcher ignoreMatcher,
+                                              List<Transformation> transformations,
+                                              ResettableClassFileTransformer classFileTransformer) {
+                    this.ignoreMatcher = ignoreMatcher;
+                    this.transformations = transformations;
+                    this.classFileTransformer = classFileTransformer;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public boolean matches(TypeDescription typeDescription,
+                                       @MaybeNull ClassLoader classLoader,
+                                       @MaybeNull JavaModule module,
+                                       @MaybeNull Class<?> classBeingRedefined,
+                                       ProtectionDomain protectionDomain) {
+                    Iterator<Transformer> iterator = classFileTransformer.iterator(typeDescription, classLoader, module, classBeingRedefined, protectionDomain);
+                    if (ignoreMatcher.matches(typeDescription, classLoader, module, classBeingRedefined, protectionDomain)) {
+                        return iterator.hasNext();
+                    }
                     for (Transformation transformation : transformations) {
-                        Resolution resolution = transformation.resolve(typeDescription,
-                                classLoader,
-                                module,
-                                classBeingRedefined,
-                                loaded,
-                                protectionDomain,
-                                typePool);
-                        switch (resolution.getSort()) {
-                            case TERMINAL:
-                                return current.asDecoratorOf(resolution);
-                            case DECORATOR:
-                                current = current.asDecoratorOf(resolution);
-                                break;
-                            case UNDEFINED:
-                                break;
-                            default:
-                                throw new IllegalStateException("Unexpected resolution type: " + resolution.getSort());
+                        if (transformation.getMatcher().matches(typeDescription, classLoader, module, classBeingRedefined, protectionDomain)) {
+                            for (Transformer transformer : transformation.getTransformers()) {
+                                if (!iterator.hasNext() || !iterator.next().equals(transformer)) {
+                                    return true;
+                                }
+                            }
                         }
                     }
-                    return current;
+                    return iterator.hasNext();
+                }
+            }
+
+            /**
+             * An iterator over a list of transformations that match a raw matcher specification.
+             */
+            protected static class TransformerIterator implements Iterator<Transformer> {
+
+                /**
+                 * A description of the matched type.
+                 */
+                private final TypeDescription typeDescription;
+
+                /**
+                 * The type's class loader.
+                 */
+                @MaybeNull
+                private final ClassLoader classLoader;
+
+                /**
+                 * The type's module.
+                 */
+                @MaybeNull
+                private final JavaModule module;
+
+                /**
+                 * The class being redefined or {@code null} if the type was not previously loaded.
+                 */
+                @MaybeNull
+                private final Class<?> classBeingRedefined;
+
+                /**
+                 * The type's protection domain.
+                 */
+                private final ProtectionDomain protectionDomain;
+
+                /**
+                 * An iterator over the remaining transformations that were not yet considered.
+                 */
+                private final Iterator<Transformation> transformations;
+
+                /**
+                 * An iterator over the currently matched transformers.
+                 */
+                private Iterator<Transformer> transformers;
+
+                /**
+                 * Creates a new iterator.
+                 *
+                 * @param typeDescription     A description of the matched type.
+                 * @param classLoader         The type's class loader.
+                 * @param module              The type's module.
+                 * @param classBeingRedefined The class being redefined or {@code null} if the type was not previously loaded.
+                 * @param protectionDomain    The type's protection domain.
+                 * @param transformations     The matched transformations.
+                 */
+                protected TransformerIterator(TypeDescription typeDescription,
+                                              @MaybeNull ClassLoader classLoader,
+                                              @MaybeNull JavaModule module,
+                                              @MaybeNull Class<?> classBeingRedefined,
+                                              ProtectionDomain protectionDomain,
+                                              List<Transformation> transformations) {
+                    this.typeDescription = typeDescription;
+                    this.classLoader = classLoader;
+                    this.module = module;
+                    this.classBeingRedefined = classBeingRedefined;
+                    this.protectionDomain = protectionDomain;
+                    this.transformations = transformations.iterator();
+                    transformers = Collections.<Transformer>emptySet().iterator();
+                    while (!transformers.hasNext() && this.transformations.hasNext()) {
+                        Transformation transformation = this.transformations.next();
+                        if (transformation.getMatcher().matches(typeDescription, classLoader, module, classBeingRedefined, protectionDomain)) {
+                            transformers = transformation.getTransformers().iterator();
+                        }
+                    }
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public boolean hasNext() {
+                    return transformers.hasNext();
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public Transformer next() {
+                    try {
+                        return transformers.next();
+                    } finally {
+                        while (!transformers.hasNext() && transformations.hasNext()) {
+                            Transformation transformation = transformations.next();
+                            if (transformation.getMatcher().matches(typeDescription, classLoader, module, classBeingRedefined, protectionDomain)) {
+                                transformers = transformation.getTransformers().iterator();
+                            }
+                        }
+                    }
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public void remove() {
+                    throw new UnsupportedOperationException("remove");
                 }
             }
         }
@@ -9170,7 +11847,7 @@ public interface AgentBuilder {
             /**
              * A factory for creating a {@link ClassFileTransformer} that supports the features of the current VM.
              */
-            protected static final Factory FACTORY = AccessController.doPrivileged(Factory.CreationAction.INSTANCE);
+            protected static final Factory FACTORY = Default.doPrivileged(Factory.CreationAction.INSTANCE);
 
             /**
              * The Byte Buddy instance to be used.
@@ -9178,7 +11855,7 @@ public interface AgentBuilder {
             private final ByteBuddy byteBuddy;
 
             /**
-             * The type locator to use.
+             * The pool strategy to use.
              */
             private final PoolStrategy poolStrategy;
 
@@ -9203,9 +11880,9 @@ public interface AgentBuilder {
             private final InitializationStrategy initializationStrategy;
 
             /**
-             * The injection strategy for injecting classes into the bootstrap class loader.
+             * The injection strategy to use.
              */
-            private final BootstrapInjectionStrategy bootstrapInjectionStrategy;
+            private final InjectionStrategy injectionStrategy;
 
             /**
              * The lambda instrumentation strategy to use.
@@ -9223,9 +11900,19 @@ public interface AgentBuilder {
             private final LocationStrategy locationStrategy;
 
             /**
+             * A class file locator for locating globally available types.
+             */
+            private final ClassFileLocator classFileLocator;
+
+            /**
              * The fallback strategy to use.
              */
             private final FallbackStrategy fallbackStrategy;
+
+            /**
+             * The class file buffer strategy to use.
+             */
+            private final ClassFileBufferStrategy classFileBufferStrategy;
 
             /**
              * The installation listener to notify.
@@ -9235,12 +11922,17 @@ public interface AgentBuilder {
             /**
              * Identifies types that should not be instrumented.
              */
-            private final RawMatcher ignoredTypeMatcher;
+            private final RawMatcher ignoreMatcher;
 
             /**
-             * The transformation object for handling type transformations.
+             * The resubmission enforcer to use.
              */
-            private final Transformation transformation;
+            private final RedefinitionStrategy.ResubmissionEnforcer resubmissionEnforcer;
+
+            /**
+             * The transformations to apply on non-ignored types.
+             */
+            private final List<Transformation> transformations;
 
             /**
              * A lock that prevents circular class transformations.
@@ -9248,27 +11940,32 @@ public interface AgentBuilder {
             private final CircularityLock circularityLock;
 
             /**
-             * The access control context to use for loading classes.
+             * The access control context to use for loading classes or {@code null} if the
+             * access controller is not available on the current VM.
              */
-            private final AccessControlContext accessControlContext;
+            @MaybeNull
+            private final Object accessControlContext;
 
             /**
              * Creates a new class file transformer.
              *
              * @param byteBuddy                     The Byte Buddy instance to be used.
              * @param listener                      The listener to notify on transformations.
-             * @param poolStrategy                  The type locator to use.
+             * @param poolStrategy                  The pool strategy to use.
              * @param typeStrategy                  The definition handler to use.
              * @param locationStrategy              The location strategy to use.
+             * @param classFileLocator              A class file locator for locating globally available types.
              * @param nativeMethodStrategy          The native method strategy to apply.
              * @param initializationStrategy        The initialization strategy to use for transformed types.
-             * @param bootstrapInjectionStrategy    The injection strategy for injecting classes into the bootstrap class loader.
+             * @param injectionStrategy             The injection strategy to use.
              * @param lambdaInstrumentationStrategy The lambda instrumentation strategy to use.
              * @param descriptionStrategy           The description strategy for resolving type descriptions for types.
              * @param fallbackStrategy              The fallback strategy to use.
              * @param installationListener          The installation listener to notify.
-             * @param ignoredTypeMatcher            Identifies types that should not be instrumented.
-             * @param transformation                The transformation object for handling type transformations.
+             * @param classFileBufferStrategy       The class file buffer strategy to use.
+             * @param ignoreMatcher                 Identifies types that should not be instrumented.
+             * @param resubmissionEnforcer          The resubmission enforcer to use.
+             * @param transformations               The transformations to apply on non-ignored types.
              * @param circularityLock               The circularity lock to use.
              */
             public ExecutingTransformer(ByteBuddy byteBuddy,
@@ -9276,43 +11973,76 @@ public interface AgentBuilder {
                                         PoolStrategy poolStrategy,
                                         TypeStrategy typeStrategy,
                                         LocationStrategy locationStrategy,
+                                        ClassFileLocator classFileLocator,
                                         NativeMethodStrategy nativeMethodStrategy,
                                         InitializationStrategy initializationStrategy,
-                                        BootstrapInjectionStrategy bootstrapInjectionStrategy,
+                                        InjectionStrategy injectionStrategy,
                                         LambdaInstrumentationStrategy lambdaInstrumentationStrategy,
                                         DescriptionStrategy descriptionStrategy,
                                         FallbackStrategy fallbackStrategy,
+                                        ClassFileBufferStrategy classFileBufferStrategy,
                                         InstallationListener installationListener,
-                                        RawMatcher ignoredTypeMatcher,
-                                        Transformation transformation,
+                                        RawMatcher ignoreMatcher,
+                                        RedefinitionStrategy.ResubmissionEnforcer resubmissionEnforcer,
+                                        List<Transformation> transformations,
                                         CircularityLock circularityLock) {
                 this.byteBuddy = byteBuddy;
                 this.typeStrategy = typeStrategy;
                 this.poolStrategy = poolStrategy;
                 this.locationStrategy = locationStrategy;
+                this.classFileLocator = classFileLocator;
                 this.listener = listener;
                 this.nativeMethodStrategy = nativeMethodStrategy;
                 this.initializationStrategy = initializationStrategy;
-                this.bootstrapInjectionStrategy = bootstrapInjectionStrategy;
+                this.injectionStrategy = injectionStrategy;
                 this.lambdaInstrumentationStrategy = lambdaInstrumentationStrategy;
                 this.descriptionStrategy = descriptionStrategy;
                 this.fallbackStrategy = fallbackStrategy;
+                this.classFileBufferStrategy = classFileBufferStrategy;
                 this.installationListener = installationListener;
-                this.ignoredTypeMatcher = ignoredTypeMatcher;
-                this.transformation = transformation;
+                this.ignoreMatcher = ignoreMatcher;
+                this.resubmissionEnforcer = resubmissionEnforcer;
+                this.transformations = transformations;
                 this.circularityLock = circularityLock;
-                accessControlContext = AccessController.getContext();
+                accessControlContext = getContext();
             }
 
-            @Override
-            public byte[] transform(ClassLoader classLoader,
-                                    String internalTypeName,
-                                    Class<?> classBeingRedefined,
+            /**
+             * A proxy for {@code java.security.AccessController#getContext} that is activated if available.
+             *
+             * @return The current access control context or {@code null} if the current VM does not support it.
+             */
+            @MaybeNull
+            @AccessControllerPlugin.Enhance
+            private static Object getContext() {
+                return null;
+            }
+
+            /**
+             * A proxy for {@code java.security.AccessController#doPrivileged} that is activated if available.
+             *
+             * @param action  The action to execute from a privileged context.
+             * @param context The access control context or {@code null} if the current VM does not support it.
+             * @param <T>     The type of the action's resolved value.
+             * @return The action's resolved value.
+             */
+            @AccessControllerPlugin.Enhance
+            private static <T> T doPrivileged(PrivilegedAction<T> action, @MaybeNull @SuppressWarnings("unused") Object context) {
+                return action.run();
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            @MaybeNull
+            public byte[] transform(@MaybeNull ClassLoader classLoader,
+                                    @MaybeNull String internalTypeName,
+                                    @MaybeNull Class<?> classBeingRedefined,
                                     ProtectionDomain protectionDomain,
                                     byte[] binaryRepresentation) {
                 if (circularityLock.acquire()) {
                     try {
-                        return AccessController.doPrivileged(new LegacyVmDispatcher(classLoader,
+                        return doPrivileged(new LegacyVmDispatcher(classLoader,
                                 internalTypeName,
                                 classBeingRedefined,
                                 protectionDomain,
@@ -9337,15 +12067,16 @@ public interface AgentBuilder {
              * @param binaryRepresentation The class file of the instrumented class in its current state.
              * @return The transformed class file or an empty byte array if this transformer does not apply an instrumentation.
              */
+            @MaybeNull
             protected byte[] transform(Object rawModule,
-                                       ClassLoader classLoader,
-                                       String internalTypeName,
-                                       Class<?> classBeingRedefined,
+                                       @MaybeNull ClassLoader classLoader,
+                                       @MaybeNull String internalTypeName,
+                                       @MaybeNull Class<?> classBeingRedefined,
                                        ProtectionDomain protectionDomain,
                                        byte[] binaryRepresentation) {
                 if (circularityLock.acquire()) {
                     try {
-                        return AccessController.doPrivileged(new Java9CapableVmDispatcher(rawModule,
+                        return doPrivileged(new Java9CapableVmDispatcher(rawModule,
                                 classLoader,
                                 internalTypeName,
                                 classBeingRedefined,
@@ -9370,36 +12101,51 @@ public interface AgentBuilder {
              * @param binaryRepresentation The class file of the instrumented class in its current state.
              * @return The transformed class file or an empty byte array if this transformer does not apply an instrumentation.
              */
-            private byte[] transform(JavaModule module,
-                                     ClassLoader classLoader,
-                                     String internalTypeName,
-                                     Class<?> classBeingRedefined,
+            @MaybeNull
+            private byte[] transform(@MaybeNull JavaModule module,
+                                     @MaybeNull ClassLoader classLoader,
+                                     @MaybeNull String internalTypeName,
+                                     @MaybeNull Class<?> classBeingRedefined,
                                      ProtectionDomain protectionDomain,
                                      byte[] binaryRepresentation) {
                 if (internalTypeName == null || !lambdaInstrumentationStrategy.isInstrumented(classBeingRedefined)) {
                     return NO_TRANSFORMATION;
                 }
-                String typeName = internalTypeName.replace('/', '.');
+                String name = internalTypeName.replace('/', '.');
                 try {
-                    listener.onDiscovery(typeName, classLoader, module, classBeingRedefined != null);
-                    ClassFileLocator classFileLocator = ClassFileLocator.Simple.of(typeName,
-                            binaryRepresentation,
-                            locationStrategy.classFileLocator(classLoader, module));
-                    TypePool typePool = poolStrategy.typePool(classFileLocator, classLoader);
+                    if (resubmissionEnforcer.isEnforced(name, classLoader, module, classBeingRedefined)) {
+                        return NO_TRANSFORMATION;
+                    }
+                } catch (Throwable throwable) {
                     try {
-                        return doTransform(module, classLoader, typeName, classBeingRedefined, classBeingRedefined != null, protectionDomain, typePool, classFileLocator);
+                        listener.onDiscovery(name, classLoader, module, classBeingRedefined != null);
+                    } finally {
+                        listener.onError(name, classLoader, module, classBeingRedefined != null, throwable);
+                    }
+                    throw new IllegalStateException("Failed transformation of " + name, throwable);
+                }
+                try {
+                    listener.onDiscovery(name, classLoader, module, classBeingRedefined != null);
+                    ClassFileLocator classFileLocator = new ClassFileLocator.Compound(classFileBufferStrategy.resolve(name,
+                            binaryRepresentation,
+                            classLoader,
+                            module,
+                            protectionDomain), this.classFileLocator, locationStrategy.classFileLocator(classLoader, module));
+                    TypePool typePool = classFileBufferStrategy.typePool(poolStrategy, classFileLocator, classLoader, name);
+                    try {
+                        return doTransform(module, classLoader, name, classBeingRedefined, classBeingRedefined != null, protectionDomain, typePool, classFileLocator);
                     } catch (Throwable throwable) {
                         if (classBeingRedefined != null && descriptionStrategy.isLoadedFirst() && fallbackStrategy.isFallback(classBeingRedefined, throwable)) {
-                            return doTransform(module, classLoader, typeName, NO_LOADED_TYPE, Listener.LOADED, protectionDomain, typePool, classFileLocator);
+                            return doTransform(module, classLoader, name, NOT_PREVIOUSLY_DEFINED, Listener.LOADED, protectionDomain, typePool, classFileLocator);
                         } else {
                             throw throwable;
                         }
                     }
                 } catch (Throwable throwable) {
-                    listener.onError(typeName, classLoader, module, classBeingRedefined != null, throwable);
-                    return NO_TRANSFORMATION;
+                    listener.onError(name, classLoader, module, classBeingRedefined != null, throwable);
+                    throw new IllegalStateException("Failed transformation of " + name, throwable);
                 } finally {
-                    listener.onComplete(typeName, classLoader, module, classBeingRedefined != null);
+                    listener.onComplete(name, classLoader, module, classBeingRedefined != null);
                 }
             }
 
@@ -9408,7 +12154,7 @@ public interface AgentBuilder {
              *
              * @param module              The instrumented class's Java module in its wrapped form or {@code null} if the current VM does not support modules.
              * @param classLoader         The instrumented class's class loader.
-             * @param typeName            The binary name of the instrumented class.
+             * @param name                The binary name of the instrumented class.
              * @param classBeingRedefined The loaded {@link Class} being redefined or {@code null} if no such class exists.
              * @param loaded              {@code true} if the instrumented type is loaded.
              * @param protectionDomain    The instrumented type's protection domain.
@@ -9416,71 +12162,84 @@ public interface AgentBuilder {
              * @param classFileLocator    The class file locator to use.
              * @return The transformed class file or an empty byte array if this transformer does not apply an instrumentation.
              */
-            private byte[] doTransform(JavaModule module,
-                                       ClassLoader classLoader,
-                                       String typeName,
-                                       Class<?> classBeingRedefined,
+            @MaybeNull
+            private byte[] doTransform(@MaybeNull JavaModule module,
+                                       @MaybeNull ClassLoader classLoader,
+                                       String name,
+                                       @MaybeNull Class<?> classBeingRedefined,
                                        boolean loaded,
                                        ProtectionDomain protectionDomain,
                                        TypePool typePool,
                                        ClassFileLocator classFileLocator) {
-                return resolve(module, classLoader, typeName, classBeingRedefined, loaded, protectionDomain, typePool).apply(initializationStrategy,
-                        classFileLocator,
-                        typeStrategy,
+                TypeDescription typeDescription = descriptionStrategy.apply(name, classBeingRedefined, typePool, circularityLock, classLoader, module);
+                List<Transformer> transformers = new ArrayList<Transformer>();
+                if (!ignoreMatcher.matches(typeDescription, classLoader, module, classBeingRedefined, protectionDomain)) {
+                    for (Transformation transformation : transformations) {
+                        if (transformation.getMatcher().matches(typeDescription, classLoader, module, classBeingRedefined, protectionDomain)) {
+                            transformers.addAll(transformation.getTransformers());
+                            if (transformation.isTerminal()) {
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (transformers.isEmpty()) {
+                    listener.onIgnored(typeDescription, classLoader, module, loaded);
+                    return Transformation.NONE;
+                }
+                DynamicType.Builder<?> builder = typeStrategy.builder(typeDescription,
                         byteBuddy,
-                        nativeMethodStrategy,
-                        bootstrapInjectionStrategy,
-                        accessControlContext,
-                        listener);
+                        classFileLocator,
+                        nativeMethodStrategy.resolve(),
+                        classLoader,
+                        module,
+                        protectionDomain);
+                InitializationStrategy.Dispatcher dispatcher = initializationStrategy.dispatcher();
+                for (Transformer transformer : transformers) {
+                    builder = transformer.transform(builder, typeDescription, classLoader, module, protectionDomain);
+                }
+                DynamicType.Unloaded<?> dynamicType = dispatcher.apply(builder).make(TypeResolutionStrategy.Disabled.INSTANCE, typePool);
+                dispatcher.register(dynamicType, classLoader, protectionDomain, injectionStrategy);
+                listener.onTransformation(typeDescription, classLoader, module, loaded, dynamicType);
+                return dynamicType.getBytes();
             }
-
 
             /**
-             * Resolves the transformation and assures it is not ignored.
-             *
-             * @param module              The instrumented class's Java module in its wrapped form or {@code null} if the current VM does not support modules.
-             * @param classLoader         The instrumented class's class loader.
-             * @param typeName            The binary name of the instrumented class.
-             * @param classBeingRedefined The loaded {@link Class} being redefined or {@code null} if no such class exists.
-             * @param loaded              {@code true} if the instrumented type is loaded.
-             * @param protectionDomain    The instrumented type's protection domain.
-             * @param typePool            The type pool to use.
-             * @return The resolution for the transformation.
+             * {@inheritDoc}
              */
-            private Transformation.Resolution resolve(JavaModule module,
-                                                      ClassLoader classLoader,
-                                                      String typeName,
-                                                      Class<?> classBeingRedefined,
-                                                      boolean loaded,
-                                                      ProtectionDomain protectionDomain,
-                                                      TypePool typePool) {
-                TypeDescription typeDescription = descriptionStrategy.apply(typeName, classBeingRedefined, typePool, circularityLock, classLoader, module);
-                return ignoredTypeMatcher.matches(typeDescription, classLoader, module, classBeingRedefined, protectionDomain)
-                        ? new Transformation.Resolution.Unresolved(typeDescription, classLoader, module, loaded)
-                        : transformation.resolve(typeDescription, classLoader, module, classBeingRedefined, loaded, protectionDomain, typePool);
+            public Iterator<Transformer> iterator(TypeDescription typeDescription,
+                                                  @MaybeNull ClassLoader classLoader,
+                                                  @MaybeNull JavaModule module,
+                                                  @MaybeNull Class<?> classBeingRedefined,
+                                                  ProtectionDomain protectionDomain) {
+                return ignoreMatcher.matches(typeDescription, classLoader, module, classBeingRedefined, protectionDomain)
+                        ? Collections.<Transformer>emptySet().iterator()
+                        : new Transformation.TransformerIterator(typeDescription, classLoader, module, classBeingRedefined, protectionDomain, transformations);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public synchronized boolean reset(Instrumentation instrumentation,
+                                              ResettableClassFileTransformer classFileTransformer,
                                               RedefinitionStrategy redefinitionStrategy,
                                               RedefinitionStrategy.DiscoveryStrategy redefinitionDiscoveryStrategy,
                                               RedefinitionStrategy.BatchAllocator redefinitionBatchAllocator,
                                               RedefinitionStrategy.Listener redefinitionListener) {
-                if (instrumentation.removeTransformer(this)) {
+                if (instrumentation.removeTransformer(classFileTransformer)) {
                     redefinitionStrategy.apply(instrumentation,
-                            Listener.NoOp.INSTANCE,
-                            CircularityLock.Inactive.INSTANCE,
                             poolStrategy,
                             locationStrategy,
-                            redefinitionDiscoveryStrategy,
-                            redefinitionBatchAllocator,
-                            redefinitionListener,
-                            lambdaInstrumentationStrategy,
                             descriptionStrategy,
                             fallbackStrategy,
-                            transformation,
-                            ignoredTypeMatcher);
-                    installationListener.onReset(instrumentation, this);
+                            redefinitionDiscoveryStrategy,
+                            lambdaInstrumentationStrategy,
+                            Listener.NoOp.INSTANCE,
+                            redefinitionListener,
+                            new Transformation.SimpleMatcher(ignoreMatcher, transformations),
+                            redefinitionBatchAllocator,
+                            CircularityLock.Inactive.INSTANCE);
+                    installationListener.onReset(instrumentation, classFileTransformer);
                     return true;
                 } else {
                     return false;
@@ -9499,18 +12258,21 @@ public interface AgentBuilder {
                  *
                  * @param byteBuddy                     The Byte Buddy instance to be used.
                  * @param listener                      The listener to notify on transformations.
-                 * @param poolStrategy                  The type locator to use.
+                 * @param poolStrategy                  The pool strategy to use.
                  * @param typeStrategy                  The definition handler to use.
                  * @param locationStrategy              The location strategy to use.
+                 * @param classFileLocator              A class file locator for locating globally available types.
                  * @param nativeMethodStrategy          The native method strategy to apply.
                  * @param initializationStrategy        The initialization strategy to use for transformed types.
-                 * @param bootstrapInjectionStrategy    The injection strategy for injecting classes into the bootstrap class loader.
+                 * @param injectionStrategy             The injection strategy to use.
                  * @param lambdaInstrumentationStrategy The lambda instrumentation strategy to use.
                  * @param descriptionStrategy           The description strategy for resolving type descriptions for types.
                  * @param fallbackStrategy              The fallback strategy to use.
+                 * @param classFileBufferStrategy       The class file buffer strategy to use.
                  * @param installationListener          The installation listener to notify.
-                 * @param ignoredTypeMatcher            Identifies types that should not be instrumented.
-                 * @param transformation                The transformation object for handling type transformations.
+                 * @param ignoreMatcher                 Identifies types that should not be instrumented.
+                 * @param resubmissionEnforcer          The resubmission enforcer to use.
+                 * @param transformations               The transformations to apply on non-ignored types.
                  * @param circularityLock               The circularity lock to use.
                  * @return A class file transformer for the current VM that supports the API of the current VM.
                  */
@@ -9519,15 +12281,18 @@ public interface AgentBuilder {
                                                     PoolStrategy poolStrategy,
                                                     TypeStrategy typeStrategy,
                                                     LocationStrategy locationStrategy,
+                                                    ClassFileLocator classFileLocator,
                                                     NativeMethodStrategy nativeMethodStrategy,
                                                     InitializationStrategy initializationStrategy,
-                                                    BootstrapInjectionStrategy bootstrapInjectionStrategy,
+                                                    InjectionStrategy injectionStrategy,
                                                     LambdaInstrumentationStrategy lambdaInstrumentationStrategy,
                                                     DescriptionStrategy descriptionStrategy,
                                                     FallbackStrategy fallbackStrategy,
+                                                    ClassFileBufferStrategy classFileBufferStrategy,
                                                     InstallationListener installationListener,
-                                                    RawMatcher ignoredTypeMatcher,
-                                                    Transformation transformation,
+                                                    RawMatcher ignoreMatcher,
+                                                    RedefinitionStrategy.ResubmissionEnforcer resubmissionEnforcer,
+                                                    List<Transformation> transformations,
                                                     CircularityLock circularityLock);
 
                 /**
@@ -9540,11 +12305,14 @@ public interface AgentBuilder {
                      */
                     INSTANCE;
 
-                    @Override
-                    @SuppressFBWarnings(value = "REC_CATCH_EXCEPTION", justification = "Exception should not be rethrown but trigger a fallback")
+                    /**
+                     * {@inheritDoc}
+                     */
+                    @SuppressFBWarnings(value = "REC_CATCH_EXCEPTION", justification = "Exception should not be rethrown but trigger a fallback.")
                     public Factory run() {
                         try {
                             return new Factory.ForJava9CapableVm(new ByteBuddy()
+                                    .with(TypeValidation.DISABLED)
                                     .subclass(ExecutingTransformer.class)
                                     .name(ExecutingTransformer.class.getName() + "$ByteBuddy$ModuleSupport")
                                     .method(named("transform").and(takesArgument(0, JavaType.MODULE.load())))
@@ -9564,15 +12332,18 @@ public interface AgentBuilder {
                                             PoolStrategy.class,
                                             TypeStrategy.class,
                                             LocationStrategy.class,
+                                            ClassFileLocator.class,
                                             NativeMethodStrategy.class,
                                             InitializationStrategy.class,
-                                            BootstrapInjectionStrategy.class,
+                                            InjectionStrategy.class,
                                             LambdaInstrumentationStrategy.class,
                                             DescriptionStrategy.class,
                                             FallbackStrategy.class,
+                                            ClassFileBufferStrategy.class,
                                             InstallationListener.class,
                                             RawMatcher.class,
-                                            Transformation.class,
+                                            RedefinitionStrategy.ResubmissionEnforcer.class,
+                                            List.class,
                                             CircularityLock.class));
                         } catch (Exception ignored) {
                             return Factory.ForLegacyVm.INSTANCE;
@@ -9584,7 +12355,7 @@ public interface AgentBuilder {
                  * A factory for a class file transformer on a JVM that supports the {@code java.lang.Module} API to override
                  * the newly added method of the {@link ClassFileTransformer} to capture an instrumented class's module.
                  */
-                @EqualsAndHashCode
+                @HashCodeAndEqualsPlugin.Enhance
                 class ForJava9CapableVm implements Factory {
 
                     /**
@@ -9603,21 +12374,26 @@ public interface AgentBuilder {
                         this.executingTransformer = executingTransformer;
                     }
 
-                    @Override
+                    /**
+                     * {@inheritDoc}
+                     */
                     public ResettableClassFileTransformer make(ByteBuddy byteBuddy,
                                                                Listener listener,
                                                                PoolStrategy poolStrategy,
                                                                TypeStrategy typeStrategy,
                                                                LocationStrategy locationStrategy,
+                                                               ClassFileLocator classFileLocator,
                                                                NativeMethodStrategy nativeMethodStrategy,
                                                                InitializationStrategy initializationStrategy,
-                                                               BootstrapInjectionStrategy bootstrapInjectionStrategy,
+                                                               InjectionStrategy injectionStrategy,
                                                                LambdaInstrumentationStrategy lambdaInstrumentationStrategy,
                                                                DescriptionStrategy descriptionStrategy,
                                                                FallbackStrategy fallbackStrategy,
+                                                               ClassFileBufferStrategy classFileBufferStrategy,
                                                                InstallationListener installationListener,
-                                                               RawMatcher ignoredTypeMatcher,
-                                                               Transformation transformation,
+                                                               RawMatcher ignoreMatcher,
+                                                               RedefinitionStrategy.ResubmissionEnforcer resubmissionEnforcer,
+                                                               List<Transformation> transformations,
                                                                CircularityLock circularityLock) {
                         try {
                             return executingTransformer.newInstance(byteBuddy,
@@ -9625,22 +12401,25 @@ public interface AgentBuilder {
                                     poolStrategy,
                                     typeStrategy,
                                     locationStrategy,
+                                    classFileLocator,
                                     nativeMethodStrategy,
                                     initializationStrategy,
-                                    bootstrapInjectionStrategy,
+                                    injectionStrategy,
                                     lambdaInstrumentationStrategy,
                                     descriptionStrategy,
                                     fallbackStrategy,
+                                    classFileBufferStrategy,
                                     installationListener,
-                                    ignoredTypeMatcher,
-                                    transformation,
+                                    ignoreMatcher,
+                                    resubmissionEnforcer,
+                                    transformations,
                                     circularityLock);
                         } catch (IllegalAccessException exception) {
                             throw new IllegalStateException("Cannot access " + executingTransformer, exception);
                         } catch (InstantiationException exception) {
                             throw new IllegalStateException("Cannot instantiate " + executingTransformer.getDeclaringClass(), exception);
                         } catch (InvocationTargetException exception) {
-                            throw new IllegalStateException("Cannot invoke " + executingTransformer, exception.getCause());
+                            throw new IllegalStateException("Cannot invoke " + executingTransformer, exception.getTargetException());
                         }
                     }
                 }
@@ -9655,36 +12434,44 @@ public interface AgentBuilder {
                      */
                     INSTANCE;
 
-                    @Override
+                    /**
+                     * {@inheritDoc}
+                     */
                     public ResettableClassFileTransformer make(ByteBuddy byteBuddy,
                                                                Listener listener,
                                                                PoolStrategy poolStrategy,
                                                                TypeStrategy typeStrategy,
                                                                LocationStrategy locationStrategy,
+                                                               ClassFileLocator classFileLocator,
                                                                NativeMethodStrategy nativeMethodStrategy,
                                                                InitializationStrategy initializationStrategy,
-                                                               BootstrapInjectionStrategy bootstrapInjectionStrategy,
+                                                               InjectionStrategy injectionStrategy,
                                                                LambdaInstrumentationStrategy lambdaInstrumentationStrategy,
                                                                DescriptionStrategy descriptionStrategy,
                                                                FallbackStrategy fallbackStrategy,
+                                                               ClassFileBufferStrategy classFileBufferStrategy,
                                                                InstallationListener installationListener,
-                                                               RawMatcher ignoredTypeMatcher,
-                                                               Transformation transformation,
+                                                               RawMatcher ignoreMatcher,
+                                                               RedefinitionStrategy.ResubmissionEnforcer resubmissionEnforcer,
+                                                               List<Transformation> transformations,
                                                                CircularityLock circularityLock) {
                         return new ExecutingTransformer(byteBuddy,
                                 listener,
                                 poolStrategy,
                                 typeStrategy,
                                 locationStrategy,
+                                classFileLocator,
                                 nativeMethodStrategy,
                                 initializationStrategy,
-                                bootstrapInjectionStrategy,
+                                injectionStrategy,
                                 lambdaInstrumentationStrategy,
                                 descriptionStrategy,
                                 fallbackStrategy,
+                                classFileBufferStrategy,
                                 installationListener,
-                                ignoredTypeMatcher,
-                                transformation,
+                                ignoreMatcher,
+                                resubmissionEnforcer,
+                                transformations,
                                 circularityLock);
                     }
                 }
@@ -9693,21 +12480,28 @@ public interface AgentBuilder {
             /**
              * A privileged action for transforming a class on a JVM prior to Java 9.
              */
+            @HashCodeAndEqualsPlugin.Enhance(includeSyntheticFields = true)
             protected class LegacyVmDispatcher implements PrivilegedAction<byte[]> {
 
                 /**
                  * The type's class loader or {@code null} if the bootstrap class loader is represented.
                  */
+                @MaybeNull
+                @HashCodeAndEqualsPlugin.ValueHandling(HashCodeAndEqualsPlugin.ValueHandling.Sort.REVERSE_NULLABILITY)
                 private final ClassLoader classLoader;
 
                 /**
                  * The type's internal name or {@code null} if no such name exists.
                  */
+                @MaybeNull
+                @HashCodeAndEqualsPlugin.ValueHandling(HashCodeAndEqualsPlugin.ValueHandling.Sort.REVERSE_NULLABILITY)
                 private final String internalTypeName;
 
                 /**
                  * The class being redefined or {@code null} if no such class exists.
                  */
+                @MaybeNull
+                @HashCodeAndEqualsPlugin.ValueHandling(HashCodeAndEqualsPlugin.ValueHandling.Sort.REVERSE_NULLABILITY)
                 private final Class<?> classBeingRedefined;
 
                 /**
@@ -9729,9 +12523,9 @@ public interface AgentBuilder {
                  * @param protectionDomain     The type's protection domain.
                  * @param binaryRepresentation The type's binary representation.
                  */
-                protected LegacyVmDispatcher(ClassLoader classLoader,
-                                             String internalTypeName,
-                                             Class<?> classBeingRedefined,
+                protected LegacyVmDispatcher(@MaybeNull ClassLoader classLoader,
+                                             @MaybeNull String internalTypeName,
+                                             @MaybeNull Class<?> classBeingRedefined,
                                              ProtectionDomain protectionDomain,
                                              byte[] binaryRepresentation) {
                     this.classLoader = classLoader;
@@ -9741,7 +12535,10 @@ public interface AgentBuilder {
                     this.binaryRepresentation = binaryRepresentation;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
+                @MaybeNull
                 public byte[] run() {
                     return transform(JavaModule.UNSUPPORTED,
                             classLoader,
@@ -9750,44 +12547,12 @@ public interface AgentBuilder {
                             protectionDomain,
                             binaryRepresentation);
                 }
-
-                /**
-                 * Returns the outer instance.
-                 *
-                 * @return The outer instance.
-                 */
-                private ExecutingTransformer getOuter() {
-                    return ExecutingTransformer.this;
-                }
-
-                @Override // HE: Remove when Lombok support for getOuter is added.
-                public boolean equals(Object object) {
-                    if (this == object) return true;
-                    if (object == null || getClass() != object.getClass()) return false;
-                    LegacyVmDispatcher that = (LegacyVmDispatcher) object;
-                    return (classLoader != null ? classLoader.equals(that.classLoader) : that.classLoader == null)
-                            && (internalTypeName != null ? internalTypeName.equals(that.internalTypeName) : that.internalTypeName == null)
-                            && (classBeingRedefined != null ? classBeingRedefined.equals(that.classBeingRedefined) : that.classBeingRedefined == null)
-                            && protectionDomain.equals(that.protectionDomain)
-                            && ExecutingTransformer.this.equals(that.getOuter())
-                            && Arrays.equals(binaryRepresentation, that.binaryRepresentation);
-                }
-
-                @Override // HE: Remove when Lombok support for getOuter is added.
-                public int hashCode() {
-                    int result = classLoader != null ? classLoader.hashCode() : 0;
-                    result = 31 * result + (internalTypeName != null ? internalTypeName.hashCode() : 0);
-                    result = 31 * result + (classBeingRedefined != null ? classBeingRedefined.hashCode() : 0);
-                    result = 31 * result + protectionDomain.hashCode();
-                    result = 31 * result + ExecutingTransformer.this.hashCode();
-                    result = 31 * result + Arrays.hashCode(binaryRepresentation);
-                    return result;
-                }
             }
 
             /**
              * A privileged action for transforming a class on a JVM that supports modules.
              */
+            @HashCodeAndEqualsPlugin.Enhance(includeSyntheticFields = true)
             protected class Java9CapableVmDispatcher implements PrivilegedAction<byte[]> {
 
                 /**
@@ -9798,16 +12563,22 @@ public interface AgentBuilder {
                 /**
                  * The type's class loader or {@code null} if the type is loaded by the bootstrap loader.
                  */
+                @MaybeNull
+                @HashCodeAndEqualsPlugin.ValueHandling(HashCodeAndEqualsPlugin.ValueHandling.Sort.REVERSE_NULLABILITY)
                 private final ClassLoader classLoader;
 
                 /**
                  * The type's internal name or {@code null} if no such name exists.
                  */
+                @MaybeNull
+                @HashCodeAndEqualsPlugin.ValueHandling(HashCodeAndEqualsPlugin.ValueHandling.Sort.REVERSE_NULLABILITY)
                 private final String internalTypeName;
 
                 /**
                  * The class being redefined or {@code null} if no such class exists.
                  */
+                @MaybeNull
+                @HashCodeAndEqualsPlugin.ValueHandling(HashCodeAndEqualsPlugin.ValueHandling.Sort.REVERSE_NULLABILITY)
                 private final Class<?> classBeingRedefined;
 
                 /**
@@ -9820,7 +12591,6 @@ public interface AgentBuilder {
                  */
                 private final byte[] binaryRepresentation;
 
-
                 /**
                  * Creates a new legacy dispatcher.
                  *
@@ -9832,9 +12602,9 @@ public interface AgentBuilder {
                  * @param binaryRepresentation The type's binary representation.
                  */
                 protected Java9CapableVmDispatcher(Object rawModule,
-                                                   ClassLoader classLoader,
-                                                   String internalTypeName,
-                                                   Class<?> classBeingRedefined,
+                                                   @MaybeNull ClassLoader classLoader,
+                                                   @MaybeNull String internalTypeName,
+                                                   @MaybeNull Class<?> classBeingRedefined,
                                                    ProtectionDomain protectionDomain,
                                                    byte[] binaryRepresentation) {
                     this.rawModule = rawModule;
@@ -9845,7 +12615,10 @@ public interface AgentBuilder {
                     this.binaryRepresentation = binaryRepresentation;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
+                @MaybeNull
                 public byte[] run() {
                     return transform(JavaModule.of(rawModule),
                             classLoader,
@@ -9854,50 +12627,13 @@ public interface AgentBuilder {
                             protectionDomain,
                             binaryRepresentation);
                 }
-
-                /**
-                 * Returns the outer instance.
-                 *
-                 * @return The outer instance.
-                 */
-                private ExecutingTransformer getOuter() {
-                    return ExecutingTransformer.this;
-                }
-
-                @Override // HE: Remove when Lombok support for getOuter is added.
-                public boolean equals(Object object) {
-                    if (this == object) return true;
-                    if (object == null || getClass() != object.getClass()) return false;
-                    Java9CapableVmDispatcher that = (Java9CapableVmDispatcher) object;
-                    return rawModule.equals(that.rawModule)
-                            && (classLoader != null ? classLoader.equals(that.classLoader) : that.classLoader == null)
-                            && (internalTypeName != null ? internalTypeName.equals(that.internalTypeName) : that.internalTypeName == null)
-                            && (classBeingRedefined != null ? classBeingRedefined.equals(that.classBeingRedefined) : that.classBeingRedefined == null)
-                            && protectionDomain.equals(that.protectionDomain)
-                            && ExecutingTransformer.this.equals(that.getOuter())
-                            && Arrays.equals(binaryRepresentation, that.binaryRepresentation);
-                }
-
-                @Override // HE: Remove when Lombok support for getOuter is added.
-                public int hashCode() {
-                    int result = rawModule.hashCode();
-                    result = 31 * result + (classLoader != null ? classLoader.hashCode() : 0);
-                    result = 31 * result + (internalTypeName != null ? internalTypeName.hashCode() : 0);
-                    result = 31 * result + (classBeingRedefined != null ? classBeingRedefined.hashCode() : 0);
-                    result = 31 * result + protectionDomain.hashCode();
-                    result = 31 * result + ExecutingTransformer.this.hashCode();
-                    result = 31 * result + Arrays.hashCode(binaryRepresentation);
-                    return result;
-                }
             }
         }
 
         /**
          * An abstract implementation of an agent builder that delegates all invocation to another instance.
-         *
-         * @param <T> The type that is produced by chaining a matcher.
          */
-        protected abstract class Delegator<T extends Matchable<T>> extends Matchable.AbstractBase<T> implements AgentBuilder {
+        protected abstract static class Delegator implements AgentBuilder {
 
             /**
              * Materializes the currently described {@link net.bytebuddy.agent.builder.AgentBuilder}.
@@ -9906,191 +12642,362 @@ public interface AgentBuilder {
              */
             protected abstract AgentBuilder materialize();
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public AgentBuilder with(ByteBuddy byteBuddy) {
                 return materialize().with(byteBuddy);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public AgentBuilder with(Listener listener) {
                 return materialize().with(listener);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public AgentBuilder with(CircularityLock circularityLock) {
                 return materialize().with(circularityLock);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public AgentBuilder with(TypeStrategy typeStrategy) {
                 return materialize().with(typeStrategy);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public AgentBuilder with(PoolStrategy poolStrategy) {
                 return materialize().with(poolStrategy);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public AgentBuilder with(LocationStrategy locationStrategy) {
                 return materialize().with(locationStrategy);
             }
 
             @Override
+            public AgentBuilder with(ClassFileLocator classFileLocator) {
+                return materialize().with(classFileLocator);
+            }
+
+            /**
+             * {@inheritDoc}
+             */
             public AgentBuilder with(InitializationStrategy initializationStrategy) {
                 return materialize().with(initializationStrategy);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public RedefinitionListenable.WithoutBatchStrategy with(RedefinitionStrategy redefinitionStrategy) {
                 return materialize().with(redefinitionStrategy);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public AgentBuilder with(LambdaInstrumentationStrategy lambdaInstrumentationStrategy) {
                 return materialize().with(lambdaInstrumentationStrategy);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public AgentBuilder with(DescriptionStrategy descriptionStrategy) {
                 return materialize().with(descriptionStrategy);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public AgentBuilder with(FallbackStrategy fallbackStrategy) {
                 return materialize().with(fallbackStrategy);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
+            public AgentBuilder with(ClassFileBufferStrategy classFileBufferStrategy) {
+                return materialize().with(classFileBufferStrategy);
+            }
+
+            /**
+             * {@inheritDoc}
+             */
             public AgentBuilder with(InstallationListener installationListener) {
                 return materialize().with(installationListener);
             }
 
-            @Override
-            public AgentBuilder enableBootstrapInjection(Instrumentation instrumentation, File folder) {
-                return materialize().enableBootstrapInjection(instrumentation, folder);
+            /**
+             * {@inheritDoc}
+             */
+            public AgentBuilder with(InjectionStrategy injectionStrategy) {
+                return materialize().with(injectionStrategy);
             }
 
-            @Override
-            public AgentBuilder enableUnsafeBootstrapInjection() {
-                return materialize().enableUnsafeBootstrapInjection();
+            /**
+             * {@inheritDoc}
+             */
+            public AgentBuilder with(TransformerDecorator transformerDecorator) {
+                return materialize().with(transformerDecorator);
             }
 
-            @Override
-            public AgentBuilder disableBootstrapInjection() {
-                return materialize().disableBootstrapInjection();
-            }
-
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public AgentBuilder enableNativeMethodPrefix(String prefix) {
                 return materialize().enableNativeMethodPrefix(prefix);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public AgentBuilder disableNativeMethodPrefix() {
                 return materialize().disableNativeMethodPrefix();
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public AgentBuilder disableClassFormatChanges() {
                 return materialize().disableClassFormatChanges();
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
+            public AgentBuilder warmUp(Class<?>... type) {
+                return materialize().warmUp(type);
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public AgentBuilder warmUp(Collection<Class<?>> types) {
+                return materialize().warmUp(types);
+            }
+
+            /**
+             * {@inheritDoc}
+             */
             public AgentBuilder assureReadEdgeTo(Instrumentation instrumentation, Class<?>... type) {
                 return materialize().assureReadEdgeTo(instrumentation, type);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public AgentBuilder assureReadEdgeTo(Instrumentation instrumentation, JavaModule... module) {
                 return materialize().assureReadEdgeTo(instrumentation, module);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public AgentBuilder assureReadEdgeTo(Instrumentation instrumentation, Collection<? extends JavaModule> modules) {
                 return materialize().assureReadEdgeTo(instrumentation, modules);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public AgentBuilder assureReadEdgeFromAndTo(Instrumentation instrumentation, Class<?>... type) {
                 return materialize().assureReadEdgeFromAndTo(instrumentation, type);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public AgentBuilder assureReadEdgeFromAndTo(Instrumentation instrumentation, JavaModule... module) {
                 return materialize().assureReadEdgeFromAndTo(instrumentation, module);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public AgentBuilder assureReadEdgeFromAndTo(Instrumentation instrumentation, Collection<? extends JavaModule> modules) {
                 return materialize().assureReadEdgeFromAndTo(instrumentation, modules);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Identified.Narrowable type(ElementMatcher<? super TypeDescription> typeMatcher) {
                 return materialize().type(typeMatcher);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Identified.Narrowable type(ElementMatcher<? super TypeDescription> typeMatcher, ElementMatcher<? super ClassLoader> classLoaderMatcher) {
                 return materialize().type(typeMatcher, classLoaderMatcher);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Identified.Narrowable type(ElementMatcher<? super TypeDescription> typeMatcher,
                                               ElementMatcher<? super ClassLoader> classLoaderMatcher,
                                               ElementMatcher<? super JavaModule> moduleMatcher) {
                 return materialize().type(typeMatcher, classLoaderMatcher, moduleMatcher);
             }
 
-
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Identified.Narrowable type(RawMatcher matcher) {
                 return materialize().type(matcher);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Ignored ignore(ElementMatcher<? super TypeDescription> ignoredTypes) {
                 return materialize().ignore(ignoredTypes);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Ignored ignore(ElementMatcher<? super TypeDescription> ignoredTypes, ElementMatcher<? super ClassLoader> ignoredClassLoaders) {
                 return materialize().ignore(ignoredTypes, ignoredClassLoaders);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Ignored ignore(ElementMatcher<? super TypeDescription> typeMatcher,
                                   ElementMatcher<? super ClassLoader> classLoaderMatcher,
                                   ElementMatcher<? super JavaModule> moduleMatcher) {
                 return materialize().ignore(typeMatcher, classLoaderMatcher, moduleMatcher);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Ignored ignore(RawMatcher rawMatcher) {
                 return materialize().ignore(rawMatcher);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public ClassFileTransformer makeRaw() {
                 return materialize().makeRaw();
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public ResettableClassFileTransformer installOn(Instrumentation instrumentation) {
                 return materialize().installOn(instrumentation);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public ResettableClassFileTransformer installOnByteBuddyAgent() {
                 return materialize().installOnByteBuddyAgent();
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public ResettableClassFileTransformer patchOn(Instrumentation instrumentation, ResettableClassFileTransformer classFileTransformer) {
+                return materialize().patchOn(instrumentation, classFileTransformer);
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public ResettableClassFileTransformer patchOn(Instrumentation instrumentation, ResettableClassFileTransformer classFileTransformer, PatchMode patchMode) {
+                return materialize().patchOn(instrumentation, classFileTransformer, patchMode);
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public ResettableClassFileTransformer patchOnByteBuddyAgent(ResettableClassFileTransformer classFileTransformer) {
+                return materialize().patchOnByteBuddyAgent(classFileTransformer);
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public ResettableClassFileTransformer patchOnByteBuddyAgent(ResettableClassFileTransformer classFileTransformer, PatchMode patchMode) {
+                return materialize().patchOnByteBuddyAgent(classFileTransformer, patchMode);
+            }
+
+            /**
+             * An abstract base implementation of a matchable.
+             *
+             * @param <S> The type that is produced by chaining a matcher.
+             */
+            protected abstract static class Matchable<S extends AgentBuilder.Matchable<S>> extends Delegator implements AgentBuilder.Matchable<S> {
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public S and(ElementMatcher<? super TypeDescription> typeMatcher) {
+                    return and(typeMatcher, any());
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public S and(ElementMatcher<? super TypeDescription> typeMatcher, ElementMatcher<? super ClassLoader> classLoaderMatcher) {
+                    return and(typeMatcher, classLoaderMatcher, any());
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public S and(ElementMatcher<? super TypeDescription> typeMatcher,
+                             ElementMatcher<? super ClassLoader> classLoaderMatcher,
+                             ElementMatcher<? super JavaModule> moduleMatcher) {
+                    return and(new RawMatcher.ForElementMatchers(typeMatcher, classLoaderMatcher, moduleMatcher));
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public S or(ElementMatcher<? super TypeDescription> typeMatcher) {
+                    return or(typeMatcher, any());
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public S or(ElementMatcher<? super TypeDescription> typeMatcher, ElementMatcher<? super ClassLoader> classLoaderMatcher) {
+                    return or(typeMatcher, classLoaderMatcher, any());
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public S or(ElementMatcher<? super TypeDescription> typeMatcher,
+                            ElementMatcher<? super ClassLoader> classLoaderMatcher,
+                            ElementMatcher<? super JavaModule> moduleMatcher) {
+                    return or(new RawMatcher.ForElementMatchers(typeMatcher, classLoaderMatcher, moduleMatcher));
+                }
             }
         }
 
         /**
          * A delegator transformer for further precising what types to ignore.
          */
-        protected class Ignoring extends Delegator<Ignored> implements Ignored {
+        @HashCodeAndEqualsPlugin.Enhance(includeSyntheticFields = true)
+        protected class Ignoring extends Delegator.Matchable<Ignored> implements Ignored {
 
             /**
              * A matcher for identifying types that should not be instrumented.
@@ -10114,53 +13021,131 @@ public interface AgentBuilder {
                         poolStrategy,
                         typeStrategy,
                         locationStrategy,
+                        classFileLocator,
                         nativeMethodStrategy,
+                        warmupStrategy,
+                        transformerDecorator,
                         initializationStrategy,
                         redefinitionStrategy,
                         redefinitionDiscoveryStrategy,
                         redefinitionBatchAllocator,
                         redefinitionListener,
                         redefinitionResubmissionStrategy,
-                        bootstrapInjectionStrategy,
+                        injectionStrategy,
                         lambdaInstrumentationStrategy,
                         descriptionStrategy,
                         fallbackStrategy,
+                        classFileBufferStrategy,
                         installationListener,
                         rawMatcher,
-                        transformation);
+                        transformations);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Ignored and(RawMatcher rawMatcher) {
                 return new Ignoring(new RawMatcher.Conjunction(this.rawMatcher, rawMatcher));
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Ignored or(RawMatcher rawMatcher) {
                 return new Ignoring(new RawMatcher.Disjunction(this.rawMatcher, rawMatcher));
             }
+        }
+
+        /**
+         * A helper class that describes a {@link net.bytebuddy.agent.builder.AgentBuilder.Default} after supplying
+         * a {@link net.bytebuddy.agent.builder.AgentBuilder.RawMatcher} such that one or several
+         * {@link net.bytebuddy.agent.builder.AgentBuilder.Transformer}s can be supplied.
+         */
+        @HashCodeAndEqualsPlugin.Enhance(includeSyntheticFields = true)
+        protected class Transforming extends Delegator.Matchable<Identified.Narrowable> implements Identified.Extendable, Identified.Narrowable {
 
             /**
-             * Returns the outer instance.
-             *
-             * @return The outer instance.
+             * The supplied raw matcher.
              */
-            private Default getOuter() {
-                return Default.this;
+            private final RawMatcher rawMatcher;
+
+            /**
+             * The supplied transformer.
+             */
+            private final List<Transformer> transformers;
+
+            /**
+             * {@code true} if this transformer is a terminal transformation.
+             */
+            private final boolean terminal;
+
+            /**
+             * Creates a new matched default agent builder.
+             *
+             * @param rawMatcher   The supplied raw matcher.
+             * @param transformers The transformers to apply.
+             * @param terminal     {@code true} if this transformer is a terminal transformation.
+             */
+            protected Transforming(RawMatcher rawMatcher, List<Transformer> transformers, boolean terminal) {
+                this.rawMatcher = rawMatcher;
+                this.transformers = transformers;
+                this.terminal = terminal;
             }
 
-            @Override // HE: Remove when Lombok support for getOuter is added.
-            public boolean equals(Object other) {
-                return this == other || !(other == null || getClass() != other.getClass())
-                        && rawMatcher.equals(((Ignoring) other).rawMatcher)
-                        && Default.this.equals(((Ignoring) other).getOuter());
+            @Override
+            protected AgentBuilder materialize() {
+                return new Default(byteBuddy,
+                        listener,
+                        circularityLock,
+                        poolStrategy,
+                        typeStrategy,
+                        locationStrategy,
+                        classFileLocator,
+                        nativeMethodStrategy,
+                        warmupStrategy,
+                        transformerDecorator,
+                        initializationStrategy,
+                        redefinitionStrategy,
+                        redefinitionDiscoveryStrategy,
+                        redefinitionBatchAllocator,
+                        redefinitionListener,
+                        redefinitionResubmissionStrategy,
+                        injectionStrategy,
+                        lambdaInstrumentationStrategy,
+                        descriptionStrategy,
+                        fallbackStrategy,
+                        classFileBufferStrategy,
+                        installationListener,
+                        ignoreMatcher,
+                        CompoundList.of(transformations, new Transformation(rawMatcher, transformers, terminal)));
             }
 
-            @Override // HE: Remove when Lombok support for getOuter is added.
-            public int hashCode() {
-                int result = rawMatcher.hashCode();
-                result = 31 * result + Default.this.hashCode();
-                return result;
+            /**
+             * {@inheritDoc}
+             */
+            public Identified.Extendable transform(Transformer transformer) {
+                return new Transforming(rawMatcher, CompoundList.of(this.transformers, transformer), terminal);
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public AgentBuilder asTerminalTransformation() {
+                return new Transforming(rawMatcher, transformers, true);
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public Narrowable and(RawMatcher rawMatcher) {
+                return new Transforming(new RawMatcher.Conjunction(this.rawMatcher, rawMatcher), transformers, terminal);
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public Narrowable or(RawMatcher rawMatcher) {
+                return new Transforming(new RawMatcher.Disjunction(this.rawMatcher, rawMatcher), transformers, terminal);
             }
         }
 
@@ -10175,24 +13160,28 @@ public interface AgentBuilder {
              * @param byteBuddy                        The Byte Buddy instance to be used.
              * @param listener                         The listener to notify on transformations.
              * @param circularityLock                  The circularity lock to use.
-             * @param poolStrategy                     The type locator to use.
+             * @param poolStrategy                     The pool strategy to use.
              * @param typeStrategy                     The definition handler to use.
              * @param locationStrategy                 The location strategy to use.
+             * @param classFileLocator                 A class file locator to be used for additional lookup of globally available types.
              * @param nativeMethodStrategy             The native method strategy to apply.
+             * @param warmupStrategy                   The warmup strategy to use.
+             * @param transformerDecorator             A decorator to wrap the created class file transformer.
              * @param initializationStrategy           The initialization strategy to use for transformed types.
              * @param redefinitionStrategy             The redefinition strategy to apply.
              * @param redefinitionDiscoveryStrategy    The discovery strategy for loaded types to be redefined.
              * @param redefinitionBatchAllocator       The batch allocator for the redefinition strategy to apply.
              * @param redefinitionListener             The redefinition listener for the redefinition strategy to apply.
              * @param redefinitionResubmissionStrategy The resubmission strategy to apply.
-             * @param bootstrapInjectionStrategy       The injection strategy for injecting classes into the bootstrap class loader.
+             * @param injectionStrategy                The injection strategy to use.
              * @param lambdaInstrumentationStrategy    A strategy to determine of the {@code LambdaMetafactory} should be instrumented to allow for the
              *                                         instrumentation of classes that represent lambda expressions.
              * @param descriptionStrategy              The description strategy for resolving type descriptions for types.
              * @param fallbackStrategy                 The fallback strategy to apply.
+             * @param classFileBufferStrategy          The class file buffer strategy to use.
              * @param installationListener             The installation listener to notify.
-             * @param ignoredTypeMatcher               Identifies types that should not be instrumented.
-             * @param transformation                   The transformation object for handling type transformations.
+             * @param ignoreMatcher                    Identifies types that should not be instrumented.
+             * @param transformations                  The transformations to apply on non-ignored types.
              */
             protected Redefining(ByteBuddy byteBuddy,
                                  Listener listener,
@@ -10200,45 +13189,54 @@ public interface AgentBuilder {
                                  PoolStrategy poolStrategy,
                                  TypeStrategy typeStrategy,
                                  LocationStrategy locationStrategy,
+                                 ClassFileLocator classFileLocator,
                                  NativeMethodStrategy nativeMethodStrategy,
+                                 WarmupStrategy warmupStrategy,
+                                 TransformerDecorator transformerDecorator,
                                  InitializationStrategy initializationStrategy,
                                  RedefinitionStrategy redefinitionStrategy,
                                  RedefinitionStrategy.DiscoveryStrategy redefinitionDiscoveryStrategy,
                                  RedefinitionStrategy.BatchAllocator redefinitionBatchAllocator,
                                  RedefinitionStrategy.Listener redefinitionListener,
                                  RedefinitionStrategy.ResubmissionStrategy redefinitionResubmissionStrategy,
-                                 BootstrapInjectionStrategy bootstrapInjectionStrategy,
+                                 InjectionStrategy injectionStrategy,
                                  LambdaInstrumentationStrategy lambdaInstrumentationStrategy,
                                  DescriptionStrategy descriptionStrategy,
                                  FallbackStrategy fallbackStrategy,
+                                 ClassFileBufferStrategy classFileBufferStrategy,
                                  InstallationListener installationListener,
-                                 RawMatcher ignoredTypeMatcher,
-                                 Transformation transformation) {
+                                 RawMatcher ignoreMatcher,
+                                 List<Transformation> transformations) {
                 super(byteBuddy,
                         listener,
                         circularityLock,
                         poolStrategy,
                         typeStrategy,
                         locationStrategy,
+                        classFileLocator,
                         nativeMethodStrategy,
+                        warmupStrategy,
+                        transformerDecorator,
                         initializationStrategy,
                         redefinitionStrategy,
                         redefinitionDiscoveryStrategy,
                         redefinitionBatchAllocator,
                         redefinitionListener,
                         redefinitionResubmissionStrategy,
-                        bootstrapInjectionStrategy,
+                        injectionStrategy,
                         lambdaInstrumentationStrategy,
                         descriptionStrategy,
                         fallbackStrategy,
+                        classFileBufferStrategy,
                         installationListener,
-                        ignoredTypeMatcher,
-                        transformation);
+                        ignoreMatcher,
+                        transformations);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public WithImplicitDiscoveryStrategy with(RedefinitionStrategy.BatchAllocator redefinitionBatchAllocator) {
-
                 if (!redefinitionStrategy.isEnabled()) {
                     throw new IllegalStateException("Cannot set redefinition batch allocator when redefinition is disabled");
                 }
@@ -10248,28 +13246,36 @@ public interface AgentBuilder {
                         poolStrategy,
                         typeStrategy,
                         locationStrategy,
+                        classFileLocator,
                         nativeMethodStrategy,
+                        warmupStrategy,
+                        transformerDecorator,
                         initializationStrategy,
                         redefinitionStrategy,
                         redefinitionDiscoveryStrategy,
                         redefinitionBatchAllocator,
                         redefinitionListener,
                         redefinitionResubmissionStrategy,
-                        bootstrapInjectionStrategy,
+                        injectionStrategy,
                         lambdaInstrumentationStrategy,
                         descriptionStrategy,
                         fallbackStrategy,
+                        classFileBufferStrategy,
                         installationListener,
-                        ignoredTypeMatcher,
-                        transformation);
+                        ignoreMatcher,
+                        transformations);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public RedefinitionListenable redefineOnly(Class<?>... type) {
                 return with(new RedefinitionStrategy.DiscoveryStrategy.Explicit(type));
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public RedefinitionListenable with(RedefinitionStrategy.DiscoveryStrategy redefinitionDiscoveryStrategy) {
                 if (!redefinitionStrategy.isEnabled()) {
                     throw new IllegalStateException("Cannot set redefinition discovery strategy when redefinition is disabled");
@@ -10280,23 +13286,29 @@ public interface AgentBuilder {
                         poolStrategy,
                         typeStrategy,
                         locationStrategy,
+                        classFileLocator,
                         nativeMethodStrategy,
+                        warmupStrategy,
+                        transformerDecorator,
                         initializationStrategy,
                         redefinitionStrategy,
                         redefinitionDiscoveryStrategy,
                         redefinitionBatchAllocator,
                         redefinitionListener,
                         redefinitionResubmissionStrategy,
-                        bootstrapInjectionStrategy,
+                        injectionStrategy,
                         lambdaInstrumentationStrategy,
                         descriptionStrategy,
                         fallbackStrategy,
+                        classFileBufferStrategy,
                         installationListener,
-                        ignoredTypeMatcher,
-                        transformation);
+                        ignoreMatcher,
+                        transformations);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public RedefinitionListenable with(RedefinitionStrategy.Listener redefinitionListener) {
                 if (!redefinitionStrategy.isEnabled()) {
                     throw new IllegalStateException("Cannot set redefinition listener when redefinition is disabled");
@@ -10307,159 +13319,190 @@ public interface AgentBuilder {
                         poolStrategy,
                         typeStrategy,
                         locationStrategy,
+                        classFileLocator,
                         nativeMethodStrategy,
+                        warmupStrategy,
+                        transformerDecorator,
                         initializationStrategy,
                         redefinitionStrategy,
                         redefinitionDiscoveryStrategy,
                         redefinitionBatchAllocator,
                         new RedefinitionStrategy.Listener.Compound(this.redefinitionListener, redefinitionListener),
                         redefinitionResubmissionStrategy,
-                        bootstrapInjectionStrategy,
+                        injectionStrategy,
                         lambdaInstrumentationStrategy,
                         descriptionStrategy,
                         fallbackStrategy,
+                        classFileBufferStrategy,
                         installationListener,
-                        ignoredTypeMatcher,
-                        transformation);
+                        ignoreMatcher,
+                        transformations);
             }
 
-            @Override
-            public AgentBuilder withResubmission(RedefinitionStrategy.ResubmissionScheduler resubmissionScheduler) {
-                return withResubmission(resubmissionScheduler, any());
-            }
-
-            @Override
-            public AgentBuilder withResubmission(RedefinitionStrategy.ResubmissionScheduler resubmissionScheduler, ElementMatcher<? super Throwable> matcher) {
+            /**
+             * {@inheritDoc}
+             */
+            public WithoutResubmissionSpecification withResubmission(RedefinitionStrategy.ResubmissionScheduler resubmissionScheduler) {
                 if (!redefinitionStrategy.isEnabled()) {
-                    throw new IllegalStateException("Cannot enable redefinition resubmission when redefinition is disabled");
+                    throw new IllegalStateException("Cannot enable resubmission when redefinition is disabled");
                 }
-                return new Redefining(byteBuddy,
-                        listener,
-                        circularityLock,
-                        poolStrategy,
-                        typeStrategy,
-                        locationStrategy,
-                        nativeMethodStrategy,
-                        initializationStrategy,
-                        redefinitionStrategy,
-                        redefinitionDiscoveryStrategy,
-                        redefinitionBatchAllocator,
-                        redefinitionListener,
-                        new RedefinitionStrategy.ResubmissionStrategy.Enabled(resubmissionScheduler, matcher),
-                        bootstrapInjectionStrategy,
-                        lambdaInstrumentationStrategy,
-                        descriptionStrategy,
-                        fallbackStrategy,
-                        installationListener,
-                        ignoredTypeMatcher,
-                        transformation);
-            }
-        }
-
-        /**
-         * A helper class that describes a {@link net.bytebuddy.agent.builder.AgentBuilder.Default} after supplying
-         * a {@link net.bytebuddy.agent.builder.AgentBuilder.RawMatcher} such that one or several
-         * {@link net.bytebuddy.agent.builder.AgentBuilder.Transformer}s can be supplied.
-         */
-        protected class Transforming extends Delegator<Identified.Narrowable> implements Identified.Extendable, Identified.Narrowable {
-
-            /**
-             * The supplied raw matcher.
-             */
-            private final RawMatcher rawMatcher;
-
-            /**
-             * The supplied transformer.
-             */
-            private final Transformer transformer;
-
-            /**
-             * {@code true} if this transformer serves as a decorator.
-             */
-            private final boolean decorator;
-
-            /**
-             * Creates a new matched default agent builder.
-             *
-             * @param rawMatcher  The supplied raw matcher.
-             * @param transformer The supplied transformer.
-             * @param decorator   {@code true} if this transformer serves as a decorator.
-             */
-            protected Transforming(RawMatcher rawMatcher, Transformer transformer, boolean decorator) {
-                this.rawMatcher = rawMatcher;
-                this.transformer = transformer;
-                this.decorator = decorator;
-            }
-
-            @Override
-            protected AgentBuilder materialize() {
-                return new Default(byteBuddy,
-                        listener,
-                        circularityLock,
-                        poolStrategy,
-                        typeStrategy,
-                        locationStrategy,
-                        nativeMethodStrategy,
-                        initializationStrategy,
-                        redefinitionStrategy,
-                        redefinitionDiscoveryStrategy,
-                        redefinitionBatchAllocator,
-                        redefinitionListener,
-                        redefinitionResubmissionStrategy,
-                        bootstrapInjectionStrategy,
-                        lambdaInstrumentationStrategy,
-                        descriptionStrategy,
-                        fallbackStrategy,
-                        installationListener,
-                        ignoredTypeMatcher,
-                        new Transformation.Compound(new Transformation.Simple(rawMatcher, transformer, decorator), transformation));
-            }
-
-            @Override
-            public Identified.Extendable transform(Transformer transformer) {
-                return new Transforming(rawMatcher, new Transformer.Compound(this.transformer, transformer), decorator);
-            }
-
-            @Override
-            public AgentBuilder asDecorator() {
-                return new Transforming(rawMatcher, transformer, true);
-            }
-
-            @Override
-            public Narrowable and(RawMatcher rawMatcher) {
-                return new Transforming(new RawMatcher.Conjunction(this.rawMatcher, rawMatcher), transformer, decorator);
-            }
-
-            @Override
-            public Narrowable or(RawMatcher rawMatcher) {
-                return new Transforming(new RawMatcher.Disjunction(this.rawMatcher, rawMatcher), transformer, decorator);
+                return new WithResubmission(resubmissionScheduler,
+                        ResubmissionOnErrorMatcher.Trivial.NON_MATCHING,
+                        ResubmissionImmediateMatcher.Trivial.NON_MATCHING);
             }
 
             /**
-             * Returns the outer instance.
-             *
-             * @return The outer instance.
+             * A delegator that applies a resubmission.
              */
-            private Default getOuter() {
-                return Default.this;
-            }
+            protected class WithResubmission extends Delegator implements WithResubmissionSpecification {
 
-            @Override // HE: Remove when Lombok support for getOuter is added.
-            public boolean equals(Object other) {
-                return this == other || !(other == null || getClass() != other.getClass())
-                        && decorator == ((Transforming) other).decorator
-                        && rawMatcher.equals(((Transforming) other).rawMatcher)
-                        && transformer.equals(((Transforming) other).transformer)
-                        && Default.this.equals(((Transforming) other).getOuter());
-            }
+                /**
+                 * The resubmission scheduler to use.
+                 */
+                private final RedefinitionStrategy.ResubmissionScheduler resubmissionScheduler;
 
-            @Override // HE: Remove when Lombok support for getOuter is added.
-            public int hashCode() {
-                int result = rawMatcher.hashCode();
-                result = 31 * result + (decorator ? 1 : 0);
-                result = 31 * result + transformer.hashCode();
-                result = 31 * result + Default.this.hashCode();
-                return result;
+                /**
+                 * A matcher to determine resubmissions on errors.
+                 */
+                private final ResubmissionOnErrorMatcher resubmissionOnErrorMatcher;
+
+                /**
+                 * A matcher to determine resubmissions without errors.
+                 */
+                private final ResubmissionImmediateMatcher resubmissionImmediateMatcher;
+
+                /**
+                 * Creates a new delegator that applies resubmissions.
+                 *
+                 * @param resubmissionScheduler        The resubmission scheduler to use.
+                 * @param resubmissionOnErrorMatcher   A matcher to determine resubmissions on errors.
+                 * @param resubmissionImmediateMatcher A matcher to determine resubmissions without errors.
+                 */
+                protected WithResubmission(RedefinitionStrategy.ResubmissionScheduler resubmissionScheduler,
+                                           ResubmissionOnErrorMatcher resubmissionOnErrorMatcher,
+                                           ResubmissionImmediateMatcher resubmissionImmediateMatcher) {
+                    this.resubmissionScheduler = resubmissionScheduler;
+                    this.resubmissionOnErrorMatcher = resubmissionOnErrorMatcher;
+                    this.resubmissionImmediateMatcher = resubmissionImmediateMatcher;
+                }
+
+                @Override
+                protected AgentBuilder materialize() {
+                    return new Default(byteBuddy,
+                            listener,
+                            circularityLock,
+                            poolStrategy,
+                            typeStrategy,
+                            locationStrategy,
+                            classFileLocator,
+                            nativeMethodStrategy,
+                            warmupStrategy,
+                            transformerDecorator,
+                            initializationStrategy,
+                            redefinitionStrategy,
+                            redefinitionDiscoveryStrategy,
+                            redefinitionBatchAllocator,
+                            redefinitionListener,
+                            new RedefinitionStrategy.ResubmissionStrategy.Enabled(resubmissionScheduler, resubmissionOnErrorMatcher, resubmissionImmediateMatcher),
+                            injectionStrategy,
+                            lambdaInstrumentationStrategy,
+                            descriptionStrategy,
+                            fallbackStrategy,
+                            classFileBufferStrategy,
+                            installationListener,
+                            ignoreMatcher,
+                            transformations);
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public WithResubmissionSpecification resubmitOnError() {
+                    return resubmitOnError(ElementMatchers.<Throwable>any());
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public WithResubmissionSpecification resubmitOnError(ElementMatcher<? super Throwable> exceptionMatcher) {
+                    return resubmitOnError(exceptionMatcher, ElementMatchers.<String>any());
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public WithResubmissionSpecification resubmitOnError(ElementMatcher<? super Throwable> exceptionMatcher,
+                                                                     ElementMatcher<String> typeNameMatcher) {
+                    return resubmitOnError(exceptionMatcher, typeNameMatcher, ElementMatchers.<ClassLoader>any());
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public WithResubmissionSpecification resubmitOnError(ElementMatcher<? super Throwable> exceptionMatcher,
+                                                                     ElementMatcher<String> typeNameMatcher,
+                                                                     ElementMatcher<? super ClassLoader> classLoaderMatcher) {
+                    return resubmitOnError(exceptionMatcher, typeNameMatcher, classLoaderMatcher, ElementMatchers.<JavaModule>any());
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public WithResubmissionSpecification resubmitOnError(ElementMatcher<? super Throwable> exceptionMatcher,
+                                                                     ElementMatcher<String> typeNameMatcher,
+                                                                     ElementMatcher<? super ClassLoader> classLoaderMatcher,
+                                                                     ElementMatcher<? super JavaModule> moduleMatcher) {
+                    return resubmitOnError(new ResubmissionOnErrorMatcher.ForElementMatchers(exceptionMatcher, typeNameMatcher, classLoaderMatcher, moduleMatcher));
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public WithResubmissionSpecification resubmitOnError(ResubmissionOnErrorMatcher matcher) {
+                    return new WithResubmission(resubmissionScheduler,
+                            new ResubmissionOnErrorMatcher.Disjunction(resubmissionOnErrorMatcher, matcher),
+                            resubmissionImmediateMatcher);
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public WithResubmissionSpecification resubmitImmediate() {
+                    return resubmitImmediate(ElementMatchers.<String>any());
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public WithResubmissionSpecification resubmitImmediate(ElementMatcher<String> typeNameMatcher) {
+                    return resubmitImmediate(typeNameMatcher, ElementMatchers.<ClassLoader>any());
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public WithResubmissionSpecification resubmitImmediate(ElementMatcher<String> typeNameMatcher,
+                                                                       ElementMatcher<? super ClassLoader> classLoaderMatcher) {
+                    return resubmitImmediate(typeNameMatcher, classLoaderMatcher, ElementMatchers.<JavaModule>any());
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public WithResubmissionSpecification resubmitImmediate(ElementMatcher<String> typeNameMatcher,
+                                                                       ElementMatcher<? super ClassLoader> classLoaderMatcher,
+                                                                       ElementMatcher<? super JavaModule> moduleMatcher) {
+                    return resubmitImmediate(new ResubmissionImmediateMatcher.ForElementMatchers(typeNameMatcher, classLoaderMatcher, moduleMatcher));
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public WithResubmissionSpecification resubmitImmediate(ResubmissionImmediateMatcher matcher) {
+                    return new WithResubmission(resubmissionScheduler,
+                            resubmissionOnErrorMatcher,
+                            new ResubmissionImmediateMatcher.Disjunction(resubmissionImmediateMatcher, matcher));
+                }
             }
         }
     }

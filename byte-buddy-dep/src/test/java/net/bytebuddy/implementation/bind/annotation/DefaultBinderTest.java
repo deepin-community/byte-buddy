@@ -4,7 +4,6 @@ import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.description.type.TypeList;
 import net.bytebuddy.implementation.bind.MethodDelegationBinder;
 import net.bytebuddy.implementation.bytecode.assign.Assigner;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.Mock;
@@ -32,8 +31,8 @@ public class DefaultBinderTest extends AbstractAnnotationBinderTest<Default> {
         super(Default.class);
     }
 
-    @Override
     @Before
+    @Override
     public void setUp() throws Exception {
         super.setUp();
         when(target.getType()).thenReturn(typeDescription);
@@ -42,7 +41,6 @@ public class DefaultBinderTest extends AbstractAnnotationBinderTest<Default> {
         when(interfaces.asErasures()).thenReturn(rawInterfaces);
     }
 
-    @Override
     protected TargetMethodAnnotationDrivenBinder.ParameterBinder<Default> getSimpleBinder() {
         return Default.Binder.INSTANCE;
     }
@@ -88,12 +86,5 @@ public class DefaultBinderTest extends AbstractAnnotationBinderTest<Default> {
     public void testNonInterfaceExplicitType() throws Exception {
         doReturn(Void.class).when(annotation).proxyType();
         Default.Binder.INSTANCE.bind(annotationDescription, source, target, implementationTarget, assigner, Assigner.Typing.STATIC);
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(Default.Binder.class).apply();
-        ObjectPropertyAssertion.of(Default.Binder.TypeLocator.ForParameterType.class).apply();
-        ObjectPropertyAssertion.of(Default.Binder.TypeLocator.ForType.class).apply();
     }
 }

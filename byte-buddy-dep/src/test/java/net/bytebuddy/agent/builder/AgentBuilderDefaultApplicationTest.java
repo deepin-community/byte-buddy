@@ -3,6 +3,7 @@ package net.bytebuddy.agent.builder;
 import net.bytebuddy.agent.ByteBuddyAgent;
 import net.bytebuddy.asm.Advice;
 import net.bytebuddy.description.type.TypeDescription;
+import net.bytebuddy.dynamic.ClassFileLocator;
 import net.bytebuddy.dynamic.DynamicType;
 import net.bytebuddy.dynamic.TargetType;
 import net.bytebuddy.dynamic.loading.ByteArrayClassLoader;
@@ -17,7 +18,7 @@ import net.bytebuddy.implementation.bytecode.assign.Assigner;
 import net.bytebuddy.matcher.ElementMatchers;
 import net.bytebuddy.test.packaging.SimpleType;
 import net.bytebuddy.test.utility.AgentAttachmentRule;
-import net.bytebuddy.test.utility.ClassFileExtraction;
+import net.bytebuddy.test.utility.ClassReflectionInjectionAvailableRule;
 import net.bytebuddy.test.utility.IntegrationRule;
 import net.bytebuddy.test.utility.JavaVersionRule;
 import net.bytebuddy.utility.JavaModule;
@@ -35,16 +36,16 @@ import java.io.ObjectOutputStream;
 import java.lang.instrument.ClassFileTransformer;
 import java.lang.instrument.Instrumentation;
 import java.lang.reflect.Method;
+import java.security.ProtectionDomain;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.concurrent.Callable;
-import java.util.logging.Logger;
 
 import static net.bytebuddy.matcher.ElementMatchers.any;
 import static net.bytebuddy.matcher.ElementMatchers.*;
-import static org.hamcrest.CoreMatchers.*;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.not;
+import static org.hamcrest.CoreMatchers.*;
 import static org.hamcrest.MatcherAssert.assertThat;
 
 @RunWith(Parameterized.class)
@@ -52,19 +53,10 @@ public class AgentBuilderDefaultApplicationTest {
 
     private static final String FOO = "foo", BAR = "bar", QUX = "qux";
 
-    private static final String LAMBDA_SAMPLE_FACTORY = "net.bytebuddy.test.precompiled.LambdaSampleFactory";
+    private static final String LAMBDA_SAMPLE_FACTORY = "net.bytebuddy.test.precompiled.v8.LambdaSampleFactory";
 
     @Parameterized.Parameters
     public static Collection<Object[]> data() {
-        // CI can run out of memory if all of these tests are run. This property serves as a protection (on some profiles).
-        if (Boolean.getBoolean("net.bytebuddy.test.ci")) {
-            Logger.getLogger("net.bytebuddy").info("Running only a subset of type locator tests on CI server.");
-            return Arrays.asList(new Object[][]{
-                    {AgentBuilder.PoolStrategy.Default.EXTENDED},
-                    {AgentBuilder.PoolStrategy.Eager.EXTENDED},
-                    {AgentBuilder.PoolStrategy.ClassLoading.EXTENDED}
-            });
-        }
         return Arrays.asList(new Object[][]{
                 {AgentBuilder.PoolStrategy.Default.EXTENDED},
                 {AgentBuilder.PoolStrategy.Default.FAST},
@@ -84,6 +76,9 @@ public class AgentBuilderDefaultApplicationTest {
     @Rule
     public MethodRule integrationRule = new IntegrationRule();
 
+    @Rule
+    public MethodRule classUnsafeInjectionAvailableRule = new ClassReflectionInjectionAvailableRule();
+
     private ClassLoader classLoader;
 
     private final AgentBuilder.PoolStrategy poolStrategy;
@@ -95,7 +90,7 @@ public class AgentBuilderDefaultApplicationTest {
     @Before
     public void setUp() throws Exception {
         classLoader = new ByteArrayClassLoader.ChildFirst(getClass().getClassLoader(),
-                ClassFileExtraction.of(Foo.class,
+                ClassFileLocator.ForClassLoader.readToNames(Foo.class,
                         Bar.class,
                         Qux.class,
                         Baz.class,
@@ -106,7 +101,7 @@ public class AgentBuilderDefaultApplicationTest {
 
     private ClassLoader lambdaSamples() throws Exception {
         return new ByteArrayClassLoader(ClassLoadingStrategy.BOOTSTRAP_LOADER,
-                ClassFileExtraction.of(Class.forName(LAMBDA_SAMPLE_FACTORY)),
+                ClassFileLocator.ForClassLoader.readToNames(Class.forName(LAMBDA_SAMPLE_FACTORY)),
                 ByteArrayClassLoader.PersistenceHandler.MANIFEST);
     }
 
@@ -125,7 +120,7 @@ public class AgentBuilderDefaultApplicationTest {
             Class<?> type = classLoader.loadClass(Foo.class.getName());
             assertThat(type.getDeclaredMethod(FOO).invoke(type.getDeclaredConstructor().newInstance()), is((Object) BAR));
         } finally {
-            ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer);
+            assertThat(ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer), is(true));
         }
     }
 
@@ -143,13 +138,14 @@ public class AgentBuilderDefaultApplicationTest {
             Class<?> type = classLoader.loadClass(Bar.class.getName());
             assertThat(type.getDeclaredMethod(FOO).invoke(type.getDeclaredConstructor().newInstance()), is((Object) BAR));
         } finally {
-            ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer);
+            assertThat(ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer), is(true));
         }
     }
 
     @Test
     @AgentAttachmentRule.Enforce
     @IntegrationRule.Enforce
+    @ClassReflectionInjectionAvailableRule.Enforce
     public void testAgentSelfInitializationAuxiliaryTypeEager() throws Exception {
         assertThat(ByteBuddyAgent.install(), instanceOf(Instrumentation.class));
         ClassFileTransformer classFileTransformer = new AgentBuilder.Default()
@@ -161,13 +157,14 @@ public class AgentBuilderDefaultApplicationTest {
             Class<?> type = classLoader.loadClass(Qux.class.getName());
             assertThat(type.getDeclaredMethod(FOO).invoke(type.getDeclaredConstructor().newInstance()), is((Object) (FOO + BAR)));
         } finally {
-            ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer);
+            assertThat(ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer), is(true));
         }
     }
 
     @Test
     @AgentAttachmentRule.Enforce
     @IntegrationRule.Enforce
+    @ClassReflectionInjectionAvailableRule.Enforce
     public void testAgentSelfInitializationAuxiliaryTypeLazy() throws Exception {
         assertThat(ByteBuddyAgent.install(), instanceOf(Instrumentation.class));
         ClassFileTransformer classFileTransformer = new AgentBuilder.Default()
@@ -179,7 +176,7 @@ public class AgentBuilderDefaultApplicationTest {
             Class<?> type = classLoader.loadClass(QuxBaz.class.getName());
             assertThat(type.getDeclaredMethod(FOO).invoke(type.getDeclaredConstructor().newInstance()), is((Object) (FOO + BAR)));
         } finally {
-            ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer);
+            assertThat(ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer), is(true));
         }
     }
 
@@ -199,7 +196,7 @@ public class AgentBuilderDefaultApplicationTest {
             assertThat(type.getDeclaredMethod(FOO).invoke(type.getDeclaredConstructor().newInstance()), is((Object) BAR));
             assertThat(type.getDeclaredMethod(QUX + FOO), notNullValue(Method.class));
         } finally {
-            ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer);
+            assertThat(ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer), is(true));
         }
     }
 
@@ -223,7 +220,7 @@ public class AgentBuilderDefaultApplicationTest {
             Class<?> type = classLoader.loadClass(SimpleType.class.getName());
             assertThat(type.getDeclaredMethod(FOO).invoke(type.getDeclaredConstructor().newInstance()), is((Object) BAR));
         } finally {
-            ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer);
+            assertThat(ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer), is(true));
         }
     }
 
@@ -287,7 +284,7 @@ public class AgentBuilderDefaultApplicationTest {
             Class<?> type = classLoader.loadClass(SimpleType.class.getName());
             assertThat(type.getDeclaredMethod(FOO).invoke(type.getDeclaredConstructor().newInstance()), is((Object) BAR));
         } finally {
-            ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer);
+            assertThat(ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer), is(true));
         }
     }
 
@@ -326,7 +323,7 @@ public class AgentBuilderDefaultApplicationTest {
             Class<?> type = classLoader.loadClass(SimpleType.class.getName());
             assertThat(type.getDeclaredMethod(FOO).invoke(type.getDeclaredConstructor().newInstance()), is((Object) BAR));
         } finally {
-            ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer);
+            assertThat(ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer), is(true));
         }
     }
 
@@ -350,7 +347,7 @@ public class AgentBuilderDefaultApplicationTest {
             Class<?> type = classLoader.loadClass(SimpleType.class.getName());
             assertThat(type.getDeclaredMethod(FOO).invoke(type.getDeclaredConstructor().newInstance()), is((Object) BAR));
         } finally {
-            ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer);
+            assertThat(ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer), is(true));
         }
     }
 
@@ -414,7 +411,7 @@ public class AgentBuilderDefaultApplicationTest {
             Class<?> type = classLoader.loadClass(SimpleType.class.getName());
             assertThat(type.getDeclaredMethod(FOO).invoke(type.getDeclaredConstructor().newInstance()), is((Object) BAR));
         } finally {
-            ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer);
+            assertThat(ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer), is(true));
         }
     }
 
@@ -453,13 +450,14 @@ public class AgentBuilderDefaultApplicationTest {
             Class<?> type = classLoader.loadClass(SimpleType.class.getName());
             assertThat(type.getDeclaredMethod(FOO).invoke(type.getDeclaredConstructor().newInstance()), is((Object) BAR));
         } finally {
-            ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer);
+            assertThat(ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer), is(true));
         }
     }
 
     @Test
     @AgentAttachmentRule.Enforce
     @IntegrationRule.Enforce
+    @ClassReflectionInjectionAvailableRule.Enforce
     public void testChainedAgent() throws Exception {
         assertThat(ByteBuddyAgent.install(), instanceOf(Instrumentation.class));
         AgentBuilder agentBuilder = new AgentBuilder.Default()
@@ -472,14 +470,15 @@ public class AgentBuilderDefaultApplicationTest {
             Class<?> type = classLoader.loadClass(Qux.class.getName());
             assertThat(type.getDeclaredMethod(FOO).invoke(type.getDeclaredConstructor().newInstance()), is((Object) (FOO + BAR + BAR)));
         } finally {
-            ByteBuddyAgent.getInstrumentation().removeTransformer(firstTransformer);
-            ByteBuddyAgent.getInstrumentation().removeTransformer(secondTransformer);
+            assertThat(ByteBuddyAgent.getInstrumentation().removeTransformer(firstTransformer), is(true));
+            assertThat(ByteBuddyAgent.getInstrumentation().removeTransformer(secondTransformer), is(true));
         }
     }
 
     @Test
     @AgentAttachmentRule.Enforce
     @IntegrationRule.Enforce
+    @ClassReflectionInjectionAvailableRule.Enforce
     public void testSignatureTypesAreAvailableAfterLoad() throws Exception {
         assertThat(ByteBuddyAgent.install(), instanceOf(Instrumentation.class));
         ClassFileTransformer classFileTransformer = new AgentBuilder.Default()
@@ -492,7 +491,7 @@ public class AgentBuilderDefaultApplicationTest {
             assertThat(type.getDeclaredConstructors().length, is(2));
             assertThat(type.getDeclaredConstructor().newInstance(), notNullValue(Object.class));
         } finally {
-            ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer);
+            assertThat(ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer), is(true));
         }
     }
 
@@ -504,14 +503,14 @@ public class AgentBuilderDefaultApplicationTest {
         ClassFileTransformer classFileTransformer = new AgentBuilder.Default()
                 .with(poolStrategy)
                 .ignore(none())
+                .type(ElementMatchers.is(Foo.class), ElementMatchers.is(classLoader)).transform(new QuxAdviceTransformer())
                 .type(ElementMatchers.is(Foo.class), ElementMatchers.is(classLoader)).transform(new BarAdviceTransformer())
-                .type(ElementMatchers.is(Foo.class), ElementMatchers.is(classLoader)).transform(new QuxAdviceTransformer()).asDecorator()
                 .installOnByteBuddyAgent();
         try {
             Class<?> type = classLoader.loadClass(Foo.class.getName());
             assertThat(type.getDeclaredMethod(FOO).invoke(type.getDeclaredConstructor().newInstance()), is((Object) (FOO + BAR + QUX)));
         } finally {
-            ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer);
+            assertThat(ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer), is(true));
         }
     }
 
@@ -523,14 +522,14 @@ public class AgentBuilderDefaultApplicationTest {
         ClassFileTransformer classFileTransformer = new AgentBuilder.Default()
                 .with(poolStrategy)
                 .ignore(none())
-                .type(ElementMatchers.is(Foo.class), ElementMatchers.is(classLoader)).transform(new BarAdviceTransformer()).asDecorator()
-                .type(ElementMatchers.is(Foo.class), ElementMatchers.is(classLoader)).transform(new QuxAdviceTransformer()).asDecorator()
+                .type(ElementMatchers.is(Foo.class), ElementMatchers.is(classLoader)).transform(new QuxAdviceTransformer())
+                .type(ElementMatchers.is(Foo.class), ElementMatchers.is(classLoader)).transform(new BarAdviceTransformer())
                 .installOnByteBuddyAgent();
         try {
             Class<?> type = classLoader.loadClass(Foo.class.getName());
             assertThat(type.getDeclaredMethod(FOO).invoke(type.getDeclaredConstructor().newInstance()), is((Object) (FOO + BAR + QUX)));
         } finally {
-            ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer);
+            assertThat(ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer), is(true));
         }
     }
 
@@ -542,19 +541,19 @@ public class AgentBuilderDefaultApplicationTest {
         ClassFileTransformer classFileTransformer = new AgentBuilder.Default()
                 .with(poolStrategy)
                 .ignore(none())
-                .type(ElementMatchers.is(Foo.class), ElementMatchers.is(classLoader)).transform(new BarAdviceTransformer()).asDecorator()
-                .type(ElementMatchers.is(Foo.class), ElementMatchers.is(classLoader)).transform(new QuxAdviceTransformer())
+                .type(ElementMatchers.is(Foo.class), ElementMatchers.is(classLoader)).transform(new QuxAdviceTransformer()).asTerminalTransformation()
+                .type(ElementMatchers.is(Foo.class), ElementMatchers.is(classLoader)).transform(new BarAdviceTransformer())
                 .installOnByteBuddyAgent();
         try {
             Class<?> type = classLoader.loadClass(Foo.class.getName());
             assertThat(type.getDeclaredMethod(FOO).invoke(type.getDeclaredConstructor().newInstance()), is((Object) (FOO + QUX)));
         } finally {
-            ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer);
+            assertThat(ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer), is(true));
         }
     }
 
     @Test
-    @JavaVersionRule.Enforce(8)
+    @JavaVersionRule.Enforce(value = 8, j9 = false)
     @AgentAttachmentRule.Enforce
     @IntegrationRule.Enforce
     public void testNonCapturingLambda() throws Exception {
@@ -572,13 +571,13 @@ public class AgentBuilderDefaultApplicationTest {
             Callable<String> instance = (Callable<String>) sampleFactory.getDeclaredMethod("nonCapturing").invoke(sampleFactory.getDeclaredConstructor().newInstance());
             assertThat(instance.call(), is(BAR));
         } finally {
-            ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer);
+            assertThat(ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer), is(true));
             AgentBuilder.LambdaInstrumentationStrategy.release(classFileTransformer, ByteBuddyAgent.getInstrumentation());
         }
     }
 
     @Test
-    @JavaVersionRule.Enforce(8)
+    @JavaVersionRule.Enforce(value = 8, j9 = false)
     @AgentAttachmentRule.Enforce
     @IntegrationRule.Enforce
     public void testNonCapturingLambdaIsConstant() throws Exception {
@@ -595,13 +594,13 @@ public class AgentBuilderDefaultApplicationTest {
             assertThat(sampleFactory.getDeclaredMethod("nonCapturing").invoke(sampleFactory.getDeclaredConstructor().newInstance()),
                     sameInstance(sampleFactory.getDeclaredMethod("nonCapturing").invoke(sampleFactory.getDeclaredConstructor().newInstance())));
         } finally {
-            ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer);
+            assertThat(ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer), is(true));
             AgentBuilder.LambdaInstrumentationStrategy.release(classFileTransformer, ByteBuddyAgent.getInstrumentation());
         }
     }
 
     @Test
-    @JavaVersionRule.Enforce(8)
+    @JavaVersionRule.Enforce(value = 8, j9 = false)
     @AgentAttachmentRule.Enforce
     @IntegrationRule.Enforce
     public void testLambdaFactoryIsReset() throws Exception {
@@ -621,7 +620,7 @@ public class AgentBuilderDefaultApplicationTest {
     }
 
     @Test
-    @JavaVersionRule.Enforce(8)
+    @JavaVersionRule.Enforce(value = 8, j9 = false)
     @AgentAttachmentRule.Enforce
     @IntegrationRule.Enforce
     public void testArgumentCapturingLambda() throws Exception {
@@ -639,13 +638,13 @@ public class AgentBuilderDefaultApplicationTest {
             Callable<String> instance = (Callable<String>) sampleFactory.getDeclaredMethod("argumentCapturing", String.class).invoke(sampleFactory.getDeclaredConstructor().newInstance(), FOO);
             assertThat(instance.call(), is(BAR));
         } finally {
-            ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer);
+            assertThat(ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer), is(true));
             AgentBuilder.LambdaInstrumentationStrategy.release(classFileTransformer, ByteBuddyAgent.getInstrumentation());
         }
     }
 
     @Test
-    @JavaVersionRule.Enforce(8)
+    @JavaVersionRule.Enforce(value = 8, j9 = false)
     @AgentAttachmentRule.Enforce
     @IntegrationRule.Enforce
     public void testArgumentCapturingLambdaIsNotConstant() throws Exception {
@@ -662,13 +661,13 @@ public class AgentBuilderDefaultApplicationTest {
             assertThat(sampleFactory.getDeclaredMethod("argumentCapturing", String.class).invoke(sampleFactory.getDeclaredConstructor().newInstance(), FOO),
                     not(sameInstance(sampleFactory.getDeclaredMethod("argumentCapturing", String.class).invoke(sampleFactory.getDeclaredConstructor().newInstance(), FOO))));
         } finally {
-            ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer);
+            assertThat(ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer), is(true));
             AgentBuilder.LambdaInstrumentationStrategy.release(classFileTransformer, ByteBuddyAgent.getInstrumentation());
         }
     }
 
     @Test
-    @JavaVersionRule.Enforce(8)
+    @JavaVersionRule.Enforce(value = 8, j9 = false)
     @AgentAttachmentRule.Enforce
     @IntegrationRule.Enforce
     public void testInstanceCapturingLambda() throws Exception {
@@ -686,13 +685,13 @@ public class AgentBuilderDefaultApplicationTest {
             Callable<String> instance = (Callable<String>) sampleFactory.getDeclaredMethod("instanceCapturing").invoke(sampleFactory.getDeclaredConstructor().newInstance());
             assertThat(instance.call(), is(BAR));
         } finally {
-            ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer);
+            assertThat(ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer), is(true));
             AgentBuilder.LambdaInstrumentationStrategy.release(classFileTransformer, ByteBuddyAgent.getInstrumentation());
         }
     }
 
     @Test
-    @JavaVersionRule.Enforce(8)
+    @JavaVersionRule.Enforce(value = 8, j9 = false)
     @AgentAttachmentRule.Enforce
     @IntegrationRule.Enforce
     public void testNonCapturingLambdaWithArguments() throws Exception {
@@ -709,13 +708,13 @@ public class AgentBuilderDefaultApplicationTest {
             Object instance = sampleFactory.getDeclaredMethod("nonCapturingWithArguments").invoke(sampleFactory.getDeclaredConstructor().newInstance());
             assertThat(instance.getClass().getMethod("apply", Object.class).invoke(instance, FOO), is((Object) BAR));
         } finally {
-            ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer);
+            assertThat(ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer), is(true));
             AgentBuilder.LambdaInstrumentationStrategy.release(classFileTransformer, ByteBuddyAgent.getInstrumentation());
         }
     }
 
     @Test
-    @JavaVersionRule.Enforce(8)
+    @JavaVersionRule.Enforce(value = 8, j9 = false)
     @AgentAttachmentRule.Enforce
     @IntegrationRule.Enforce
     public void testCapturingLambdaWithArguments() throws Exception {
@@ -732,13 +731,13 @@ public class AgentBuilderDefaultApplicationTest {
             Object instance = sampleFactory.getDeclaredMethod("capturingWithArguments", String.class).invoke(sampleFactory.getDeclaredConstructor().newInstance(), FOO);
             assertThat(instance.getClass().getMethod("apply", Object.class).invoke(instance, FOO), is((Object) BAR));
         } finally {
-            ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer);
+            assertThat(ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer), is(true));
             AgentBuilder.LambdaInstrumentationStrategy.release(classFileTransformer, ByteBuddyAgent.getInstrumentation());
         }
     }
 
     @Test
-    @JavaVersionRule.Enforce(8)
+    @JavaVersionRule.Enforce(value = 8, j9 = false)
     @AgentAttachmentRule.Enforce
     @IntegrationRule.Enforce
     public void testSerializableLambda() throws Exception {
@@ -764,13 +763,13 @@ public class AgentBuilderDefaultApplicationTest {
             assertThat(deserialized.call(), is(FOO));
             objectInputStream.close();
         } finally {
-            ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer);
+            assertThat(ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer), is(true));
             AgentBuilder.LambdaInstrumentationStrategy.release(classFileTransformer, ByteBuddyAgent.getInstrumentation());
         }
     }
 
     @Test
-    @JavaVersionRule.Enforce(8)
+    @JavaVersionRule.Enforce(value = 8, j9 = false)
     @AgentAttachmentRule.Enforce
     @IntegrationRule.Enforce
     public void testReturnTypeTransformingLambda() throws Exception {
@@ -787,13 +786,13 @@ public class AgentBuilderDefaultApplicationTest {
             Runnable instance = (Runnable) sampleFactory.getDeclaredMethod("returnTypeTransforming").invoke(sampleFactory.getDeclaredConstructor().newInstance());
             instance.run();
         } finally {
-            ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer);
+            assertThat(ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer), is(true));
             AgentBuilder.LambdaInstrumentationStrategy.release(classFileTransformer, ByteBuddyAgent.getInstrumentation());
         }
     }
 
     @Test
-    @JavaVersionRule.Enforce(8)
+    @JavaVersionRule.Enforce(value = 8, j9 = false)
     @AgentAttachmentRule.Enforce
     @IntegrationRule.Enforce
     public void testInstanceReturningLambda() throws Exception {
@@ -810,7 +809,7 @@ public class AgentBuilderDefaultApplicationTest {
             Callable<?> instance = (Callable<?>) sampleFactory.getDeclaredMethod("instanceReturning").invoke(sampleFactory.getDeclaredConstructor().newInstance());
             assertThat(instance.call(), notNullValue(Object.class));
         } finally {
-            ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer);
+            assertThat(ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer), is(true));
             AgentBuilder.LambdaInstrumentationStrategy.release(classFileTransformer, ByteBuddyAgent.getInstrumentation());
         }
     }
@@ -828,24 +827,24 @@ public class AgentBuilderDefaultApplicationTest {
                         .with(AgentBuilder.LocationStrategy.ForClassLoader.STRONG)
                         .include(BarAdvice.class.getClassLoader())
                         .with(Assigner.DEFAULT)
-                        .withExceptionHandler(Removal.SINGLE)
+                        .withExceptionHandler(new Advice.ExceptionHandler.Simple(Removal.SINGLE))
                         .advice(named(FOO), BarAdvice.class.getName()))
                 .installOnByteBuddyAgent();
         try {
             Class<?> type = classLoader.loadClass(Foo.class.getName());
             assertThat(type.getDeclaredMethod(FOO).invoke(type.getDeclaredConstructor().newInstance()), is((Object) (FOO + BAR)));
         } finally {
-            ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer);
+            assertThat(ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer), is(true));
         }
     }
 
     private static class FooTransformer implements AgentBuilder.Transformer {
 
-        @Override
         public DynamicType.Builder<?> transform(DynamicType.Builder<?> builder,
                                                 TypeDescription typeDescription,
                                                 ClassLoader classLoader,
-                                                JavaModule module) {
+                                                JavaModule module,
+                                                ProtectionDomain protectionDomain) {
             return builder.method(named(FOO)).intercept(FixedValue.value(BAR));
         }
     }
@@ -866,11 +865,11 @@ public class AgentBuilderDefaultApplicationTest {
 
     public static class BarTransformer implements AgentBuilder.Transformer {
 
-        @Override
         public DynamicType.Builder<?> transform(DynamicType.Builder<?> builder,
                                                 TypeDescription typeDescription,
                                                 ClassLoader classLoader,
-                                                JavaModule module) {
+                                                JavaModule module,
+                                                ProtectionDomain protectionDomain) {
             try {
                 return builder.method(named(FOO)).intercept(MethodDelegation.to(new Interceptor()));
             } catch (Exception exception) {
@@ -895,11 +894,11 @@ public class AgentBuilderDefaultApplicationTest {
 
     public static class QuxTransformer implements AgentBuilder.Transformer {
 
-        @Override
         public DynamicType.Builder<?> transform(DynamicType.Builder<?> builder,
                                                 TypeDescription typeDescription,
                                                 ClassLoader classLoader,
-                                                JavaModule module) {
+                                                JavaModule module,
+                                                ProtectionDomain protectionDomain) {
             try {
                 return builder.method(named(FOO)).intercept(MethodDelegation.to(new Interceptor()));
             } catch (Exception exception) {
@@ -924,11 +923,11 @@ public class AgentBuilderDefaultApplicationTest {
 
     public static class QuxBazTransformer implements AgentBuilder.Transformer {
 
-        @Override
         public DynamicType.Builder<?> transform(DynamicType.Builder<?> builder,
                                                 TypeDescription typeDescription,
                                                 ClassLoader classLoader,
-                                                JavaModule module) {
+                                                JavaModule module,
+                                                ProtectionDomain protectionDomain) {
             try {
                 return builder.method(named(FOO)).intercept(MethodDelegation.to(new Interceptor()));
             } catch (Exception exception) {
@@ -954,11 +953,11 @@ public class AgentBuilderDefaultApplicationTest {
 
     public static class ConstructorTransformer implements AgentBuilder.Transformer {
 
-        @Override
         public DynamicType.Builder<?> transform(DynamicType.Builder<?> builder,
                                                 TypeDescription typeDescription,
                                                 ClassLoader classLoader,
-                                                JavaModule module) {
+                                                JavaModule module,
+                                                ProtectionDomain protectionDomain) {
             return builder.constructor(ElementMatchers.any()).intercept(SuperMethodCall.INSTANCE);
         }
     }
@@ -971,33 +970,33 @@ public class AgentBuilderDefaultApplicationTest {
             this.methodName = methodName;
         }
 
-        @Override
         public DynamicType.Builder<?> transform(DynamicType.Builder<?> builder,
                                                 TypeDescription typeDescription,
                                                 ClassLoader classLoader,
-                                                JavaModule module) {
+                                                JavaModule module,
+                                                ProtectionDomain protectionDomain) {
             return builder.method(named(methodName)).intercept(FixedValue.value(BAR));
         }
     }
 
     public static class BarAdviceTransformer implements AgentBuilder.Transformer {
 
-        @Override
         public DynamicType.Builder<?> transform(DynamicType.Builder<?> builder,
                                                 TypeDescription typeDescription,
                                                 ClassLoader classLoader,
-                                                JavaModule module) {
+                                                JavaModule module,
+                                                ProtectionDomain protectionDomain) {
             return builder.visit(Advice.to(BarAdvice.class).on(named(FOO)));
         }
     }
 
     public static class QuxAdviceTransformer implements AgentBuilder.Transformer {
 
-        @Override
         public DynamicType.Builder<?> transform(DynamicType.Builder<?> builder,
                                                 TypeDescription typeDescription,
                                                 ClassLoader classLoader,
-                                                JavaModule module) {
+                                                JavaModule module,
+                                                ProtectionDomain protectionDomain) {
             return builder.visit(Advice.to(QuxAdvice.class).on(named(FOO)));
         }
     }

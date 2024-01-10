@@ -8,7 +8,6 @@ import net.bytebuddy.description.method.ParameterList;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.implementation.bind.MethodDelegationBinder;
 import net.bytebuddy.implementation.bytecode.assign.Assigner;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.Mock;
@@ -35,8 +34,8 @@ public class FieldValueBinderTest extends AbstractAnnotationBinderTest<FieldValu
         super(FieldValue.class);
     }
 
-    @Override
     @Before
+    @Override
     public void setUp() throws Exception {
         super.setUp();
         when(fieldDescription.asDefined()).thenReturn(fieldDescription);
@@ -45,7 +44,6 @@ public class FieldValueBinderTest extends AbstractAnnotationBinderTest<FieldValu
         when(fieldType.asErasure()).thenReturn(rawFieldType);
     }
 
-    @Override
     protected TargetMethodAnnotationDrivenBinder.ParameterBinder<FieldValue> getSimpleBinder() {
         return FieldValue.Binder.INSTANCE;
     }
@@ -176,7 +174,7 @@ public class FieldValueBinderTest extends AbstractAnnotationBinderTest<FieldValu
         when(annotation.value()).thenReturn(FOO);
         when(target.getDeclaredAnnotations()).thenReturn(new AnnotationList.Empty());
         when(stackManipulation.isValid()).thenReturn(true);
-        when(instrumentedType.isAssignableTo(new TypeDescription.ForLoadedType(Foo.class))).thenReturn(true);
+        when(instrumentedType.isAssignableTo(TypeDescription.ForLoadedType.of(Foo.class))).thenReturn(true);
         MethodDelegationBinder.ParameterBinding<?> binding = FieldValue.Binder.INSTANCE.bind(annotationDescription,
                 source,
                 target,
@@ -192,7 +190,7 @@ public class FieldValueBinderTest extends AbstractAnnotationBinderTest<FieldValu
         when(annotation.value()).thenReturn(FOO);
         when(target.getDeclaredAnnotations()).thenReturn(new AnnotationList.Empty());
         when(stackManipulation.isValid()).thenReturn(true);
-        when(instrumentedType.isAssignableTo(new TypeDescription.ForLoadedType(Foo.class))).thenReturn(false);
+        when(instrumentedType.isAssignableTo(TypeDescription.ForLoadedType.of(Foo.class))).thenReturn(false);
         MethodDelegationBinder.ParameterBinding<?> binding = FieldValue.Binder.INSTANCE.bind(annotationDescription,
                 source,
                 target,
@@ -208,7 +206,7 @@ public class FieldValueBinderTest extends AbstractAnnotationBinderTest<FieldValu
         when(annotation.value()).thenReturn(FOO);
         when(target.getDeclaredAnnotations()).thenReturn(new AnnotationList.Empty());
         when(stackManipulation.isValid()).thenReturn(true);
-        when(instrumentedType.isAssignableTo(new TypeDescription.ForLoadedType(Foo.class))).thenReturn(false);
+        when(instrumentedType.isAssignableTo(TypeDescription.ForLoadedType.of(Foo.class))).thenReturn(false);
         MethodDelegationBinder.ParameterBinding<?> binding = FieldValue.Binder.INSTANCE.bind(annotationDescription,
                 source,
                 target,
@@ -225,7 +223,7 @@ public class FieldValueBinderTest extends AbstractAnnotationBinderTest<FieldValu
         when(target.getDeclaredAnnotations()).thenReturn(new AnnotationList.Empty());
         when(source.isStatic()).thenReturn(true);
         when(stackManipulation.isValid()).thenReturn(true);
-        when(instrumentedType.isAssignableTo(new TypeDescription.ForLoadedType(Foo.class))).thenReturn(true);
+        when(instrumentedType.isAssignableTo(TypeDescription.ForLoadedType.of(Foo.class))).thenReturn(true);
         MethodDelegationBinder.ParameterBinding<?> binding = FieldValue.Binder.INSTANCE.bind(annotationDescription,
                 source,
                 target,
@@ -242,7 +240,7 @@ public class FieldValueBinderTest extends AbstractAnnotationBinderTest<FieldValu
         when(target.getDeclaredAnnotations()).thenReturn(new AnnotationList.Empty());
         when(source.isStatic()).thenReturn(true);
         when(stackManipulation.isValid()).thenReturn(true);
-        when(instrumentedType.isAssignableTo(new TypeDescription.ForLoadedType(FooStatic.class))).thenReturn(true);
+        when(instrumentedType.isAssignableTo(TypeDescription.ForLoadedType.of(FooStatic.class))).thenReturn(true);
         MethodDelegationBinder.ParameterBinding<?> binding = FieldValue.Binder.INSTANCE.bind(annotationDescription,
                 source,
                 target,
@@ -258,7 +256,7 @@ public class FieldValueBinderTest extends AbstractAnnotationBinderTest<FieldValu
         when(annotation.value()).thenReturn(BAR);
         when(target.getDeclaredAnnotations()).thenReturn(new AnnotationList.Empty());
         when(stackManipulation.isValid()).thenReturn(true);
-        when(instrumentedType.isAssignableTo(new TypeDescription.ForLoadedType(Foo.class))).thenReturn(true);
+        when(instrumentedType.isAssignableTo(TypeDescription.ForLoadedType.of(Foo.class))).thenReturn(true);
         MethodDelegationBinder.ParameterBinding<?> binding = FieldValue.Binder.INSTANCE.bind(annotationDescription,
                 source,
                 target,
@@ -279,7 +277,7 @@ public class FieldValueBinderTest extends AbstractAnnotationBinderTest<FieldValu
         when(stackManipulation.isValid()).thenReturn(true);
         when(source.getInternalName()).thenReturn("getFoo");
         when(source.getActualName()).thenReturn("getFoo");
-        when(source.getReturnType()).thenReturn(TypeDescription.Generic.OBJECT);
+        when(source.getReturnType()).thenReturn(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class));
         when(source.getParameters()).thenReturn(new ParameterList.Empty<ParameterDescription.InDefinedShape>());
         MethodDelegationBinder.ParameterBinding<?> binding = FieldValue.Binder.INSTANCE.bind(annotationDescription,
                 source,
@@ -301,7 +299,7 @@ public class FieldValueBinderTest extends AbstractAnnotationBinderTest<FieldValu
         when(stackManipulation.isValid()).thenReturn(true);
         when(source.getInternalName()).thenReturn("isFoo");
         when(source.getActualName()).thenReturn("isFoo");
-        when(source.getReturnType()).thenReturn(new TypeDescription.Generic.OfNonGenericType.ForLoadedType(boolean.class));
+        when(source.getReturnType()).thenReturn(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(boolean.class));
         when(source.getParameters()).thenReturn(new ParameterList.Empty<ParameterDescription.InDefinedShape>());
         MethodDelegationBinder.ParameterBinding<?> binding = FieldValue.Binder.INSTANCE.bind(annotationDescription,
                 source,
@@ -323,8 +321,8 @@ public class FieldValueBinderTest extends AbstractAnnotationBinderTest<FieldValu
         when(stackManipulation.isValid()).thenReturn(true);
         when(source.getInternalName()).thenReturn("setFoo");
         when(source.getActualName()).thenReturn("setFoo");
-        when(source.getReturnType()).thenReturn(TypeDescription.Generic.VOID);
-        when(source.getParameters()).thenReturn(new ParameterList.Explicit.ForTypes(source, TypeDescription.Generic.OBJECT));
+        when(source.getReturnType()).thenReturn(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(void.class));
+        when(source.getParameters()).thenReturn(new ParameterList.Explicit.ForTypes(source, TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class)));
         MethodDelegationBinder.ParameterBinding<?> binding = FieldValue.Binder.INSTANCE.bind(annotationDescription,
                 source,
                 target,
@@ -332,11 +330,6 @@ public class FieldValueBinderTest extends AbstractAnnotationBinderTest<FieldValu
                 assigner,
                 Assigner.Typing.STATIC);
         assertThat(binding.isValid(), is(true));
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(FieldValue.Binder.class).apply();
     }
 
     public static class Foo {

@@ -1,6 +1,21 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.asm;
 
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.field.FieldDescription;
 import net.bytebuddy.description.field.FieldList;
 import net.bytebuddy.description.method.MethodDescription;
@@ -10,12 +25,16 @@ import net.bytebuddy.implementation.Implementation;
 import net.bytebuddy.matcher.ElementMatcher;
 import net.bytebuddy.pool.TypePool;
 import net.bytebuddy.utility.CompoundList;
+import net.bytebuddy.utility.OpenedClassReader;
+import net.bytebuddy.utility.nullability.MaybeNull;
 import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.FieldVisitor;
 import org.objectweb.asm.MethodVisitor;
-import org.objectweb.asm.Opcodes;
 
 import java.util.*;
+
+import static net.bytebuddy.matcher.ElementMatchers.isConstructor;
+import static net.bytebuddy.matcher.ElementMatchers.isMethod;
 
 /**
  * A class visitor wrapper is used in order to register an intermediate ASM {@link org.objectweb.asm.ClassVisitor} which
@@ -82,17 +101,23 @@ public interface AsmVisitorWrapper {
          */
         INSTANCE;
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public int mergeWriter(int flags) {
             return flags;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public int mergeReader(int flags) {
             return flags;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public ClassVisitor wrap(TypeDescription instrumentedType,
                                  ClassVisitor classVisitor,
                                  Implementation.Context implementationContext,
@@ -110,12 +135,16 @@ public interface AsmVisitorWrapper {
      */
     abstract class AbstractBase implements AsmVisitorWrapper {
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public int mergeWriter(int flags) {
             return flags;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public int mergeReader(int flags) {
             return flags;
         }
@@ -124,7 +153,7 @@ public interface AsmVisitorWrapper {
     /**
      * An ASM visitor wrapper that allows to wrap declared fields of the instrumented type with a {@link FieldVisitorWrapper}.
      */
-    @EqualsAndHashCode(callSuper = false)
+    @HashCodeAndEqualsPlugin.Enhance
     class ForDeclaredFields extends AbstractBase {
 
         /**
@@ -172,7 +201,9 @@ public interface AsmVisitorWrapper {
             return new ForDeclaredFields(CompoundList.of(entries, new Entry(matcher, fieldVisitorWrappers)));
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public ClassVisitor wrap(TypeDescription instrumentedType,
                                  ClassVisitor classVisitor,
                                  Implementation.Context implementationContext,
@@ -207,7 +238,7 @@ public interface AsmVisitorWrapper {
         /**
          * An entry describing a field visitor wrapper paired with a matcher for fields to be wrapped.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         protected static class Entry implements ElementMatcher<FieldDescription.InDefinedShape>, FieldVisitorWrapper {
 
             /**
@@ -231,12 +262,16 @@ public interface AsmVisitorWrapper {
                 this.fieldVisitorWrappers = fieldVisitorWrappers;
             }
 
-            @Override
-            public boolean matches(FieldDescription.InDefinedShape target) {
-                return target != null && matcher.matches(target);
+            /**
+             * {@inheritDoc}
+             */
+            public boolean matches(@MaybeNull FieldDescription.InDefinedShape target) {
+                return matcher.matches(target);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public FieldVisitor wrap(TypeDescription instrumentedType, FieldDescription.InDefinedShape fieldDescription, FieldVisitor fieldVisitor) {
                 for (FieldVisitorWrapper fieldVisitorWrapper : fieldVisitorWrappers) {
                     fieldVisitor = fieldVisitorWrapper.wrap(instrumentedType, fieldDescription, fieldVisitor);
@@ -268,14 +303,15 @@ public interface AsmVisitorWrapper {
              * @param fields           The instrumented type's declared fields.
              */
             protected DispatchingVisitor(ClassVisitor classVisitor, TypeDescription instrumentedType, Map<String, FieldDescription.InDefinedShape> fields) {
-                super(Opcodes.ASM6, classVisitor);
+                super(OpenedClassReader.ASM_API, classVisitor);
                 this.instrumentedType = instrumentedType;
                 this.fields = fields;
             }
 
             @Override
-            public FieldVisitor visitField(int modifiers, String internalName, String descriptor, String signature, Object defaultValue) {
-                FieldVisitor fieldVisitor = super.visitField(modifiers, internalName, descriptor, signature, defaultValue);
+            @MaybeNull
+            public FieldVisitor visitField(int modifiers, String internalName, String descriptor, @MaybeNull String signature, @MaybeNull Object value) {
+                FieldVisitor fieldVisitor = super.visitField(modifiers, internalName, descriptor, signature, value);
                 FieldDescription.InDefinedShape fieldDescription = fields.get(internalName + descriptor);
                 if (fieldVisitor != null && fieldDescription != null) {
                     for (Entry entry : entries) {
@@ -297,7 +333,7 @@ public interface AsmVisitorWrapper {
      * Note: Inherited methods are <b>not</b> matched by this visitor, even if they are intercepted by a normal interception.
      * </p>
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class ForDeclaredMethods implements AsmVisitorWrapper {
 
         /**
@@ -336,8 +372,8 @@ public interface AsmVisitorWrapper {
         }
 
         /**
-         * Defines a new method visitor wrapper to be applied if the given method matcher is matched. Previously defined
-         * entries are applied before the given matcher is applied.
+         * Defines a new method visitor wrapper to be applied on any method if the given method matcher is matched.
+         * Previously defined entries are applied before the given matcher is applied.
          *
          * @param matcher              The matcher to identify methods to be wrapped.
          * @param methodVisitorWrapper The method visitor wrapper to be applied if the given matcher is matched.
@@ -348,14 +384,62 @@ public interface AsmVisitorWrapper {
         }
 
         /**
-         * Defines a new method visitor wrapper to be applied if the given method matcher is matched. Previously defined
-         * entries are applied before the given matcher is applied.
+         * Defines a new method visitor wrapper to be applied on any method if the given method matcher is matched.
+         * Previously defined entries are applied before the given matcher is applied.
          *
          * @param matcher               The matcher to identify methods to be wrapped.
          * @param methodVisitorWrappers The method visitor wrapper to be applied if the given matcher is matched.
          * @return A new ASM visitor wrapper that applied the given method visitor wrapper if the supplied matcher is matched.
          */
         public ForDeclaredMethods method(ElementMatcher<? super MethodDescription> matcher, List<? extends MethodVisitorWrapper> methodVisitorWrappers) {
+            return invokable(isMethod().and(matcher), methodVisitorWrappers);
+        }
+
+        /**
+         * Defines a new method visitor wrapper to be applied on any constructor if the given method matcher is matched.
+         * Previously defined entries are applied before the given matcher is applied.
+         *
+         * @param matcher              The matcher to identify constructors to be wrapped.
+         * @param methodVisitorWrapper The method visitor wrapper to be applied if the given matcher is matched.
+         * @return A new ASM visitor wrapper that applied the given method visitor wrapper if the supplied matcher is matched.
+         */
+        public ForDeclaredMethods constructor(ElementMatcher<? super MethodDescription> matcher, MethodVisitorWrapper... methodVisitorWrapper) {
+            return constructor(matcher, Arrays.asList(methodVisitorWrapper));
+        }
+
+        /**
+         * Defines a new method visitor wrapper to be applied on any constructor if the given method matcher is matched.
+         * Previously defined entries are applied before the given matcher is applied.
+         *
+         * @param matcher               The matcher to identify constructors to be wrapped.
+         * @param methodVisitorWrappers The method visitor wrapper to be applied if the given matcher is matched.
+         * @return A new ASM visitor wrapper that applied the given method visitor wrapper if the supplied matcher is matched.
+         */
+        public ForDeclaredMethods constructor(ElementMatcher<? super MethodDescription> matcher, List<? extends MethodVisitorWrapper> methodVisitorWrappers) {
+            return invokable(isConstructor().and(matcher), methodVisitorWrappers);
+        }
+
+        /**
+         * Defines a new method visitor wrapper to be applied on any method or constructor if the given method matcher is matched.
+         * Previously defined entries are applied before the given matcher is applied.
+         *
+         * @param matcher              The matcher to identify methods or constructors to be wrapped.
+         * @param methodVisitorWrapper The method visitor wrapper to be applied if the given matcher is matched.
+         * @return A new ASM visitor wrapper that applied the given method visitor wrapper if the supplied matcher is matched.
+         */
+        public ForDeclaredMethods invokable(ElementMatcher<? super MethodDescription> matcher, MethodVisitorWrapper... methodVisitorWrapper) {
+            return invokable(matcher, Arrays.asList(methodVisitorWrapper));
+        }
+
+        /**
+         * Defines a new method visitor wrapper to be applied on any method or constructor if the given method matcher is matched.
+         * Previously defined entries are applied before the given matcher is applied.
+         *
+         * @param matcher               The matcher to identify methods or constructors to be wrapped.
+         * @param methodVisitorWrappers The method visitor wrapper to be applied if the given matcher is matched.
+         * @return A new ASM visitor wrapper that applied the given method visitor wrapper if the supplied matcher is matched.
+         */
+        public ForDeclaredMethods invokable(ElementMatcher<? super MethodDescription> matcher, List<? extends MethodVisitorWrapper> methodVisitorWrappers) {
             return new ForDeclaredMethods(CompoundList.of(entries, new Entry(matcher, methodVisitorWrappers)), writerFlags, readerFlags);
         }
 
@@ -379,17 +463,23 @@ public interface AsmVisitorWrapper {
             return new ForDeclaredMethods(entries, writerFlags, readerFlags | flags);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public int mergeWriter(int flags) {
             return flags | writerFlags;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public int mergeReader(int flags) {
             return flags | readerFlags;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public ClassVisitor wrap(TypeDescription instrumentedType,
                                  ClassVisitor classVisitor,
                                  Implementation.Context implementationContext,
@@ -440,7 +530,7 @@ public interface AsmVisitorWrapper {
         /**
          * An entry describing a method visitor wrapper paired with a matcher for fields to be wrapped.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         protected static class Entry implements ElementMatcher<MethodDescription>, MethodVisitorWrapper {
 
             /**
@@ -464,12 +554,16 @@ public interface AsmVisitorWrapper {
                 this.methodVisitorWrappers = methodVisitorWrappers;
             }
 
-            @Override
-            public boolean matches(MethodDescription target) {
-                return target != null && matcher.matches(target);
+            /**
+             * {@inheritDoc}
+             */
+            public boolean matches(@MaybeNull MethodDescription target) {
+                return matcher.matches(target);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public MethodVisitor wrap(TypeDescription instrumentedType,
                                       MethodDescription instrumentedMethod,
                                       MethodVisitor methodVisitor,
@@ -543,7 +637,7 @@ public interface AsmVisitorWrapper {
                                          Map<String, MethodDescription> methods,
                                          int writerFlags,
                                          int readerFlags) {
-                super(Opcodes.ASM6, classVisitor);
+                super(OpenedClassReader.ASM_API, classVisitor);
                 this.instrumentedType = instrumentedType;
                 this.implementationContext = implementationContext;
                 this.typePool = typePool;
@@ -553,7 +647,8 @@ public interface AsmVisitorWrapper {
             }
 
             @Override
-            public MethodVisitor visitMethod(int modifiers, String internalName, String descriptor, String signature, String[] exceptions) {
+            @MaybeNull
+            public MethodVisitor visitMethod(int modifiers, String internalName, String descriptor, @MaybeNull String signature, @MaybeNull String[] exceptions) {
                 MethodVisitor methodVisitor = super.visitMethod(modifiers, internalName, descriptor, signature, exceptions);
                 MethodDescription methodDescription = methods.get(internalName + descriptor);
                 if (methodVisitor != null && methodDescription != null) {
@@ -577,7 +672,7 @@ public interface AsmVisitorWrapper {
     /**
      * An ordered, immutable chain of {@link AsmVisitorWrapper}s.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class Compound implements AsmVisitorWrapper {
 
         /**
@@ -616,7 +711,9 @@ public interface AsmVisitorWrapper {
             }
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public int mergeWriter(int flags) {
             for (AsmVisitorWrapper asmVisitorWrapper : asmVisitorWrappers) {
                 flags = asmVisitorWrapper.mergeWriter(flags);
@@ -624,7 +721,9 @@ public interface AsmVisitorWrapper {
             return flags;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public int mergeReader(int flags) {
             for (AsmVisitorWrapper asmVisitorWrapper : asmVisitorWrappers) {
                 flags = asmVisitorWrapper.mergeReader(flags);
@@ -632,7 +731,9 @@ public interface AsmVisitorWrapper {
             return flags;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public ClassVisitor wrap(TypeDescription instrumentedType,
                                  ClassVisitor classVisitor,
                                  Implementation.Context implementationContext,

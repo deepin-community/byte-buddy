@@ -1,7 +1,22 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.matcher;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 
 import java.util.Collection;
 
@@ -10,8 +25,8 @@ import java.util.Collection;
  *
  * @param <T> The type of the matched entity.
  */
-@EqualsAndHashCode(callSuper = false)
-public class CollectionSizeMatcher<T extends Iterable<?>> extends ElementMatcher.Junction.AbstractBase<T> {
+@HashCodeAndEqualsPlugin.Enhance
+public class CollectionSizeMatcher<T extends Iterable<?>> extends ElementMatcher.Junction.ForNonNullValues<T> {
 
     /**
      * The expected size of the matched collection.
@@ -27,9 +42,11 @@ public class CollectionSizeMatcher<T extends Iterable<?>> extends ElementMatcher
         this.size = size;
     }
 
-    @Override
-    @SuppressFBWarnings(value = "DLS_DEAD_LOCAL_STORE", justification = "Iteration required to count size of an iterable")
-    public boolean matches(T target) {
+    /**
+     * {@inheritDoc}
+     */
+    @SuppressFBWarnings(value = "DLS_DEAD_LOCAL_STORE", justification = "Iteration required to count size of an iterable.")
+    protected boolean doMatch(T target) {
         if (target instanceof Collection) {
             return ((Collection<?>) target).size() == size;
         } else {

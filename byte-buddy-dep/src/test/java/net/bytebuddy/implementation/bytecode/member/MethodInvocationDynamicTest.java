@@ -6,12 +6,14 @@ import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.implementation.Implementation;
 import net.bytebuddy.implementation.bytecode.StackManipulation;
 import net.bytebuddy.implementation.bytecode.StackSize;
-import net.bytebuddy.test.utility.MockitoRule;
+import net.bytebuddy.implementation.bytecode.constant.JavaConstantValue;
+import net.bytebuddy.utility.JavaConstant;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 import org.objectweb.asm.Handle;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
@@ -29,7 +31,7 @@ public class MethodInvocationDynamicTest {
     private static final String FOO = "foo", BAR = "bar", QUX = "qux", BAZ = "baz";
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     @Mock
     private MethodDescription.InDefinedShape methodDescription;
@@ -44,7 +46,10 @@ public class MethodInvocationDynamicTest {
     private MethodVisitor methodVisitor;
 
     @Mock
-    private Object argument;
+    private JavaConstant argument;
+
+    @Mock
+    private Object provided;
 
     @Before
     public void setUp() throws Exception {
@@ -60,11 +65,12 @@ public class MethodInvocationDynamicTest {
         when(methodDescription.getDescriptor()).thenReturn(BAZ);
         when(declaringType.getInternalName()).thenReturn(BAR);
         when(methodDescription.getParameters()).thenReturn(new ParameterList.Explicit.ForTypes(methodDescription, firstType, secondType));
+        when(argument.accept(JavaConstantValue.Visitor.INSTANCE)).thenReturn(provided);
     }
 
     @Test
     public void testDynamicStaticBootstrap() throws Exception {
-        when(methodDescription.isBootstrap()).thenReturn(true);
+        when(methodDescription.isInvokeBootstrap()).thenReturn(true);
         when(methodDescription.isStatic()).thenReturn(true);
         StackManipulation stackManipulation = MethodInvocation.invoke(methodDescription)
                 .dynamic(FOO, returnType, Arrays.asList(firstType, secondType), Collections.singletonList(argument));
@@ -72,12 +78,12 @@ public class MethodInvocationDynamicTest {
         StackManipulation.Size size = stackManipulation.apply(methodVisitor, implementationContext);
         assertThat(size.getSizeImpact(), is(0));
         assertThat(size.getMaximalSize(), is(0));
-        verify(methodVisitor).visitInvokeDynamicInsn(FOO, "(" + FOO + BAR + ")" + QUX, new Handle(Opcodes.H_INVOKESTATIC, BAR, QUX, BAZ, false), argument);
+        verify(methodVisitor).visitInvokeDynamicInsn(FOO, "(" + FOO + BAR + ")" + QUX, new Handle(Opcodes.H_INVOKESTATIC, BAR, QUX, BAZ, false), provided);
     }
 
     @Test
     public void testDynamicConstructorBootstrap() throws Exception {
-        when(methodDescription.isBootstrap()).thenReturn(true);
+        when(methodDescription.isInvokeBootstrap()).thenReturn(true);
         when(methodDescription.isConstructor()).thenReturn(true);
         StackManipulation stackManipulation = MethodInvocation.invoke(methodDescription)
                 .dynamic(FOO, returnType, Arrays.asList(firstType, secondType), Collections.singletonList(argument));
@@ -85,7 +91,7 @@ public class MethodInvocationDynamicTest {
         StackManipulation.Size size = stackManipulation.apply(methodVisitor, implementationContext);
         assertThat(size.getSizeImpact(), is(0));
         assertThat(size.getMaximalSize(), is(0));
-        verify(methodVisitor).visitInvokeDynamicInsn(FOO, "(" + FOO + BAR + ")" + QUX, new Handle(Opcodes.H_NEWINVOKESPECIAL, BAR, QUX, BAZ, false), argument);
+        verify(methodVisitor).visitInvokeDynamicInsn(FOO, "(" + FOO + BAR + ")" + QUX, new Handle(Opcodes.H_NEWINVOKESPECIAL, BAR, QUX, BAZ, false), provided);
     }
 
     @Test

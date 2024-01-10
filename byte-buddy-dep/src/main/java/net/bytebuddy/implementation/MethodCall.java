@@ -1,10 +1,26 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation;
 
-import lombok.EqualsAndHashCode;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.enumeration.EnumerationDescription;
 import net.bytebuddy.description.field.FieldDescription;
+import net.bytebuddy.description.field.FieldList;
 import net.bytebuddy.description.method.MethodDescription;
-import net.bytebuddy.description.method.MethodList;
 import net.bytebuddy.description.method.ParameterDescription;
 import net.bytebuddy.description.method.ParameterList;
 import net.bytebuddy.description.type.TypeDefinition;
@@ -22,37 +38,40 @@ import net.bytebuddy.implementation.bytecode.member.MethodInvocation;
 import net.bytebuddy.implementation.bytecode.member.MethodReturn;
 import net.bytebuddy.implementation.bytecode.member.MethodVariableAccess;
 import net.bytebuddy.matcher.ElementMatcher;
+import net.bytebuddy.matcher.ElementMatchers;
 import net.bytebuddy.utility.CompoundList;
 import net.bytebuddy.utility.JavaConstant;
 import net.bytebuddy.utility.JavaType;
 import net.bytebuddy.utility.RandomString;
+import net.bytebuddy.utility.nullability.MaybeNull;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 
 import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Type;
 import java.util.*;
 import java.util.concurrent.Callable;
 
-import static net.bytebuddy.matcher.ElementMatchers.named;
+import static net.bytebuddy.matcher.ElementMatchers.*;
 
 /**
  * This {@link Implementation} allows the invocation of a specified method while
  * providing explicit arguments to this method.
  */
-@EqualsAndHashCode
+@HashCodeAndEqualsPlugin.Enhance
 public class MethodCall implements Implementation.Composable {
 
     /**
      * The method locator to use.
      */
-    protected final MethodLocator methodLocator;
+    protected final MethodLocator.Factory methodLocator;
 
     /**
      * The target handler to use.
      */
-    protected final TargetHandler targetHandler;
+    protected final TargetHandler.Factory targetHandler;
 
     /**
      * The argument loader to load arguments onto the operand stack in their application order.
@@ -62,12 +81,12 @@ public class MethodCall implements Implementation.Composable {
     /**
      * The method invoker to use.
      */
-    protected final MethodInvoker methodInvoker;
+    protected final MethodInvoker.Factory methodInvoker;
 
     /**
      * The termination handler to use.
      */
-    protected final TerminationHandler terminationHandler;
+    protected final TerminationHandler.Factory terminationHandler;
 
     /**
      * The assigner to use.
@@ -84,18 +103,17 @@ public class MethodCall implements Implementation.Composable {
      *
      * @param methodLocator      The method locator to use.
      * @param targetHandler      The target handler to use.
-     * @param argumentLoaders    The argument loader to load arguments onto the operand stack in
-     *                           their application order.
+     * @param argumentLoaders    The argument loader to load arguments onto the operand stack in their application order.
      * @param methodInvoker      The method invoker to use.
      * @param terminationHandler The termination handler to use.
      * @param assigner           The assigner to use.
      * @param typing             Indicates if dynamic type castings should be attempted for incompatible assignments.
      */
-    protected MethodCall(MethodLocator methodLocator,
-                         TargetHandler targetHandler,
+    protected MethodCall(MethodLocator.Factory methodLocator,
+                         TargetHandler.Factory targetHandler,
                          List<ArgumentLoader.Factory> argumentLoaders,
-                         MethodInvoker methodInvoker,
-                         TerminationHandler terminationHandler,
+                         MethodInvoker.Factory methodInvoker,
+                         TerminationHandler.Factory terminationHandler,
                          Assigner assigner,
                          Assigner.Typing typing) {
         this.methodLocator = methodLocator;
@@ -119,7 +137,13 @@ public class MethodCall implements Implementation.Composable {
     }
 
     /**
+     * <p>
      * Invokes the given constructor on the instance of the instrumented type.
+     * </p>
+     * <p>
+     * <b>Important</b>: A constructor invocation can only be applied within another constructor to invoke the super constructor or an auxiliary
+     * constructor. To construct a new instance, use {@link MethodCall#construct(Constructor)}.
+     * </p>
      *
      * @param constructor The constructor to invoke.
      * @return A method call implementation that invokes the given constructor without providing any arguments.
@@ -129,9 +153,15 @@ public class MethodCall implements Implementation.Composable {
     }
 
     /**
+     * <p>
      * Invokes the given method. If the method description describes a constructor, it is automatically invoked as
      * a special method invocation on the instance of the instrumented type. The same is true for {@code private}
      * methods. Finally, {@code static} methods are invoked statically.
+     * </p>
+     * <p>
+     * <b>Important</b>: A constructor invocation can only be applied within another constructor to invoke the super constructor or an auxiliary
+     * constructor. To construct a new instance, use {@link MethodCall#construct(MethodDescription)}.
+     * </p>
      *
      * @param methodDescription The method to invoke.
      * @return A method call implementation that invokes the given method without providing any arguments.
@@ -141,24 +171,25 @@ public class MethodCall implements Implementation.Composable {
     }
 
     /**
-     * Invokes a unique virtual method of the instrumented type that is matched by the specified matcher.
+     * Invokes a unique virtual method or constructor of the instrumented type that is matched by the specified matcher.
      *
      * @param matcher The matcher to identify the method to invoke.
      * @return A method call for the uniquely identified method.
      */
+    @SuppressWarnings("overloads")
     public static WithoutSpecifiedTarget invoke(ElementMatcher<? super MethodDescription> matcher) {
         return invoke(matcher, MethodGraph.Compiler.DEFAULT);
     }
 
     /**
-     * Invokes a unique virtual method of the instrumented type that is matched by the specified matcher.
+     * Invokes a unique virtual method or constructor of the instrumented type that is matched by the specified matcher.
      *
      * @param matcher             The matcher to identify the method to invoke.
      * @param methodGraphCompiler The method graph compiler to use.
      * @return A method call for the uniquely identified method.
      */
     public static WithoutSpecifiedTarget invoke(ElementMatcher<? super MethodDescription> matcher, MethodGraph.Compiler methodGraphCompiler) {
-        return invoke(new MethodLocator.ForElementMatcher(matcher, methodGraphCompiler));
+        return invoke(new MethodLocator.ForElementMatcher.Factory(matcher, methodGraphCompiler));
     }
 
     /**
@@ -169,7 +200,8 @@ public class MethodCall implements Implementation.Composable {
      * @return A method call implementation that uses the provided method locator for resolving the method
      * to be invoked.
      */
-    public static WithoutSpecifiedTarget invoke(MethodLocator methodLocator) {
+    @SuppressWarnings("overloads")
+    public static WithoutSpecifiedTarget invoke(MethodLocator.Factory methodLocator) {
         return new WithoutSpecifiedTarget(methodLocator);
     }
 
@@ -242,17 +274,18 @@ public class MethodCall implements Implementation.Composable {
             throw new IllegalArgumentException("Not a constructor: " + methodDescription);
         }
         return new MethodCall(new MethodLocator.ForExplicitMethod(methodDescription),
-                TargetHandler.ForConstructingInvocation.INSTANCE,
+                TargetHandler.ForConstructingInvocation.Factory.INSTANCE,
                 Collections.<ArgumentLoader.Factory>emptyList(),
-                MethodInvoker.ForContextualInvocation.INSTANCE,
-                TerminationHandler.RETURNING,
+                MethodInvoker.ForContextualInvocation.Factory.INSTANCE,
+                TerminationHandler.Simple.RETURNING,
                 Assigner.DEFAULT,
                 Assigner.Typing.STATIC);
     }
 
     /**
      * Defines a number of arguments to be handed to the method that is being invoked by this implementation. Any
-     * wrapper type instances for primitive values, instances of {@link java.lang.String} or {@code null} are loaded
+     * wrapper type instances for primitive values, instances of {@link java.lang.String}, method handles, types,
+     * method types as well as instances of {@link TypeDescription} or {@link JavaConstant} or {@code null} are loaded
      * directly onto the operand stack. This might corrupt referential identity for these values. Any other values
      * are stored within a {@code static} field that is added to the instrumented type.
      *
@@ -307,7 +340,7 @@ public class MethodCall implements Implementation.Composable {
     public MethodCall with(JavaConstant... javaConstant) {
         List<ArgumentLoader.Factory> argumentLoaders = new ArrayList<ArgumentLoader.Factory>(javaConstant.length);
         for (JavaConstant aJavaConstant : javaConstant) {
-            argumentLoaders.add(new ArgumentLoader.ForStackManipulation(aJavaConstant.asStackManipulation(), aJavaConstant.getType()));
+            argumentLoaders.add(new ArgumentLoader.ForStackManipulation(new JavaConstantValue(aJavaConstant), aJavaConstant.getTypeDescription()));
         }
         return with(argumentLoaders);
     }
@@ -483,6 +516,16 @@ public class MethodCall implements Implementation.Composable {
     }
 
     /**
+     * Defines a method call which fetches a value from a method call.
+     *
+     * @param methodCall The method call to use.
+     * @return A method call which assigns the parameter to the result of the given method call.
+     */
+    public MethodCall withMethodCall(MethodCall methodCall) {
+        return with(new ArgumentLoader.ForMethodCall.Factory(methodCall));
+    }
+
+    /**
      * Adds a stack manipulation as an assignment to the next parameter.
      *
      * @param stackManipulation The stack manipulation loading the value.
@@ -531,6 +574,51 @@ public class MethodCall implements Implementation.Composable {
     }
 
     /**
+     * Sets the result of the method call as a value of the specified field. If the instrumented method does not
+     * return {@code void}, this instrumentation must be chained with another instrumentation.
+     *
+     * @param field The field to set.
+     * @return A new instance of this method call that sets the resulting value as the specified field's value.
+     */
+    public FieldSetting setsField(Field field) {
+        return setsField(new FieldDescription.ForLoadedField(field));
+    }
+
+    /**
+     * Sets the result of the method call as a value of the specified field. If the instrumented method does not
+     * return {@code void}, this instrumentation must be chained with another instrumentation.
+     *
+     * @param fieldDescription The field to set.
+     * @return A new instance of this method call that sets the resulting value as the specified field's value.
+     */
+    public FieldSetting setsField(FieldDescription fieldDescription) {
+        return new FieldSetting(new MethodCall(methodLocator,
+                targetHandler,
+                argumentLoaders,
+                methodInvoker,
+                new TerminationHandler.FieldSetting.Explicit(fieldDescription),
+                assigner,
+                typing));
+    }
+
+    /**
+     * Sets the result of the method call as a value of the specified field. If the instrumented method does not
+     * return {@code void}, this instrumentation must be chained with another instrumentation.
+     *
+     * @param matcher A matcher that locates a field in the instrumented type's hierarchy.
+     * @return A new instance of this method call that sets the resulting value as the specified field's value.
+     */
+    public FieldSetting setsField(ElementMatcher<? super FieldDescription> matcher) {
+        return new FieldSetting(new MethodCall(methodLocator,
+                targetHandler,
+                argumentLoaders,
+                methodInvoker,
+                new TerminationHandler.FieldSetting.Implicit(matcher),
+                assigner,
+                typing));
+    }
+
+    /**
      * Defines an assigner to be used for assigning values to the parameters of the invoked method. This assigner
      * is also used for assigning the invoked method's return value to the return type of the instrumented method,
      * if this method is not chained with
@@ -541,7 +629,7 @@ public class MethodCall implements Implementation.Composable {
      * @param typing   Indicates if dynamic type castings should be attempted for incompatible assignments.
      * @return This method call using the provided assigner.
      */
-    public Implementation.Composable withAssigner(Assigner assigner, Assigner.Typing typing) {
+    public Composable withAssigner(Assigner assigner, Assigner.Typing typing) {
         return new MethodCall(methodLocator,
                 targetHandler,
                 argumentLoaders,
@@ -551,28 +639,47 @@ public class MethodCall implements Implementation.Composable {
                 typing);
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public Implementation andThen(Implementation implementation) {
         return new Implementation.Compound(new MethodCall(methodLocator,
                 targetHandler,
                 argumentLoaders,
                 methodInvoker,
-                TerminationHandler.DROPPING,
+                TerminationHandler.Simple.DROPPING,
                 assigner,
                 typing), implementation);
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
+    public Composable andThen(Composable implementation) {
+        return new Implementation.Compound.Composable(new MethodCall(methodLocator,
+                targetHandler,
+                argumentLoaders,
+                methodInvoker,
+                TerminationHandler.Simple.DROPPING,
+                assigner,
+                typing), implementation);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
     public InstrumentedType prepare(InstrumentedType instrumentedType) {
-        for (ArgumentLoader.Factory argumentLoader : argumentLoaders) {
-            instrumentedType = argumentLoader.prepare(instrumentedType);
+        for (InstrumentedType.Prepareable prepareable : argumentLoaders) {
+            instrumentedType = prepareable.prepare(instrumentedType);
         }
         return targetHandler.prepare(instrumentedType);
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public ByteCodeAppender appender(Target implementationTarget) {
-        return new Appender(implementationTarget);
+        return new Appender(implementationTarget, terminationHandler.make(implementationTarget.getInstrumentedType()));
     }
 
     /**
@@ -584,24 +691,47 @@ public class MethodCall implements Implementation.Composable {
         /**
          * Resolves the method to be invoked.
          *
-         * @param instrumentedType   The instrumented type.
+         * @param targetType         The type the method is called on.
          * @param instrumentedMethod The method being instrumented.
          * @return The method to invoke.
          */
-        MethodDescription resolve(TypeDescription instrumentedType, MethodDescription instrumentedMethod);
+        MethodDescription resolve(TypeDescription targetType, MethodDescription instrumentedMethod);
+
+        /**
+         * A factory for creating a method locator.
+         */
+        interface Factory {
+
+            /**
+             * Creates a method locator for a given instrumented type.
+             *
+             * @param instrumentedType The instrumented type.
+             * @return A suitable method locator.
+             */
+            MethodLocator make(TypeDescription instrumentedType);
+        }
 
         /**
          * A method locator that simply returns the intercepted method.
          */
-        enum ForInstrumentedMethod implements MethodLocator {
+        enum ForInstrumentedMethod implements MethodLocator, Factory {
 
             /**
              * The singleton instance.
              */
             INSTANCE;
 
-            @Override
-            public MethodDescription resolve(TypeDescription instrumentedType, MethodDescription instrumentedMethod) {
+            /**
+             * {@inheritDoc}
+             */
+            public MethodLocator make(TypeDescription instrumentedType) {
+                return this;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public MethodDescription resolve(TypeDescription targetType, MethodDescription instrumentedMethod) {
                 return instrumentedMethod;
             }
         }
@@ -609,8 +739,8 @@ public class MethodCall implements Implementation.Composable {
         /**
          * Invokes a given method.
          */
-        @EqualsAndHashCode
-        class ForExplicitMethod implements MethodLocator {
+        @HashCodeAndEqualsPlugin.Enhance
+        class ForExplicitMethod implements MethodLocator, Factory {
 
             /**
              * The method to be invoked.
@@ -626,8 +756,17 @@ public class MethodCall implements Implementation.Composable {
                 this.methodDescription = methodDescription;
             }
 
-            @Override
-            public MethodDescription resolve(TypeDescription instrumentedType, MethodDescription instrumentedMethod) {
+            /**
+             * {@inheritDoc}
+             */
+            public MethodLocator make(TypeDescription instrumentedType) {
+                return this;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public MethodDescription resolve(TypeDescription targetType, MethodDescription instrumentedMethod) {
                 return methodDescription;
             }
         }
@@ -635,8 +774,13 @@ public class MethodCall implements Implementation.Composable {
         /**
          * A method locator that identifies a unique virtual method.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class ForElementMatcher implements MethodLocator {
+
+            /**
+             * The instrumented type.
+             */
+            private final TypeDescription instrumentedType;
 
             /**
              * The matcher to use.
@@ -651,21 +795,68 @@ public class MethodCall implements Implementation.Composable {
             /**
              * Creates a new method locator for an element matcher.
              *
+             * @param instrumentedType    The instrumented type.
              * @param matcher             The matcher to use.
              * @param methodGraphCompiler The method graph compiler to use.
              */
-            protected ForElementMatcher(ElementMatcher<? super MethodDescription> matcher, MethodGraph.Compiler methodGraphCompiler) {
+            protected ForElementMatcher(TypeDescription instrumentedType, ElementMatcher<? super MethodDescription> matcher, MethodGraph.Compiler methodGraphCompiler) {
+                this.instrumentedType = instrumentedType;
                 this.matcher = matcher;
                 this.methodGraphCompiler = methodGraphCompiler;
             }
 
-            @Override
-            public MethodDescription resolve(TypeDescription instrumentedType, MethodDescription instrumentedMethod) {
-                MethodList<?> candidates = methodGraphCompiler.compile(instrumentedType).listNodes().asMethodList().filter(matcher);
+            /**
+             * {@inheritDoc}
+             */
+            public MethodDescription resolve(TypeDescription targetType, MethodDescription instrumentedMethod) {
+                TypeDescription.Generic superClass = instrumentedType.getSuperClass();
+                List<MethodDescription> candidates = CompoundList.<MethodDescription>of(
+                        superClass == null
+                                ? Collections.<MethodDescription>emptyList()
+                                : superClass.getDeclaredMethods().filter(isConstructor().and(matcher)),
+                        instrumentedType.getDeclaredMethods().filter(not(ElementMatchers.isVirtual()).and(matcher)),
+                        methodGraphCompiler.compile((TypeDefinition) targetType, instrumentedType).listNodes().asMethodList().filter(matcher));
                 if (candidates.size() == 1) {
-                    return candidates.getOnly();
+                    return candidates.get(0);
                 } else {
-                    throw new IllegalStateException(instrumentedType + " does not define exactly one virtual method for " + matcher);
+                    throw new IllegalStateException(instrumentedType + " does not define exactly one virtual method or constructor for " + matcher
+                            + " but contained " + candidates.size()
+                            + " candidates: " + candidates);
+                }
+            }
+
+            /**
+             * A factory for a method locator that uses a matcher on the instrumented type's available methods for identifing a target method.
+             */
+            @HashCodeAndEqualsPlugin.Enhance
+            public static class Factory implements MethodLocator.Factory {
+
+                /**
+                 * The matcher to use.
+                 */
+                private final ElementMatcher<? super MethodDescription> matcher;
+
+                /**
+                 * The method graph compiler to use.
+                 */
+                private final MethodGraph.Compiler methodGraphCompiler;
+
+                /**
+                 * Creates a factory for a method locator that identifies a method using a matcher.
+                 *
+                 * @param matcher             The matcher to use.
+                 * @param methodGraphCompiler The method graph compiler to use.
+                 */
+                public Factory(ElementMatcher<? super MethodDescription> matcher, MethodGraph.Compiler methodGraphCompiler) {
+                    this.matcher = matcher;
+                    this.methodGraphCompiler = methodGraphCompiler;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public MethodLocator make(TypeDescription instrumentedType) {
+                    return new ForElementMatcher(instrumentedType, matcher, methodGraphCompiler);
                 }
             }
         }
@@ -685,66 +876,85 @@ public class MethodCall implements Implementation.Composable {
          * @param typing   Indicates if dynamic type castings should be attempted for incompatible assignments.
          * @return The stack manipulation that loads the represented argument onto the stack.
          */
-        StackManipulation resolve(ParameterDescription target, Assigner assigner, Assigner.Typing typing);
+        StackManipulation toStackManipulation(ParameterDescription target, Assigner assigner, Assigner.Typing typing);
+
+        /**
+         * An argument provider is responsible for providing an argument loader for each argument to supply to a method.
+         */
+        interface ArgumentProvider {
+
+            /**
+             * Resolves this provider to an argument loader for each provided argument.
+             *
+             * @param instrumentedMethod The instrumented method.
+             * @param invokedMethod      The invoked method.
+             * @return A list of provided argument loaders.
+             */
+            List<ArgumentLoader> resolve(MethodDescription instrumentedMethod, MethodDescription invokedMethod);
+        }
 
         /**
          * A factory that produces {@link ArgumentLoader}s for a given instrumented method.
          */
-        interface Factory {
+        interface Factory extends InstrumentedType.Prepareable {
 
             /**
-             * Prepares the instrumented type in order to allow the loading of the represented argument.
+             * Creates an argument provider for the supplied implementation target.
              *
-             * @param instrumentedType The instrumented type.
-             * @return The prepared instrumented type.
+             * @param implementationTarget The implementation target to use.
+             * @return An appropriate argument provider.
              */
-            InstrumentedType prepare(InstrumentedType instrumentedType);
-
-            /**
-             * Creates any number of argument loaders for an instrumentation.
-             *
-             * @param instrumentedType   The instrumented type.
-             * @param instrumentedMethod The instrumented method.
-             * @param invokedMethod      The invoked method.
-             * @return Any number of argument loaders to supply for the method call.
-             */
-            List<ArgumentLoader> make(TypeDescription instrumentedType, MethodDescription instrumentedMethod, MethodDescription invokedMethod);
+            ArgumentProvider make(Implementation.Target implementationTarget);
         }
 
         /**
          * An argument loader that loads the {@code null} value onto the operand stack.
          */
-        enum ForNullConstant implements ArgumentLoader, Factory {
+        enum ForNullConstant implements ArgumentLoader, ArgumentProvider, Factory {
 
             /**
              * The singleton instance.
              */
             INSTANCE;
 
-            @Override
-            public List<ArgumentLoader> make(TypeDescription instrumentedType, MethodDescription instrumentedMethod, MethodDescription invokedMethod) {
+            /**
+             * {@inheritDoc}
+             */
+            public InstrumentedType prepare(InstrumentedType instrumentedType) {
+                return instrumentedType;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public ArgumentProvider make(Implementation.Target implementationTarget) {
+                return this;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public List<ArgumentLoader> resolve(MethodDescription instrumentedMethod, MethodDescription invokedMethod) {
                 return Collections.<ArgumentLoader>singletonList(this);
             }
 
-            @Override
-            public StackManipulation resolve(ParameterDescription target, Assigner assigner, Assigner.Typing typing) {
+            /**
+             * {@inheritDoc}
+             */
+            public StackManipulation toStackManipulation(ParameterDescription target, Assigner assigner, Assigner.Typing typing) {
                 if (target.getType().isPrimitive()) {
                     throw new IllegalStateException("Cannot assign null to " + target);
                 }
                 return NullConstant.INSTANCE;
             }
-
-            @Override
-            public InstrumentedType prepare(InstrumentedType instrumentedType) {
-                return instrumentedType;
-            }
         }
+
 
         /**
          * An argument loader that assigns the {@code this} reference to a parameter.
          */
-        @EqualsAndHashCode
-        class ForThisReference implements ArgumentLoader {
+        @HashCodeAndEqualsPlugin.Enhance
+        class ForThisReference implements ArgumentLoader, ArgumentProvider {
 
             /**
              * The instrumented type.
@@ -760,8 +970,20 @@ public class MethodCall implements Implementation.Composable {
                 this.instrumentedType = instrumentedType;
             }
 
-            @Override
-            public StackManipulation resolve(ParameterDescription target, Assigner assigner, Assigner.Typing typing) {
+            /**
+             * {@inheritDoc}
+             */
+            public List<ArgumentLoader> resolve(MethodDescription instrumentedMethod, MethodDescription invokedMethod) {
+                if (instrumentedMethod.isStatic()) {
+                    throw new IllegalStateException(instrumentedMethod + " is static and cannot supply an invoker instance");
+                }
+                return Collections.<ArgumentLoader>singletonList(this);
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public StackManipulation toStackManipulation(ParameterDescription target, Assigner assigner, Assigner.Typing typing) {
                 StackManipulation stackManipulation = new StackManipulation.Compound(
                         MethodVariableAccess.loadThis(),
                         assigner.assign(instrumentedType.asGenericType(), target.getType(), typing));
@@ -781,17 +1003,18 @@ public class MethodCall implements Implementation.Composable {
                  */
                 INSTANCE;
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public InstrumentedType prepare(InstrumentedType instrumentedType) {
                     return instrumentedType;
                 }
 
-                @Override
-                public List<ArgumentLoader> make(TypeDescription instrumentedType, MethodDescription instrumentedMethod, MethodDescription invokedMethod) {
-                    if (instrumentedMethod.isStatic()) {
-                        throw new IllegalStateException(instrumentedMethod + " is static and cannot supply an invoker instance");
-                    }
-                    return Collections.<ArgumentLoader>singletonList(new ForThisReference(instrumentedType));
+                /**
+                 * {@inheritDoc}
+                 */
+                public ArgumentProvider make(Implementation.Target implementationTarget) {
+                    return new ForThisReference(implementationTarget.getInstrumentedType());
                 }
             }
         }
@@ -799,8 +1022,8 @@ public class MethodCall implements Implementation.Composable {
         /**
          * Loads the instrumented type onto the operand stack.
          */
-        @EqualsAndHashCode
-        class ForInstrumentedType implements ArgumentLoader {
+        @HashCodeAndEqualsPlugin.Enhance
+        class ForInstrumentedType implements ArgumentLoader, ArgumentProvider {
 
             /**
              * The instrumented type.
@@ -816,11 +1039,20 @@ public class MethodCall implements Implementation.Composable {
                 this.instrumentedType = instrumentedType;
             }
 
-            @Override
-            public StackManipulation resolve(ParameterDescription target, Assigner assigner, Assigner.Typing typing) {
+            /**
+             * {@inheritDoc}
+             */
+            public List<ArgumentLoader> resolve(MethodDescription instrumentedMethod, MethodDescription invokedMethod) {
+                return Collections.<ArgumentLoader>singletonList(this);
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public StackManipulation toStackManipulation(ParameterDescription target, Assigner assigner, Assigner.Typing typing) {
                 StackManipulation stackManipulation = new StackManipulation.Compound(
                         ClassConstant.of(instrumentedType),
-                        assigner.assign(new TypeDescription.Generic.OfNonGenericType.ForLoadedType(Class.class), target.getType(), typing));
+                        assigner.assign(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Class.class), target.getType(), typing));
                 if (!stackManipulation.isValid()) {
                     throw new IllegalStateException("Cannot assign Class value to " + target);
                 }
@@ -837,14 +1069,18 @@ public class MethodCall implements Implementation.Composable {
                  */
                 INSTANCE;
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public InstrumentedType prepare(InstrumentedType instrumentedType) {
                     return instrumentedType;
                 }
 
-                @Override
-                public List<ArgumentLoader> make(TypeDescription instrumentedType, MethodDescription instrumentedMethod, MethodDescription invokedMethod) {
-                    return Collections.<ArgumentLoader>singletonList(new ForInstrumentedType(instrumentedType));
+                /**
+                 * {@inheritDoc}
+                 */
+                public ArgumentProvider make(Implementation.Target implementationTarget) {
+                    return new ForInstrumentedType(implementationTarget.getInstrumentedType());
                 }
             }
         }
@@ -852,7 +1088,7 @@ public class MethodCall implements Implementation.Composable {
         /**
          * Loads a parameter of the instrumented method onto the operand stack.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class ForMethodParameter implements ArgumentLoader {
 
             /**
@@ -876,8 +1112,10 @@ public class MethodCall implements Implementation.Composable {
                 this.instrumentedMethod = instrumentedMethod;
             }
 
-            @Override
-            public StackManipulation resolve(ParameterDescription target, Assigner assigner, Assigner.Typing typing) {
+            /**
+             * {@inheritDoc}
+             */
+            public StackManipulation toStackManipulation(ParameterDescription target, Assigner assigner, Assigner.Typing typing) {
                 ParameterDescription parameterDescription = instrumentedMethod.getParameters().get(index);
                 StackManipulation stackManipulation = new StackManipulation.Compound(
                         MethodVariableAccess.load(parameterDescription),
@@ -891,20 +1129,31 @@ public class MethodCall implements Implementation.Composable {
             /**
              * A factory for argument loaders that supplies all arguments of the instrumented method as arguments.
              */
-            protected enum OfInstrumentedMethod implements ArgumentLoader.Factory {
+            protected enum OfInstrumentedMethod implements ArgumentLoader.Factory, ArgumentProvider {
 
                 /**
                  * The singleton instance.
                  */
                 INSTANCE;
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public InstrumentedType prepare(InstrumentedType instrumentedType) {
                     return instrumentedType;
                 }
 
-                @Override
-                public List<ArgumentLoader> make(TypeDescription instrumentedType, MethodDescription instrumentedMethod, MethodDescription invokedMethod) {
+                /**
+                 * {@inheritDoc}
+                 */
+                public ArgumentProvider make(Implementation.Target implementationTarget) {
+                    return this;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public List<ArgumentLoader> resolve(MethodDescription instrumentedMethod, MethodDescription invokedMethod) {
                     List<ArgumentLoader> argumentLoaders = new ArrayList<ArgumentLoader>(instrumentedMethod.getParameters().size());
                     for (ParameterDescription parameterDescription : instrumentedMethod.getParameters()) {
                         argumentLoaders.add(new ForMethodParameter(parameterDescription.getIndex(), instrumentedMethod));
@@ -916,8 +1165,8 @@ public class MethodCall implements Implementation.Composable {
             /**
              * A factory for an argument loader that supplies a method parameter as an argument.
              */
-            @EqualsAndHashCode
-            protected static class Factory implements ArgumentLoader.Factory {
+            @HashCodeAndEqualsPlugin.Enhance
+            public static class Factory implements ArgumentLoader.Factory, ArgumentProvider {
 
                 /**
                  * The index of the parameter to be loaded onto the operand stack.
@@ -933,15 +1182,27 @@ public class MethodCall implements Implementation.Composable {
                     this.index = index;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public InstrumentedType prepare(InstrumentedType instrumentedType) {
                     return instrumentedType;
                 }
 
-                @Override
-                public List<ArgumentLoader> make(TypeDescription instrumentedType, MethodDescription instrumentedMethod, MethodDescription invokedMethod) {
+                /**
+                 * {@inheritDoc}
+                 */
+                public ArgumentProvider make(Implementation.Target implementationTarget) {
+                    return this;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public List<ArgumentLoader> resolve(MethodDescription instrumentedMethod, MethodDescription invokedMethod) {
                     if (index >= instrumentedMethod.getParameters().size()) {
-                        throw new IllegalStateException(instrumentedMethod + " does not have a parameter with index " + index);
+                        throw new IllegalStateException(instrumentedMethod + " does not have a parameter with index " + index +
+                                ", " + instrumentedMethod.getParameters().size() + " defined");
                     }
                     return Collections.<ArgumentLoader>singletonList(new ForMethodParameter(index, instrumentedMethod));
                 }
@@ -951,7 +1212,7 @@ public class MethodCall implements Implementation.Composable {
         /**
          * Loads an array containing all arguments of a method.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class ForMethodParameterArray implements ArgumentLoader {
 
             /**
@@ -968,15 +1229,18 @@ public class MethodCall implements Implementation.Composable {
                 this.parameters = parameters;
             }
 
-            @Override
-            public StackManipulation resolve(ParameterDescription target, Assigner assigner, Assigner.Typing typing) {
+            /**
+             * {@inheritDoc}
+             */
+            @SuppressFBWarnings(value = "NP_NULL_ON_SOME_PATH_FROM_RETURN_VALUE", justification = "Assuming component type for array type.")
+            public StackManipulation toStackManipulation(ParameterDescription target, Assigner assigner, Assigner.Typing typing) {
                 TypeDescription.Generic componentType;
                 if (target.getType().represents(Object.class)) {
-                    componentType = TypeDescription.Generic.OBJECT;
+                    componentType = TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class);
                 } else if (target.getType().isArray()) {
                     componentType = target.getType().getComponentType();
                 } else {
-                    throw new IllegalStateException();
+                    throw new IllegalStateException("Cannot set method parameter array for non-array type: " + target);
                 }
                 List<StackManipulation> stackManipulations = new ArrayList<StackManipulation>(parameters.size());
                 for (ParameterDescription parameter : parameters) {
@@ -996,20 +1260,31 @@ public class MethodCall implements Implementation.Composable {
             /**
              * A factory that creates an arguments loader that loads all parameters of the instrumented method contained in an array.
              */
-            public enum ForInstrumentedMethod implements ArgumentLoader.Factory {
+            public enum ForInstrumentedMethod implements Factory, ArgumentProvider {
 
                 /**
                  * The singleton instance.
                  */
                 INSTANCE;
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public InstrumentedType prepare(InstrumentedType instrumentedType) {
                     return instrumentedType;
                 }
 
-                @Override
-                public List<ArgumentLoader> make(TypeDescription instrumentedType, MethodDescription instrumentedMethod, MethodDescription invokedMethod) {
+                /**
+                 * {@inheritDoc}
+                 */
+                public ArgumentProvider make(Implementation.Target implementationTarget) {
+                    return this;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public List<ArgumentLoader> resolve(MethodDescription instrumentedMethod, MethodDescription invokedMethod) {
                     return Collections.<ArgumentLoader>singletonList(new ForMethodParameterArray(instrumentedMethod.getParameters()));
                 }
             }
@@ -1018,7 +1293,7 @@ public class MethodCall implements Implementation.Composable {
         /**
          * An argument loader that loads an element of a parameter of an array type.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class ForMethodParameterArrayElement implements ArgumentLoader {
 
             /**
@@ -1042,8 +1317,11 @@ public class MethodCall implements Implementation.Composable {
                 this.index = index;
             }
 
-            @Override
-            public StackManipulation resolve(ParameterDescription target, Assigner assigner, Assigner.Typing typing) {
+            /**
+             * {@inheritDoc}
+             */
+            @SuppressFBWarnings(value = "NP_NULL_ON_SOME_PATH_FROM_RETURN_VALUE", justification = "Assuming component type for array type.")
+            public StackManipulation toStackManipulation(ParameterDescription target, Assigner assigner, Assigner.Typing typing) {
                 StackManipulation stackManipulation = new StackManipulation.Compound(
                         MethodVariableAccess.load(parameterDescription),
                         IntegerConstant.forValue(index),
@@ -1059,8 +1337,8 @@ public class MethodCall implements Implementation.Composable {
             /**
              * Creates an argument loader for an array element that of a specific parameter.
              */
-            @EqualsAndHashCode
-            protected static class OfParameter implements ArgumentLoader.Factory {
+            @HashCodeAndEqualsPlugin.Enhance
+            public static class OfParameter implements ArgumentLoader.Factory, ArgumentProvider {
 
                 /**
                  * The parameter index.
@@ -1083,17 +1361,30 @@ public class MethodCall implements Implementation.Composable {
                     this.arrayIndex = arrayIndex;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public InstrumentedType prepare(InstrumentedType instrumentedType) {
                     return instrumentedType;
                 }
 
-                @Override
-                public List<ArgumentLoader> make(TypeDescription instrumentedType, MethodDescription instrumentedMethod, MethodDescription invokedMethod) {
+                /**
+                 * {@inheritDoc}
+                 */
+                public ArgumentProvider make(Implementation.Target implementationTarget) {
+                    return this;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public List<ArgumentLoader> resolve(MethodDescription instrumentedMethod, MethodDescription invokedMethod) {
                     if (instrumentedMethod.getParameters().size() <= index) {
-                        throw new IllegalStateException(instrumentedMethod + " does not declare a parameter with index " + index);
+                        throw new IllegalStateException(instrumentedMethod + " does not declare a parameter with index " + index +
+                                ", " + instrumentedMethod.getParameters().size() + " defined");
                     } else if (!instrumentedMethod.getParameters().get(index).getType().isArray()) {
-                        throw new IllegalStateException("Cannot access an item from non-array parameter " + instrumentedMethod.getParameters().get(index));
+                        throw new IllegalStateException("Cannot access an item from non-array parameter " + instrumentedMethod.getParameters().get(index) +
+                                " at index " + index);
                     }
                     return Collections.<ArgumentLoader>singletonList(new ForMethodParameterArrayElement(instrumentedMethod.getParameters().get(index), arrayIndex));
                 }
@@ -1102,8 +1393,8 @@ public class MethodCall implements Implementation.Composable {
             /**
              * An argument loader factory that loads an array element from a parameter for each argument of the invoked method.
              */
-            @EqualsAndHashCode
-            public static class OfInvokedMethod implements ArgumentLoader.Factory {
+            @HashCodeAndEqualsPlugin.Enhance
+            public static class OfInvokedMethod implements ArgumentLoader.Factory, ArgumentProvider {
 
                 /**
                  * The parameter index.
@@ -1119,21 +1410,34 @@ public class MethodCall implements Implementation.Composable {
                     this.index = index;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public InstrumentedType prepare(InstrumentedType instrumentedType) {
                     return instrumentedType;
                 }
 
-                @Override
-                public List<ArgumentLoader> make(TypeDescription instrumentedType, MethodDescription instrumentedMethod, MethodDescription invokedMethod) {
+                /**
+                 * {@inheritDoc}
+                 */
+                public ArgumentProvider make(Implementation.Target implementationTarget) {
+                    return this;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public List<ArgumentLoader> resolve(MethodDescription instrumentedMethod, MethodDescription invokedMethod) {
                     if (instrumentedMethod.getParameters().size() <= index) {
-                        throw new IllegalStateException(instrumentedMethod + " does not declare a parameter with index " + index);
+                        throw new IllegalStateException(instrumentedMethod + " does not declare a parameter with index " + index +
+                                ", " + instrumentedMethod.getParameters().size() + " defined");
                     } else if (!instrumentedMethod.getParameters().get(index).getType().isArray()) {
-                        throw new IllegalStateException("Cannot access an item from non-array parameter " + instrumentedMethod.getParameters().get(index));
+                        throw new IllegalStateException("Cannot access an item from non-array parameter " + instrumentedMethod.getParameters().get(index) +
+                                " at index " + index);
                     }
-                    List<ArgumentLoader> argumentLoaders = new ArrayList<ArgumentLoader>(instrumentedMethod.getParameters().size());
+                    List<ArgumentLoader> argumentLoaders = new ArrayList<ArgumentLoader>(invokedMethod.getParameters().size());
                     for (int index = 0; index < invokedMethod.getParameters().size(); index++) {
-                        argumentLoaders.add(new ForMethodParameterArrayElement(instrumentedMethod.getParameters().get(this.index), index++));
+                        argumentLoaders.add(new ForMethodParameterArrayElement(instrumentedMethod.getParameters().get(this.index), index));
                     }
                     return argumentLoaders;
                 }
@@ -1143,8 +1447,8 @@ public class MethodCall implements Implementation.Composable {
         /**
          * Loads a value onto the operand stack that is stored in a static field.
          */
-        @EqualsAndHashCode
-        class ForInstance implements ArgumentLoader {
+        @HashCodeAndEqualsPlugin.Enhance
+        class ForInstance implements ArgumentLoader, ArgumentProvider {
 
             /**
              * The description of the field.
@@ -1160,8 +1464,17 @@ public class MethodCall implements Implementation.Composable {
                 this.fieldDescription = fieldDescription;
             }
 
-            @Override
-            public StackManipulation resolve(ParameterDescription target, Assigner assigner, Assigner.Typing typing) {
+            /**
+             * {@inheritDoc}
+             */
+            public List<ArgumentLoader> resolve(MethodDescription instrumentedMethod, MethodDescription invokedMethod) {
+                return Collections.<ArgumentLoader>singletonList(this);
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public StackManipulation toStackManipulation(ParameterDescription target, Assigner assigner, Assigner.Typing typing) {
                 StackManipulation stackManipulation = new StackManipulation.Compound(
                         FieldAccess.forField(fieldDescription).read(),
                         assigner.assign(fieldDescription.getType(), target.getType(), typing));
@@ -1174,7 +1487,7 @@ public class MethodCall implements Implementation.Composable {
             /**
              * A factory that supplies the value of a static field as an argument.
              */
-            @EqualsAndHashCode(exclude = "name")
+            @HashCodeAndEqualsPlugin.Enhance
             protected static class Factory implements ArgumentLoader.Factory {
 
                 /**
@@ -1190,6 +1503,7 @@ public class MethodCall implements Implementation.Composable {
                 /**
                  * The name of the field.
                  */
+                @HashCodeAndEqualsPlugin.ValueHandling(HashCodeAndEqualsPlugin.ValueHandling.Sort.IGNORE)
                 private final String name;
 
                 /**
@@ -1199,21 +1513,23 @@ public class MethodCall implements Implementation.Composable {
                  */
                 public Factory(Object value) {
                     this.value = value;
-                    name = FIELD_PREFIX + "$" + RandomString.make();
+                    name = FIELD_PREFIX + "$" + RandomString.hashOf(value);
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public InstrumentedType prepare(InstrumentedType instrumentedType) {
-                    return instrumentedType
-                            .withField(new FieldDescription.Token(name,
-                                    Opcodes.ACC_SYNTHETIC | Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC,
-                                    new TypeDescription.Generic.OfNonGenericType.ForLoadedType(value.getClass())))
-                            .withInitializer(new LoadedTypeInitializer.ForStaticField(name, value));
+                    return instrumentedType.withAuxiliaryField(new FieldDescription.Token(name,
+                            Opcodes.ACC_SYNTHETIC | Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC,
+                            TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(value.getClass())), value);
                 }
 
-                @Override
-                public List<ArgumentLoader> make(TypeDescription instrumentedType, MethodDescription instrumentedMethod, MethodDescription invokedMethod) {
-                    return Collections.<ArgumentLoader>singletonList(new ForInstance(instrumentedType.getDeclaredFields().filter(named(name)).getOnly()));
+                /**
+                 * {@inheritDoc}
+                 */
+                public ArgumentProvider make(Implementation.Target implementationTarget) {
+                    return new ForInstance(implementationTarget.getInstrumentedType().getDeclaredFields().filter(named(name)).getOnly());
                 }
             }
         }
@@ -1221,7 +1537,7 @@ public class MethodCall implements Implementation.Composable {
         /**
          * Loads the value of an existing field onto the operand stack.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class ForField implements ArgumentLoader {
 
             /**
@@ -1245,8 +1561,10 @@ public class MethodCall implements Implementation.Composable {
                 this.instrumentedMethod = instrumentedMethod;
             }
 
-            @Override
-            public StackManipulation resolve(ParameterDescription target, Assigner assigner, Assigner.Typing typing) {
+            /**
+             * {@inheritDoc}
+             */
+            public StackManipulation toStackManipulation(ParameterDescription target, Assigner assigner, Assigner.Typing typing) {
                 if (!fieldDescription.isStatic() && instrumentedMethod.isStatic()) {
                     throw new IllegalStateException("Cannot access non-static " + fieldDescription + " from " + instrumentedMethod);
                 }
@@ -1264,9 +1582,37 @@ public class MethodCall implements Implementation.Composable {
             }
 
             /**
+             * An argument provider for a field access.
+             */
+            @HashCodeAndEqualsPlugin.Enhance
+            protected static class ArgumentProvider implements ArgumentLoader.ArgumentProvider {
+
+                /**
+                 * The field being accessed.
+                 */
+                private final FieldDescription fieldDescription;
+
+                /**
+                 * Creates a new argument provider for a field access.
+                 *
+                 * @param fieldDescription The field being accessed.
+                 */
+                protected ArgumentProvider(FieldDescription fieldDescription) {
+                    this.fieldDescription = fieldDescription;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public List<ArgumentLoader> resolve(MethodDescription instrumentedMethod, MethodDescription invokedMethod) {
+                    return Collections.<ArgumentLoader>singletonList(new ForField(fieldDescription, instrumentedMethod));
+                }
+            }
+
+            /**
              * A factory for an argument loaded that loads the value of an existing field as an argument.
              */
-            @EqualsAndHashCode
+            @HashCodeAndEqualsPlugin.Enhance
             protected static class Factory implements ArgumentLoader.Factory {
 
                 /**
@@ -1290,18 +1636,147 @@ public class MethodCall implements Implementation.Composable {
                     this.fieldLocatorFactory = fieldLocatorFactory;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public InstrumentedType prepare(InstrumentedType instrumentedType) {
                     return instrumentedType;
                 }
 
-                @Override
-                public List<ArgumentLoader> make(TypeDescription instrumentedType, MethodDescription instrumentedMethod, MethodDescription invokedMethod) {
-                    FieldLocator.Resolution resolution = fieldLocatorFactory.make(instrumentedType).locate(name);
+                /**
+                 * {@inheritDoc}
+                 */
+                public ArgumentLoader.ArgumentProvider make(Implementation.Target implementationTarget) {
+                    FieldLocator.Resolution resolution = fieldLocatorFactory.make(implementationTarget.getInstrumentedType()).locate(name);
                     if (!resolution.isResolved()) {
-                        throw new IllegalStateException("Could not locate field '" + name + "' on " + instrumentedType);
+                        throw new IllegalStateException("Could not locate field '" + name + "' on " + implementationTarget.getInstrumentedType());
                     }
-                    return Collections.<ArgumentLoader>singletonList(new ForField(resolution.getField(), instrumentedMethod));
+                    return new ArgumentProvider(resolution.getField());
+                }
+            }
+        }
+
+        /**
+         * Loads the return value of a method call onto the operand stack.
+         */
+        @HashCodeAndEqualsPlugin.Enhance
+        class ForMethodCall implements ArgumentLoader {
+
+            /**
+             * The method call's appender.
+             */
+            private final Appender appender;
+
+            /**
+             * The invoked method.
+             */
+            private final MethodDescription methodDescription;
+
+            /**
+             * The instrumented method.
+             */
+            private final MethodDescription instrumentedMethod;
+
+            /**
+             * The resolved target handler to use.
+             */
+            private final TargetHandler.Resolved targetHandler;
+
+            /**
+             * Creates a new argument loader for loading a method call's return value.
+             *
+             * @param appender           The method call's appender.
+             * @param methodDescription  The invoked method.
+             * @param instrumentedMethod The instrumented method.
+             * @param targetHandler      The resolved target handler to use.
+             */
+            public ForMethodCall(Appender appender, MethodDescription methodDescription, MethodDescription instrumentedMethod, TargetHandler.Resolved targetHandler) {
+                this.appender = appender;
+                this.methodDescription = methodDescription;
+                this.instrumentedMethod = instrumentedMethod;
+                this.targetHandler = targetHandler;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public StackManipulation toStackManipulation(ParameterDescription target, Assigner assigner, Assigner.Typing typing) {
+                StackManipulation stackManipulation = new StackManipulation.Compound(
+                        appender.toStackManipulation(instrumentedMethod, methodDescription, targetHandler),
+                        assigner.assign(methodDescription.isConstructor()
+                                ? methodDescription.getDeclaringType().asGenericType()
+                                : methodDescription.getReturnType(), target.getType(), typing)
+                );
+                if (!stackManipulation.isValid()) {
+                    throw new IllegalStateException("Cannot assign return type of " + methodDescription + " to " + target);
+                }
+                return stackManipulation;
+            }
+
+            /**
+             * An argument provider for a method call.
+             */
+            @HashCodeAndEqualsPlugin.Enhance
+            protected static class ArgumentProvider implements ArgumentLoader.ArgumentProvider {
+
+                /**
+                 * The method call's appender.
+                 */
+                private final Appender appender;
+
+                /**
+                 * Creates a new argument provider for a method call.
+                 *
+                 * @param appender The method call's appender.
+                 */
+                protected ArgumentProvider(Appender appender) {
+                    this.appender = appender;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public List<ArgumentLoader> resolve(MethodDescription instrumentedMethod, MethodDescription invokedMethod) {
+                    TargetHandler.Resolved targetHandler = appender.targetHandler.resolve(instrumentedMethod);
+                    return Collections.<ArgumentLoader>singletonList(new ForMethodCall(appender,
+                            appender.toInvokedMethod(instrumentedMethod, targetHandler),
+                            instrumentedMethod,
+                            targetHandler));
+                }
+            }
+
+            /**
+             * A factory for an argument loaded that loads the return value of a method call as an argument.
+             */
+            @HashCodeAndEqualsPlugin.Enhance
+            protected static class Factory implements ArgumentLoader.Factory {
+
+                /**
+                 * The method call to use.
+                 */
+                private final MethodCall methodCall;
+
+                /**
+                 * Creates a new argument loader for an existing method call.
+                 *
+                 * @param methodCall The method call to use.
+                 */
+                public Factory(MethodCall methodCall) {
+                    this.methodCall = methodCall;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public InstrumentedType prepare(InstrumentedType instrumentedType) {
+                    return methodCall.prepare(instrumentedType);
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public ArgumentLoader.ArgumentProvider make(Implementation.Target implementationTarget) {
+                    return new ArgumentProvider(methodCall.new Appender(implementationTarget, TerminationHandler.Simple.IGNORING));
                 }
             }
         }
@@ -1309,8 +1784,8 @@ public class MethodCall implements Implementation.Composable {
         /**
          * Loads a stack manipulation resulting in a specific type as an argument.
          */
-        @EqualsAndHashCode
-        class ForStackManipulation implements ArgumentLoader, Factory {
+        @HashCodeAndEqualsPlugin.Enhance
+        class ForStackManipulation implements ArgumentLoader, ArgumentProvider, Factory {
 
             /**
              * The stack manipulation to load.
@@ -1350,11 +1825,9 @@ public class MethodCall implements Implementation.Composable {
              * @param value The value to load as an argument or {@code null}.
              * @return An appropriate argument loader.
              */
-            public static ArgumentLoader.Factory of(Object value) {
+            public static ArgumentLoader.Factory of(@MaybeNull Object value) {
                 if (value == null) {
                     return ForNullConstant.INSTANCE;
-                } else if (value instanceof String) {
-                    return new ForStackManipulation(new TextConstant((String) value), String.class);
                 } else if (value instanceof Boolean) {
                     return new ForStackManipulation(IntegerConstant.forValue((Boolean) value), boolean.class);
                 } else if (value instanceof Byte) {
@@ -1371,37 +1844,58 @@ public class MethodCall implements Implementation.Composable {
                     return new ForStackManipulation(FloatConstant.forValue((Float) value), float.class);
                 } else if (value instanceof Double) {
                     return new ForStackManipulation(DoubleConstant.forValue((Double) value), double.class);
+                } else if (value instanceof String) {
+                    return new ForStackManipulation(new TextConstant((String) value), String.class);
                 } else if (value instanceof Class) {
-                    return new ForStackManipulation(ClassConstant.of(new TypeDescription.ForLoadedType((Class<?>) value)), Class.class);
-                } else if (JavaType.METHOD_HANDLE.getTypeStub().isInstance(value)) {
-                    return new ForStackManipulation(JavaConstant.MethodHandle.ofLoaded(value).asStackManipulation(), JavaType.METHOD_HANDLE.getTypeStub());
-                } else if (JavaType.METHOD_TYPE.getTypeStub().isInstance(value)) {
-                    return new ForStackManipulation(JavaConstant.MethodType.ofLoaded(value).asStackManipulation(), JavaType.METHOD_TYPE.getTypeStub());
+                    return new ForStackManipulation(ClassConstant.of(TypeDescription.ForLoadedType.of((Class<?>) value)), Class.class);
+                } else if (value instanceof TypeDescription) {
+                    return new ForStackManipulation(ClassConstant.of((TypeDescription) value), Class.class);
                 } else if (value instanceof Enum<?>) {
                     EnumerationDescription enumerationDescription = new EnumerationDescription.ForLoadedEnumeration((Enum<?>) value);
                     return new ForStackManipulation(FieldAccess.forEnumeration(enumerationDescription), enumerationDescription.getEnumerationType());
+                } else if (value instanceof EnumerationDescription) {
+                    return new ForStackManipulation(FieldAccess.forEnumeration((EnumerationDescription) value), ((EnumerationDescription) value).getEnumerationType());
+                } else if (JavaType.METHOD_HANDLE.isInstance(value)) {
+                    return new ForStackManipulation(new JavaConstantValue(JavaConstant.MethodHandle.ofLoaded(value)), JavaType.METHOD_HANDLE.getTypeStub());
+                } else if (JavaType.METHOD_TYPE.isInstance(value)) {
+                    return new ForStackManipulation(new JavaConstantValue(JavaConstant.MethodType.ofLoaded(value)), JavaType.METHOD_TYPE.getTypeStub());
+                } else if (value instanceof JavaConstant) {
+                    return new ForStackManipulation(new JavaConstantValue((JavaConstant) value), ((JavaConstant) value).getTypeDescription());
                 } else {
                     return new ForInstance.Factory(value);
                 }
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public InstrumentedType prepare(InstrumentedType instrumentedType) {
                 return instrumentedType;
             }
 
-            @Override
-            public List<ArgumentLoader> make(TypeDescription instrumentedType, MethodDescription instrumentedMethod, MethodDescription invokedMethod) {
+            /**
+             * {@inheritDoc}
+             */
+            public ArgumentProvider make(Implementation.Target implementationTarget) {
+                return this;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public List<ArgumentLoader> resolve(MethodDescription instrumentedMethod, MethodDescription invokedMethod) {
                 return Collections.<ArgumentLoader>singletonList(this);
             }
 
-            @Override
-            public StackManipulation resolve(ParameterDescription target, Assigner assigner, Assigner.Typing typing) {
-                StackManipulation assigment = assigner.assign(typeDefinition.asGenericType(), target.getType(), typing);
-                if (!assigment.isValid()) {
+            /**
+             * {@inheritDoc}
+             */
+            public StackManipulation toStackManipulation(ParameterDescription target, Assigner assigner, Assigner.Typing typing) {
+                StackManipulation assignment = assigner.assign(typeDefinition.asGenericType(), target.getType(), typing);
+                if (!assignment.isValid()) {
                     throw new IllegalStateException("Cannot assign " + target + " to " + typeDefinition);
                 }
-                return new StackManipulation.Compound(stackManipulation, assigment);
+                return new StackManipulation.Compound(stackManipulation, assignment);
             }
         }
     }
@@ -1410,209 +1904,582 @@ public class MethodCall implements Implementation.Composable {
      * A target handler is responsible for invoking a method for a
      * {@link net.bytebuddy.implementation.MethodCall}.
      */
-    protected interface TargetHandler extends InstrumentedType.Prepareable {
+    protected interface TargetHandler {
 
         /**
-         * Creates a stack manipulation that represents the method's invocation.
+         * Resolves this target handler.
          *
-         * @param invokedMethod      The method to be invoked.
          * @param instrumentedMethod The instrumented method.
-         * @param instrumentedType   The instrumented type.  @return A stack manipulation that invokes the method.
-         * @param assigner           The assigner to use.
-         * @param typing             The typing to apply.
-         * @return A stack manipulation that loads the method target onto the operand stack.
+         * @return The resolved target handler.
          */
-        StackManipulation resolve(MethodDescription invokedMethod,
-                                  MethodDescription instrumentedMethod,
-                                  TypeDescription instrumentedType,
-                                  Assigner assigner,
-                                  Assigner.Typing typing);
+        Resolved resolve(MethodDescription instrumentedMethod);
+
+        /**
+         * A resolved target handler.
+         */
+        interface Resolved {
+
+            /**
+             * Returns the target's type description.
+             *
+             * @return The target's type description.
+             */
+            TypeDescription getTypeDescription();
+
+            /**
+             * Creates a stack manipulation to represent this resolved target handler.
+             *
+             * @param invokedMethod The invoked method.
+             * @param assigner      The assigner to use.
+             * @param typing        The typing to apply.
+             * @return A stack manipulation that implements this target handler.
+             */
+            StackManipulation toStackManipulation(MethodDescription invokedMethod, Assigner assigner, Assigner.Typing typing);
+        }
+
+        /**
+         * A factory for creating a target handler.
+         */
+        interface Factory extends InstrumentedType.Prepareable {
+
+            /**
+             * Creates a target handler for a given implementation target.
+             *
+             * @param implementationTarget The implementation target to use.
+             * @return The target handler to use.
+             */
+            TargetHandler make(Implementation.Target implementationTarget);
+        }
+
+        /**
+         * A simple target handler that applies a given stack manipulation.
+         */
+        @HashCodeAndEqualsPlugin.Enhance
+        class Simple implements TargetHandler, Factory, Resolved {
+
+            /**
+             * The type resolved by the stack manipulation.
+             */
+            private final TypeDescription typeDescription;
+
+            /**
+             * The stack manipulation that loads a target for the method call.
+             */
+            private final StackManipulation stackManipulation;
+
+            /**
+             * Creates a simple target handler.
+             *
+             * @param typeDescription   The type resolved by the stack manipulation.
+             * @param stackManipulation The stack manipulation that loads a target for the method call.
+             */
+            protected Simple(TypeDescription typeDescription, StackManipulation stackManipulation) {
+                this.typeDescription = typeDescription;
+                this.stackManipulation = stackManipulation;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public TargetHandler make(Target implementationTarget) {
+                return this;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public InstrumentedType prepare(InstrumentedType instrumentedType) {
+                return instrumentedType;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public Resolved resolve(MethodDescription instrumentedMethod) {
+                return this;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public TypeDescription getTypeDescription() {
+                return typeDescription;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public StackManipulation toStackManipulation(MethodDescription invokedMethod, Assigner assigner, Assigner.Typing typing) {
+                return stackManipulation;
+            }
+        }
 
         /**
          * A target handler that invokes a method either on the instance of the instrumented
          * type or as a static method.
          */
-        enum ForSelfOrStaticInvocation implements TargetHandler {
+        @HashCodeAndEqualsPlugin.Enhance
+        class ForSelfOrStaticInvocation implements TargetHandler {
 
             /**
-             * The singleton instance.
+             * The instrumented type.
              */
-            INSTANCE;
+            private final TypeDescription instrumentedType;
 
-            @Override
-            public StackManipulation resolve(MethodDescription invokedMethod,
-                                             MethodDescription instrumentedMethod,
-                                             TypeDescription instrumentedType,
-                                             Assigner assigner,
-                                             Assigner.Typing typing) {
-                if (instrumentedMethod.isStatic() && !invokedMethod.isStatic() && !invokedMethod.isConstructor()) {
-                    throw new IllegalStateException("Cannot invoke " + invokedMethod + " from " + instrumentedMethod);
-                }
-                return new StackManipulation.Compound(
-                        invokedMethod.isStatic()
-                                ? StackManipulation.Trivial.INSTANCE
-                                : MethodVariableAccess.loadThis(),
-                        invokedMethod.isConstructor()
-                                ? Duplication.SINGLE
-                                : StackManipulation.Trivial.INSTANCE
-                );
+            /**
+             * Creates a new target handler for a static or self-declared invocation.
+             *
+             * @param instrumentedType The instrumented type.
+             */
+            protected ForSelfOrStaticInvocation(TypeDescription instrumentedType) {
+                this.instrumentedType = instrumentedType;
             }
 
-            @Override
-            public InstrumentedType prepare(InstrumentedType instrumentedType) {
-                return instrumentedType;
+            /**
+             * {@inheritDoc}
+             */
+            public TargetHandler.Resolved resolve(MethodDescription instrumentedMethod) {
+                return new Resolved(instrumentedType, instrumentedMethod);
+            }
+
+
+            /**
+             * A resolved target handler for a static or self-declared invocation.
+             */
+            @HashCodeAndEqualsPlugin.Enhance
+            protected static class Resolved implements TargetHandler.Resolved {
+
+                /**
+                 * The instrumented type.
+                 */
+                private final TypeDescription instrumentedType;
+
+                /**
+                 * The instrumented method.
+                 */
+                private final MethodDescription instrumentedMethod;
+
+                /**
+                 * Creates a resolved target handler for a static or self-declared invocation.
+                 *
+                 * @param instrumentedType   The instrumented type.
+                 * @param instrumentedMethod The instrumented method.
+                 */
+                protected Resolved(TypeDescription instrumentedType,
+                                   MethodDescription instrumentedMethod) {
+                    this.instrumentedType = instrumentedType;
+                    this.instrumentedMethod = instrumentedMethod;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public TypeDescription getTypeDescription() {
+                    return instrumentedType;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                @SuppressFBWarnings(value = "NP_NULL_ON_SOME_PATH_FROM_RETURN_VALUE", justification = "Assuming declaring type for type member.")
+                public StackManipulation toStackManipulation(MethodDescription invokedMethod, Assigner assigner, Assigner.Typing typing) {
+                    if (instrumentedMethod.isStatic() && !invokedMethod.isStatic() && !invokedMethod.isConstructor()) {
+                        throw new IllegalStateException("Cannot invoke " + invokedMethod + " from " + instrumentedMethod);
+                    } else if (invokedMethod.isConstructor() && (!instrumentedMethod.isConstructor()
+                            || !instrumentedType.equals(invokedMethod.getDeclaringType().asErasure())
+                            && (instrumentedType.getSuperClass() == null
+                            || !instrumentedType.getSuperClass().asErasure().equals(invokedMethod.getDeclaringType().asErasure())))) {
+                        throw new IllegalStateException("Cannot invoke " + invokedMethod + " from " + instrumentedMethod + " in " + instrumentedType);
+                    }
+                    return new StackManipulation.Compound(
+                            invokedMethod.isStatic()
+                                    ? StackManipulation.Trivial.INSTANCE
+                                    : MethodVariableAccess.loadThis(),
+                            invokedMethod.isConstructor()
+                                    ? Duplication.SINGLE
+                                    : StackManipulation.Trivial.INSTANCE
+                    );
+                }
+            }
+
+            /**
+             * A factory for invoking a static method or a self-declared method.
+             */
+            protected enum Factory implements TargetHandler.Factory {
+
+                /**
+                 * The singleton instance.
+                 */
+                INSTANCE;
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public InstrumentedType prepare(InstrumentedType instrumentedType) {
+                    return instrumentedType;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public TargetHandler make(Implementation.Target implementationTarget) {
+                    return new ForSelfOrStaticInvocation(implementationTarget.getInstrumentedType());
+                }
             }
         }
 
         /**
          * Invokes a method in order to construct a new instance.
          */
-        enum ForConstructingInvocation implements TargetHandler {
+        @HashCodeAndEqualsPlugin.Enhance
+        class ForConstructingInvocation implements TargetHandler, Resolved {
 
             /**
-             * The singleton instance.
+             * The instrumented type.
              */
-            INSTANCE;
+            private final TypeDescription instrumentedType;
 
-            @Override
-            public StackManipulation resolve(MethodDescription invokedMethod,
-                                             MethodDescription instrumentedMethod,
-                                             TypeDescription instrumentedType,
-                                             Assigner assigner,
-                                             Assigner.Typing typing) {
+            /**
+             * Creates a new target handle constructor invocation.
+             *
+             * @param instrumentedType The instrumented type.
+             */
+            protected ForConstructingInvocation(TypeDescription instrumentedType) {
+                this.instrumentedType = instrumentedType;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public Resolved resolve(MethodDescription instrumentedMethod) {
+                return this;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public TypeDescription getTypeDescription() {
+                return instrumentedType;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public StackManipulation toStackManipulation(MethodDescription invokedMethod, Assigner assigner, Assigner.Typing typing) {
                 return new StackManipulation.Compound(TypeCreation.of(invokedMethod.getDeclaringType().asErasure()), Duplication.SINGLE);
             }
 
-            @Override
-            public InstrumentedType prepare(InstrumentedType instrumentedType) {
-                return instrumentedType;
+            /**
+             * A target handler factory for a constructor invocation.
+             */
+            enum Factory implements TargetHandler.Factory {
+
+                /**
+                 * The singleton instance.
+                 */
+                INSTANCE;
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public InstrumentedType prepare(InstrumentedType instrumentedType) {
+                    return instrumentedType;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public TargetHandler make(Implementation.Target implementationTarget) {
+                    return new ForConstructingInvocation(implementationTarget.getInstrumentedType());
+                }
             }
         }
 
         /**
          * A target handler that invokes a method on an instance that is stored in a static field.
          */
-        @EqualsAndHashCode(exclude = "name")
-        class ForValue implements TargetHandler {
+        @HashCodeAndEqualsPlugin.Enhance
+        class ForValue implements TargetHandler, Resolved {
 
             /**
-             * The name prefix of the field to store the instance.
+             * A description of the field that contains the value.
              */
-            private static final String FIELD_PREFIX = "invocationTarget";
+            private final FieldDescription.InDefinedShape fieldDescription;
 
             /**
-             * The target on which the method is to be invoked.
-             */
-            private final Object target;
-
-            /**
-             * The type of the field.
-             */
-            private final TypeDescription.Generic fieldType;
-
-            /**
-             * The name of the field to store the target.
-             */
-            private final String name;
-
-            /**
-             * Creates a new target handler for a static field.
+             * Creates a new target handler for a field value.
              *
-             * @param target    The target on which the method is to be invoked.
-             * @param fieldType The type of the field.
+             * @param fieldDescription A description of the field that contains the value.
              */
-            protected ForValue(Object target, TypeDescription.Generic fieldType) {
-                this.target = target;
-                this.fieldType = fieldType;
-                name = FIELD_PREFIX + "$" + RandomString.make();
+            protected ForValue(FieldDescription.InDefinedShape fieldDescription) {
+                this.fieldDescription = fieldDescription;
             }
 
-            @Override
-            public StackManipulation resolve(MethodDescription invokedMethod,
-                                             MethodDescription instrumentedMethod,
-                                             TypeDescription instrumentedType,
-                                             Assigner assigner,
-                                             Assigner.Typing typing) {
-                StackManipulation stackManipulation = assigner.assign(fieldType, invokedMethod.getDeclaringType().asGenericType(), typing);
+            /**
+             * {@inheritDoc}
+             */
+            public Resolved resolve(MethodDescription instrumentedMethod) {
+                return this;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public TypeDescription getTypeDescription() {
+                return fieldDescription.getType().asErasure();
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public StackManipulation toStackManipulation(MethodDescription invokedMethod, Assigner assigner, Assigner.Typing typing) {
+                StackManipulation stackManipulation = assigner.assign(fieldDescription.getType(), invokedMethod.getDeclaringType().asGenericType(), typing);
                 if (!stackManipulation.isValid()) {
-                    throw new IllegalStateException("Cannot invoke " + invokedMethod + " on " + fieldType);
+                    throw new IllegalStateException("Cannot invoke " + invokedMethod + " on " + fieldDescription);
                 }
                 return new StackManipulation.Compound(
-                        FieldAccess.forField(instrumentedType.getDeclaredFields().filter(named(name)).getOnly()).read(),
+                        FieldAccess.forField(fieldDescription).read(),
                         stackManipulation
                 );
             }
 
-            @Override
-            public InstrumentedType prepare(InstrumentedType instrumentedType) {
-                return instrumentedType
-                        .withField(new FieldDescription.Token(name,
-                                Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC | Opcodes.ACC_VOLATILE | Opcodes.ACC_SYNTHETIC,
-                                fieldType))
-                        .withInitializer(new LoadedTypeInitializer.ForStaticField(name, target));
+            /**
+             * A factory for a target handler that loads a specific value.
+             */
+            @HashCodeAndEqualsPlugin.Enhance
+            protected static class Factory implements TargetHandler.Factory {
+
+                /**
+                 * The name prefix of the field to store the instance.
+                 */
+                private static final String FIELD_PREFIX = "invocationTarget";
+
+                /**
+                 * The target on which the method is to be invoked.
+                 */
+                private final Object target;
+
+                /**
+                 * The type of the field.
+                 */
+                private final TypeDescription.Generic fieldType;
+
+                /**
+                 * The name of the field to store the target.
+                 */
+                @HashCodeAndEqualsPlugin.ValueHandling(HashCodeAndEqualsPlugin.ValueHandling.Sort.IGNORE)
+                private final String name;
+
+                /**
+                 * Creates a new target handler for a static field.
+                 *
+                 * @param target    The target on which the method is to be invoked.
+                 * @param fieldType The type of the field.
+                 */
+                protected Factory(Object target, TypeDescription.Generic fieldType) {
+                    this.target = target;
+                    this.fieldType = fieldType;
+                    name = FIELD_PREFIX + "$" + RandomString.hashOf(target);
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public InstrumentedType prepare(InstrumentedType instrumentedType) {
+                    return instrumentedType.withAuxiliaryField(new FieldDescription.Token(name,
+                            Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC | Opcodes.ACC_VOLATILE | Opcodes.ACC_SYNTHETIC,
+                            fieldType), target);
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public TargetHandler make(Implementation.Target implementationTarget) {
+                    return new ForValue(implementationTarget.getInstrumentedType().getDeclaredFields().filter(named(name)).getOnly());
+                }
             }
         }
 
         /**
          * Creates a target handler that stores the instance to invoke a method on in an instance field.
          */
-        @EqualsAndHashCode
-        class ForField implements TargetHandler {
+        @HashCodeAndEqualsPlugin.Enhance
+        class ForField implements TargetHandler, Resolved {
 
             /**
-             * The name of the field.
+             * A description of the field that is the target.
              */
-            private final String name;
+            private final FieldDescription fieldDescription;
 
             /**
-             * The field locator factory to use.
-             */
-            private final FieldLocator.Factory fieldLocatorFactory;
-
-            /**
-             * Creates a new target handler for storing a method invocation target in an
-             * instance field.
+             * Creates a new target handler for a field description.
              *
-             * @param name                The name of the field.
-             * @param fieldLocatorFactory The field locator factory to use.
+             * @param fieldDescription A description of the field that is the target.
              */
-            protected ForField(String name, FieldLocator.Factory fieldLocatorFactory) {
-                this.name = name;
-                this.fieldLocatorFactory = fieldLocatorFactory;
+            protected ForField(FieldDescription fieldDescription) {
+                this.fieldDescription = fieldDescription;
             }
 
-            @Override
-            public StackManipulation resolve(MethodDescription invokedMethod, MethodDescription instrumentedMethod, TypeDescription instrumentedType, Assigner assigner, Assigner.Typing typing) {
-                FieldLocator.Resolution resolution = fieldLocatorFactory.make(instrumentedType).locate(name);
-                if (!resolution.isResolved()) {
-                    throw new IllegalStateException("Could not locate field name " + name + " on " + instrumentedType);
-                } else if (!resolution.getField().isStatic() && !instrumentedType.isAssignableTo(resolution.getField().getDeclaringType().asErasure())) {
-                    throw new IllegalStateException("Cannot access " + resolution.getField() + " from " + instrumentedType);
-                } else if (!invokedMethod.isInvokableOn(resolution.getField().getType().asErasure())) {
-                    throw new IllegalStateException("Cannot invoke " + invokedMethod + " on " + resolution.getField());
-                } else if (!invokedMethod.isAccessibleTo(instrumentedType)) {
-                    throw new IllegalStateException("Cannot access " + invokedMethod + " from " + instrumentedType);
+            /**
+             * {@inheritDoc}
+             */
+            public Resolved resolve(MethodDescription instrumentedMethod) {
+                return this;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public TypeDescription getTypeDescription() {
+                return fieldDescription.getType().asErasure();
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public StackManipulation toStackManipulation(MethodDescription invokedMethod, Assigner assigner, Assigner.Typing typing) {
+                if (!invokedMethod.isMethod()
+                        || !invokedMethod.isVirtual()
+                        || !invokedMethod.isVisibleTo(fieldDescription.getType().asErasure())) {
+                    throw new IllegalStateException("Cannot invoke " + invokedMethod + " on " + fieldDescription);
                 }
-                StackManipulation stackManipulation = assigner.assign(resolution.getField().getType(), invokedMethod.getDeclaringType().asGenericType(), typing);
+                StackManipulation stackManipulation = assigner.assign(fieldDescription.getType(), invokedMethod.getDeclaringType().asGenericType(), typing);
                 if (!stackManipulation.isValid()) {
-                    throw new IllegalStateException("Cannot invoke " + invokedMethod + " on " + resolution.getField());
+                    throw new IllegalStateException("Cannot invoke " + invokedMethod + " on " + fieldDescription);
                 }
-                return new StackManipulation.Compound(invokedMethod.isStatic()
+                return new StackManipulation.Compound(invokedMethod.isStatic() || fieldDescription.isStatic()
                         ? StackManipulation.Trivial.INSTANCE
-                        : MethodVariableAccess.loadThis(), FieldAccess.forField(resolution.getField()).read(), stackManipulation);
+                        : MethodVariableAccess.loadThis(),
+                        FieldAccess.forField(fieldDescription).read(), stackManipulation);
             }
 
-            @Override
-            public InstrumentedType prepare(InstrumentedType instrumentedType) {
-                return instrumentedType;
+            /**
+             * A location of a field.
+             */
+            protected interface Location {
+
+                /**
+                 * Resolves the field to invoke the method upon.
+                 *
+                 * @param instrumentedType The instrumented type.
+                 * @return The field to invoke the method upon.
+                 */
+                FieldDescription resolve(TypeDescription instrumentedType);
+
+                /**
+                 * An implicit field location.
+                 */
+                @HashCodeAndEqualsPlugin.Enhance
+                class ForImplicitField implements Location {
+
+                    /**
+                     * The name of the field.
+                     */
+                    private final String name;
+
+                    /**
+                     * The field locator factory to use.
+                     */
+                    private final FieldLocator.Factory fieldLocatorFactory;
+
+                    /**
+                     * Creates an implicit field location.
+                     *
+                     * @param name                The name of the field.
+                     * @param fieldLocatorFactory The field locator factory to use.
+                     */
+                    protected ForImplicitField(String name, FieldLocator.Factory fieldLocatorFactory) {
+                        this.name = name;
+                        this.fieldLocatorFactory = fieldLocatorFactory;
+                    }
+
+                    /**
+                     * {@inheritDoc}
+                     */
+                    public FieldDescription resolve(TypeDescription instrumentedType) {
+                        FieldLocator.Resolution resolution = fieldLocatorFactory.make(instrumentedType).locate(name);
+                        if (!resolution.isResolved()) {
+                            throw new IllegalStateException("Could not locate field name " + name + " on " + instrumentedType);
+                        }
+                        return resolution.getField();
+                    }
+                }
+
+                /**
+                 * An explicit field location.
+                 */
+                @HashCodeAndEqualsPlugin.Enhance
+                class ForExplicitField implements Location {
+
+                    /**
+                     * The field to resolve.
+                     */
+                    private final FieldDescription fieldDescription;
+
+                    /**
+                     * Creates an explicit field location.
+                     *
+                     * @param fieldDescription The field to resolve.
+                     */
+                    protected ForExplicitField(FieldDescription fieldDescription) {
+                        this.fieldDescription = fieldDescription;
+                    }
+
+                    /**
+                     * {@inheritDoc}
+                     */
+                    public FieldDescription resolve(TypeDescription instrumentedType) {
+                        return fieldDescription;
+                    }
+                }
+            }
+
+            /**
+             * A factory for a field access.
+             */
+            @HashCodeAndEqualsPlugin.Enhance
+            protected static class Factory implements TargetHandler.Factory {
+
+                /**
+                 * The field's location.
+                 */
+                private final Location location;
+
+                /**
+                 * Creates a new target handler factory for a field location.
+                 *
+                 * @param location The field's location.
+                 */
+                protected Factory(Location location) {
+                    this.location = location;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public InstrumentedType prepare(InstrumentedType instrumentedType) {
+                    return instrumentedType;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                @SuppressFBWarnings(value = "NP_NULL_ON_SOME_PATH_FROM_RETURN_VALUE", justification = "Assuming declaring type for type member.")
+                public TargetHandler make(Implementation.Target implementationTarget) {
+                    FieldDescription fieldDescription = location.resolve(implementationTarget.getInstrumentedType());
+                    if (!fieldDescription.isStatic() && !implementationTarget.getInstrumentedType().isAssignableTo(fieldDescription.getDeclaringType().asErasure())) {
+                        throw new IllegalStateException("Cannot access " + fieldDescription + " from " + implementationTarget.getInstrumentedType());
+                    }
+                    return new ForField(fieldDescription);
+                }
             }
         }
 
         /**
          * A target handler that loads the parameter of the given index as the target object.
          */
-        @EqualsAndHashCode
-        class ForMethodParameter implements TargetHandler {
+        @HashCodeAndEqualsPlugin.Enhance
+        class ForMethodParameter implements TargetHandler, Factory {
 
             /**
              * The index of the instrumented method's parameter that is the target of the method invocation.
@@ -1628,26 +2495,200 @@ public class MethodCall implements Implementation.Composable {
                 this.index = index;
             }
 
-            @Override
-            public StackManipulation resolve(MethodDescription invokedMethod,
-                                             MethodDescription instrumentedMethod,
-                                             TypeDescription instrumentedType,
-                                             Assigner assigner,
-                                             Assigner.Typing typing) {
-                if (instrumentedMethod.getParameters().size() < index) {
-                    throw new IllegalArgumentException(instrumentedMethod + " does not have a parameter with index " + index);
-                }
-                ParameterDescription parameterDescription = instrumentedMethod.getParameters().get(index);
-                StackManipulation stackManipulation = assigner.assign(parameterDescription.getType(), invokedMethod.getDeclaringType().asGenericType(), typing);
-                if (!stackManipulation.isValid()) {
-                    throw new IllegalStateException("Cannot invoke " + invokedMethod + " on " + parameterDescription.getType());
-                }
-                return new StackManipulation.Compound(MethodVariableAccess.load(parameterDescription), stackManipulation);
-            }
-
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public InstrumentedType prepare(InstrumentedType instrumentedType) {
                 return instrumentedType;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public TargetHandler make(Implementation.Target implementationTarget) {
+                return this;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public TargetHandler.Resolved resolve(MethodDescription instrumentedMethod) {
+                if (index >= instrumentedMethod.getParameters().size()) {
+                    throw new IllegalArgumentException(instrumentedMethod + " does not have a parameter with index " + index);
+                }
+                return new Resolved(instrumentedMethod.getParameters().get(index));
+            }
+
+            /**
+             * A resolved target handler for a method parameter.
+             */
+            @HashCodeAndEqualsPlugin.Enhance
+            protected static class Resolved implements TargetHandler.Resolved {
+
+                /**
+                 * The parameter that is the target of the method call.
+                 */
+                private final ParameterDescription parameterDescription;
+
+                /**
+                 * Creates a new resolved target handler for a parameter.
+                 *
+                 * @param parameterDescription The parameter that is the target of the method call.
+                 */
+                protected Resolved(ParameterDescription parameterDescription) {
+                    this.parameterDescription = parameterDescription;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public TypeDescription getTypeDescription() {
+                    return parameterDescription.getType().asErasure();
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public StackManipulation toStackManipulation(MethodDescription invokedMethod, Assigner assigner, Assigner.Typing typing) {
+                    StackManipulation stackManipulation = assigner.assign(parameterDescription.getType(), invokedMethod.getDeclaringType().asGenericType(), typing);
+                    if (!stackManipulation.isValid()) {
+                        throw new IllegalStateException("Cannot invoke " + invokedMethod + " on " + parameterDescription.getType());
+                    }
+                    return new StackManipulation.Compound(MethodVariableAccess.load(parameterDescription), stackManipulation);
+                }
+            }
+        }
+
+        /**
+         * A target handler that executes the method and uses it's return value as the target object.
+         */
+        @HashCodeAndEqualsPlugin.Enhance
+        class ForMethodCall implements TargetHandler {
+
+            /**
+             * The appender that is the target of the using method call.
+             */
+            private final Appender appender;
+
+            /**
+             * Creates a new target handler for another method call.
+             *
+             * @param appender The appender that is the target of the using method call.
+             */
+            protected ForMethodCall(Appender appender) {
+                this.appender = appender;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public TargetHandler.Resolved resolve(MethodDescription instrumentedMethod) {
+                TargetHandler.Resolved targetHandler = appender.targetHandler.resolve(instrumentedMethod);
+                return new Resolved(appender, appender.toInvokedMethod(instrumentedMethod, targetHandler), instrumentedMethod,
+                        targetHandler);
+            }
+
+            /**
+             * A resolved target handler for a method call.
+             */
+            @HashCodeAndEqualsPlugin.Enhance
+            protected static class Resolved implements TargetHandler.Resolved {
+
+                /**
+                 * The appender to use.
+                 */
+                private final Appender appender;
+
+                /**
+                 * The invoked method.
+                 */
+                private final MethodDescription methodDescription;
+
+                /**
+                 * The instrumented method.
+                 */
+                private final MethodDescription instrumentedMethod;
+
+                /**
+                 * The target handler to use.
+                 */
+                private final TargetHandler.Resolved targetHandler;
+
+                /**
+                 * Creates a resolved target handler for a method call.
+                 *
+                 * @param appender           The appender to use.
+                 * @param methodDescription  The invoked method.
+                 * @param instrumentedMethod The instrumented method.
+                 * @param targetHandler      The target handler to use.
+                 */
+                protected Resolved(Appender appender, MethodDescription methodDescription, MethodDescription instrumentedMethod, TargetHandler.Resolved targetHandler) {
+                    this.appender = appender;
+                    this.methodDescription = methodDescription;
+                    this.instrumentedMethod = instrumentedMethod;
+                    this.targetHandler = targetHandler;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public TypeDescription getTypeDescription() {
+                    return methodDescription.isConstructor()
+                            ? methodDescription.getDeclaringType().asErasure()
+                            : methodDescription.getReturnType().asErasure();
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public StackManipulation toStackManipulation(MethodDescription invokedMethod, Assigner assigner, Assigner.Typing typing) {
+                    StackManipulation stackManipulation = assigner.assign(methodDescription.isConstructor()
+                            ? methodDescription.getDeclaringType().asGenericType()
+                            : methodDescription.getReturnType(), invokedMethod.getDeclaringType().asGenericType(), typing);
+                    if (!stackManipulation.isValid()) {
+                        throw new IllegalStateException("Cannot invoke " + invokedMethod + " on " + (methodDescription.isConstructor()
+                                ? methodDescription.getDeclaringType()
+                                : methodDescription.getReturnType()));
+                    }
+                    return new StackManipulation.Compound(appender.toStackManipulation(instrumentedMethod,
+                            methodDescription,
+                            targetHandler), stackManipulation);
+                }
+            }
+
+            /**
+             * Creates a factory for invoking a method on the return type of another method.
+             */
+            @HashCodeAndEqualsPlugin.Enhance
+            protected static class Factory implements TargetHandler.Factory {
+
+                /**
+                 * The method call to invoke.
+                 */
+                private final MethodCall methodCall;
+
+                /**
+                 * Creates a new factory for invoking another method call as a method target.
+                 *
+                 * @param methodCall The method call to invoke.
+                 */
+                public Factory(MethodCall methodCall) {
+                    this.methodCall = methodCall;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public InstrumentedType prepare(InstrumentedType instrumentedType) {
+                    return methodCall.prepare(instrumentedType);
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public TargetHandler make(Implementation.Target implementationTarget) {
+                    return new ForMethodCall(methodCall.new Appender(implementationTarget, TerminationHandler.Simple.IGNORING));
+                }
             }
         }
     }
@@ -1665,34 +2706,78 @@ public class MethodCall implements Implementation.Composable {
          * @param implementationTarget The implementation target of the instrumented instance.
          * @return A stack manipulation that represents the method invocation.
          */
-        StackManipulation invoke(MethodDescription invokedMethod, Target implementationTarget);
+        StackManipulation toStackManipulation(MethodDescription invokedMethod, Implementation.Target implementationTarget);
+
+        /**
+         * A factory for creating a method invoker.
+         */
+        interface Factory {
+
+            /**
+             * Creates a method invoker.
+             *
+             * @param instrumentedType The instrumented type.
+             * @return The method invoker to use.
+             */
+            MethodInvoker make(TypeDescription instrumentedType);
+        }
 
         /**
          * Applies a contextual invocation of the provided method, i.e. a static invocation for static methods,
          * a special invocation for constructors and private methods and a virtual invocation for any other method.
          */
-        enum ForContextualInvocation implements MethodInvoker {
+        @HashCodeAndEqualsPlugin.Enhance
+        class ForContextualInvocation implements MethodInvoker {
 
             /**
-             * The singleton instance.
+             * The instrumented type.
              */
-            INSTANCE;
+            private final TypeDescription instrumentedType;
 
-            @Override
-            public StackManipulation invoke(MethodDescription invokedMethod, Target implementationTarget) {
-                if (invokedMethod.isVirtual() && !invokedMethod.isInvokableOn(implementationTarget.getInstrumentedType())) {
-                    throw new IllegalStateException("Cannot invoke " + invokedMethod + " on " + implementationTarget.getInstrumentedType());
+            /**
+             * Creates a new method invoker for a contextual invocation.
+             *
+             * @param instrumentedType The instrumented type.
+             */
+            protected ForContextualInvocation(TypeDescription instrumentedType) {
+                this.instrumentedType = instrumentedType;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public StackManipulation toStackManipulation(MethodDescription invokedMethod, Implementation.Target implementationTarget) {
+                if (invokedMethod.isVirtual() && !invokedMethod.isInvokableOn(instrumentedType)) {
+                    throw new IllegalStateException("Cannot invoke " + invokedMethod + " on " + instrumentedType);
                 }
                 return invokedMethod.isVirtual()
-                        ? MethodInvocation.invoke(invokedMethod).virtual(implementationTarget.getInstrumentedType())
+                        ? MethodInvocation.invoke(invokedMethod).virtual(instrumentedType)
                         : MethodInvocation.invoke(invokedMethod);
+            }
+
+            /**
+             * A factory for creating a contextual method invoker.
+             */
+            enum Factory implements MethodInvoker.Factory {
+
+                /**
+                 * The singleton instance.
+                 */
+                INSTANCE;
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public MethodInvoker make(TypeDescription instrumentedType) {
+                    return new ForContextualInvocation(instrumentedType);
+                }
             }
         }
 
         /**
          * Applies a virtual invocation on a given type.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class ForVirtualInvocation implements MethodInvoker {
 
             /**
@@ -1710,42 +2795,71 @@ public class MethodCall implements Implementation.Composable {
             }
 
             /**
-             * Creates a new method invoking for a virtual method invocation.
-             *
-             * @param type The type to virtually invoke the method upon.
+             * {@inheritDoc}
              */
-            protected ForVirtualInvocation(Class<?> type) {
-                this(new TypeDescription.ForLoadedType(type));
-            }
-
-            @Override
-            public StackManipulation invoke(MethodDescription invokedMethod, Target implementationTarget) {
-                if (!invokedMethod.isVirtual()) {
-                    throw new IllegalStateException("Cannot invoke " + invokedMethod + " virtually");
-                } else if (!invokedMethod.isInvokableOn(typeDescription.asErasure())) {
+            public StackManipulation toStackManipulation(MethodDescription invokedMethod, Implementation.Target implementationTarget) {
+                if (!invokedMethod.isInvokableOn(typeDescription)) {
                     throw new IllegalStateException("Cannot invoke " + invokedMethod + " on " + typeDescription);
-                } else if (!typeDescription.asErasure().isAccessibleTo(implementationTarget.getInstrumentedType())) {
-                    throw new IllegalStateException(typeDescription + " is not accessible to " + implementationTarget.getInstrumentedType());
                 }
-                return MethodInvocation.invoke(invokedMethod).virtual(typeDescription.asErasure());
+                return MethodInvocation.invoke(invokedMethod).virtual(typeDescription);
             }
 
             /**
              * A method invoker for a virtual method that uses an implicit target type.
              */
-            public enum WithImplicitType implements MethodInvoker {
+            protected enum WithImplicitType implements MethodInvoker, MethodInvoker.Factory {
 
                 /**
                  * The singleton instance.
                  */
                 INSTANCE;
 
-                @Override
-                public StackManipulation invoke(MethodDescription invokedMethod, Target implementationTarget) {
-                    if (!invokedMethod.isVirtual()) {
+                /**
+                 * {@inheritDoc}
+                 */
+                public MethodInvoker make(TypeDescription instrumentedType) {
+                    return this;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public StackManipulation toStackManipulation(MethodDescription invokedMethod, Implementation.Target implementationTarget) {
+                    if (!invokedMethod.isAccessibleTo(implementationTarget.getInstrumentedType()) || !invokedMethod.isVirtual()) {
                         throw new IllegalStateException("Cannot invoke " + invokedMethod + " virtually");
                     }
                     return MethodInvocation.invoke(invokedMethod);
+                }
+            }
+
+            /**
+             * A method invoker factory for a virtual method invocation.
+             */
+            @HashCodeAndEqualsPlugin.Enhance
+            protected static class Factory implements MethodInvoker.Factory {
+
+                /**
+                 * The type on which the virtual method is invoked.
+                 */
+                private final TypeDescription typeDescription;
+
+                /**
+                 * Creates a new method invoker factory for a virtual method call.
+                 *
+                 * @param typeDescription The type on which the virtual method is invoked.
+                 */
+                protected Factory(TypeDescription typeDescription) {
+                    this.typeDescription = typeDescription;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public MethodInvoker make(TypeDescription instrumentedType) {
+                    if (!typeDescription.asErasure().isAccessibleTo(instrumentedType)) {
+                        throw new IllegalStateException(typeDescription + " is not accessible to " + instrumentedType);
+                    }
+                    return new ForVirtualInvocation(typeDescription);
                 }
             }
         }
@@ -1753,48 +2867,113 @@ public class MethodCall implements Implementation.Composable {
         /**
          * Applies a super method invocation of the provided method.
          */
-        enum ForSuperMethodInvocation implements MethodInvoker {
+        @HashCodeAndEqualsPlugin.Enhance
+        class ForSuperMethodInvocation implements MethodInvoker {
 
             /**
-             * The singleton instance.
+             * The instrumented type.
              */
-            INSTANCE;
+            private final TypeDescription instrumentedType;
 
-            @Override
-            public StackManipulation invoke(MethodDescription invokedMethod, Target implementationTarget) {
-                if (implementationTarget.getInstrumentedType().getSuperClass() == null) {
-                    throw new IllegalStateException("Cannot invoke super method for " + implementationTarget.getInstrumentedType());
-                } else if (!invokedMethod.isInvokableOn(implementationTarget.getOriginType().asErasure())) {
-                    throw new IllegalStateException("Cannot invoke " + invokedMethod + " as super method of " + implementationTarget.getInstrumentedType());
+            /**
+             * Creates a method invoker for a super method invocation.
+             *
+             * @param instrumentedType The instrumented type.
+             */
+            protected ForSuperMethodInvocation(TypeDescription instrumentedType) {
+                this.instrumentedType = instrumentedType;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public StackManipulation toStackManipulation(MethodDescription invokedMethod, Implementation.Target implementationTarget) {
+                if (!invokedMethod.isInvokableOn(implementationTarget.getOriginType().asErasure())) {
+                    throw new IllegalStateException("Cannot invoke " + invokedMethod + " as super method of " + instrumentedType);
                 }
-                StackManipulation stackManipulation = implementationTarget.invokeDominant(invokedMethod.asSignatureToken());
+                StackManipulation stackManipulation = implementationTarget
+                        .invokeDominant(invokedMethod.asSignatureToken())
+                        .withCheckedCompatibilityTo(invokedMethod.asTypeToken());
                 if (!stackManipulation.isValid()) {
                     throw new IllegalStateException("Cannot invoke " + invokedMethod + " as a super method");
                 }
                 return stackManipulation;
+            }
+
+            /**
+             * A method invoker factory for a super method invocation.
+             */
+            enum Factory implements MethodInvoker.Factory {
+
+                /**
+                 * The singleton instance.
+                 */
+                INSTANCE;
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public MethodInvoker make(TypeDescription instrumentedType) {
+                    if (instrumentedType.getSuperClass() == null) {
+                        throw new IllegalStateException("Cannot invoke super method for " + instrumentedType);
+                    }
+                    return new ForSuperMethodInvocation(instrumentedType);
+                }
             }
         }
 
         /**
          * Invokes a method as a Java 8 default method.
          */
-        enum ForDefaultMethodInvocation implements MethodInvoker {
+        @HashCodeAndEqualsPlugin.Enhance
+        class ForDefaultMethodInvocation implements MethodInvoker {
 
             /**
-             * The singleton instance.
+             * The instrumented type.
              */
-            INSTANCE;
+            private final TypeDescription instrumentedType;
 
-            @Override
-            public StackManipulation invoke(MethodDescription invokedMethod, Target implementationTarget) {
-                if (!invokedMethod.isInvokableOn(implementationTarget.getInstrumentedType())) {
-                    throw new IllegalStateException("Cannot invoke " + invokedMethod + " as default method of " + implementationTarget.getInstrumentedType());
+            /**
+             * Creates a new method invoker for a default method invocation.
+             *
+             * @param instrumentedType The instrumented type.
+             */
+            protected ForDefaultMethodInvocation(TypeDescription instrumentedType) {
+                this.instrumentedType = instrumentedType;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public StackManipulation toStackManipulation(MethodDescription invokedMethod, Implementation.Target implementationTarget) {
+                if (!invokedMethod.isInvokableOn(instrumentedType)) {
+                    throw new IllegalStateException("Cannot invoke " + invokedMethod + " as default method of " + instrumentedType);
                 }
-                StackManipulation stackManipulation = implementationTarget.invokeDefault(invokedMethod.asSignatureToken(), invokedMethod.getDeclaringType().asErasure());
+                StackManipulation stackManipulation = implementationTarget
+                        .invokeDefault(invokedMethod.asSignatureToken(), invokedMethod.getDeclaringType().asErasure())
+                        .withCheckedCompatibilityTo(invokedMethod.asTypeToken());
                 if (!stackManipulation.isValid()) {
-                    throw new IllegalStateException("Cannot invoke " + invokedMethod + " on " + implementationTarget.getInstrumentedType());
+                    throw new IllegalStateException("Cannot invoke " + invokedMethod + " on " + instrumentedType);
                 }
                 return stackManipulation;
+            }
+
+            /**
+             * A factory for creating a method invoker for a default method invocation.
+             */
+            enum Factory implements MethodInvoker.Factory {
+
+                /**
+                 * The singleton instance.
+                 */
+                INSTANCE;
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public MethodInvoker make(TypeDescription instrumentedType) {
+                    return new ForDefaultMethodInvocation(instrumentedType);
+                }
             }
         }
     }
@@ -1803,35 +2982,14 @@ public class MethodCall implements Implementation.Composable {
      * A termination handler is responsible to handle the return value of a method that is invoked via a
      * {@link net.bytebuddy.implementation.MethodCall}.
      */
-    protected enum TerminationHandler {
+    protected interface TerminationHandler {
 
         /**
-         * A termination handler that returns the invoked method's return value.
+         * Returns a preparing stack manipulation to apply prior to the method call.
+         *
+         * @return The stack manipulation to apply prior to the method call.
          */
-        RETURNING {
-            @Override
-            public StackManipulation resolve(MethodDescription invokedMethod, MethodDescription instrumentedMethod, Assigner assigner, Assigner.Typing typing) {
-                StackManipulation stackManipulation = assigner.assign(invokedMethod.isConstructor()
-                        ? invokedMethod.getDeclaringType().asGenericType()
-                        : invokedMethod.getReturnType(), instrumentedMethod.getReturnType(), typing);
-                if (!stackManipulation.isValid()) {
-                    throw new IllegalStateException("Cannot return " + invokedMethod.getReturnType() + " from " + instrumentedMethod);
-                }
-                return new StackManipulation.Compound(stackManipulation, MethodReturn.of(instrumentedMethod.getReturnType()));
-            }
-        },
-
-        /**
-         * A termination handler that drops the invoked method's return value.
-         */
-        DROPPING {
-            @Override
-            protected StackManipulation resolve(MethodDescription invokedMethod, MethodDescription instrumentedMethod, Assigner assigner, Assigner.Typing typing) {
-                return Removal.of(invokedMethod.isConstructor()
-                        ? invokedMethod.getDeclaringType()
-                        : invokedMethod.getReturnType());
-            }
-        };
+        StackManipulation prepare();
 
         /**
          * Returns a stack manipulation that handles the method return.
@@ -1842,10 +3000,201 @@ public class MethodCall implements Implementation.Composable {
          * @param typing             Indicates if dynamic type castings should be attempted for incompatible assignments.
          * @return A stack manipulation that handles the method return.
          */
-        protected abstract StackManipulation resolve(MethodDescription invokedMethod,
-                                                     MethodDescription instrumentedMethod,
-                                                     Assigner assigner,
-                                                     Assigner.Typing typing);
+        StackManipulation toStackManipulation(MethodDescription invokedMethod, MethodDescription instrumentedMethod, Assigner assigner, Assigner.Typing typing);
+
+        /**
+         * A factory for creating a termination handler.
+         */
+        interface Factory {
+
+            /**
+             * Creates a termination handler for a given instrumented type.
+             *
+             * @param instrumentedType The instrumented type.
+             * @return A termination handler to apply for the instrumented type.
+             */
+            TerminationHandler make(TypeDescription instrumentedType);
+        }
+
+        /**
+         * Simple termination handler implementations.
+         */
+        enum Simple implements TerminationHandler, Factory {
+
+            /**
+             * A termination handler that returns the invoked method's return value.
+             */
+            RETURNING {
+                /**
+                 * {@inheritDoc}
+                 */
+                public StackManipulation toStackManipulation(MethodDescription invokedMethod, MethodDescription instrumentedMethod, Assigner assigner, Assigner.Typing typing) {
+                    StackManipulation stackManipulation = assigner.assign(invokedMethod.isConstructor()
+                            ? invokedMethod.getDeclaringType().asGenericType()
+                            : invokedMethod.getReturnType(), instrumentedMethod.getReturnType(), typing);
+                    if (!stackManipulation.isValid()) {
+                        throw new IllegalStateException("Cannot return " + invokedMethod.getReturnType() + " from " + instrumentedMethod);
+                    }
+                    return new StackManipulation.Compound(stackManipulation, MethodReturn.of(instrumentedMethod.getReturnType()));
+                }
+            },
+
+            /**
+             * A termination handler that drops the invoked method's return value.
+             */
+            DROPPING {
+                /**
+                 * {@inheritDoc}
+                 */
+                public StackManipulation toStackManipulation(MethodDescription invokedMethod, MethodDescription instrumentedMethod, Assigner assigner, Assigner.Typing typing) {
+                    return Removal.of(invokedMethod.isConstructor()
+                            ? invokedMethod.getDeclaringType()
+                            : invokedMethod.getReturnType());
+                }
+            },
+
+            /**
+             * A termination handler that does not apply any change.
+             */
+            IGNORING {
+                /**
+                 * {@inheritDoc}
+                 */
+                public StackManipulation toStackManipulation(MethodDescription invokedMethod, MethodDescription instrumentedMethod, Assigner assigner, Assigner.Typing typing) {
+                    return StackManipulation.Trivial.INSTANCE;
+                }
+            };
+
+            /**
+             * {@inheritDoc}
+             */
+            public TerminationHandler make(TypeDescription instrumentedType) {
+                return this;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public StackManipulation prepare() {
+                return StackManipulation.Trivial.INSTANCE;
+            }
+        }
+
+
+        /**
+         * A termination handler that sets a field.
+         */
+        @HashCodeAndEqualsPlugin.Enhance
+        class FieldSetting implements TerminationHandler {
+
+            /**
+             * The field to set.
+             */
+            private final FieldDescription fieldDescription;
+
+            /**
+             * Creates a new field-setting termination handler.
+             *
+             * @param fieldDescription The field to set.
+             */
+            protected FieldSetting(FieldDescription fieldDescription) {
+                this.fieldDescription = fieldDescription;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public StackManipulation prepare() {
+                return fieldDescription.isStatic()
+                        ? StackManipulation.Trivial.INSTANCE
+                        : MethodVariableAccess.loadThis();
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public StackManipulation toStackManipulation(MethodDescription invokedMethod, MethodDescription instrumentedMethod, Assigner assigner, Assigner.Typing typing) {
+                StackManipulation stackManipulation = assigner.assign(invokedMethod.isConstructor()
+                        ? invokedMethod.getDeclaringType().asGenericType()
+                        : invokedMethod.getReturnType(), fieldDescription.getType(), typing);
+                if (!stackManipulation.isValid()) {
+                    throw new IllegalStateException("Cannot assign result of " + invokedMethod + " to " + fieldDescription);
+                }
+                return new StackManipulation.Compound(stackManipulation, FieldAccess.forField(fieldDescription).write());
+            }
+
+            /**
+             * A factory for a field-setting termination handler that locates a given field.
+             */
+            @HashCodeAndEqualsPlugin.Enhance
+            protected static class Explicit implements TerminationHandler.Factory {
+
+                /**
+                 * The matcher being used for locating a field.
+                 */
+                private final FieldDescription fieldDescription;
+
+                /**
+                 * Creates a factory for a field-setting termination handler.
+                 *
+                 * @param fieldDescription The field to set.
+                 */
+                protected Explicit(FieldDescription fieldDescription) {
+                    this.fieldDescription = fieldDescription;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                @SuppressFBWarnings(value = "NP_NULL_ON_SOME_PATH_FROM_RETURN_VALUE", justification = "Assuming declaring type for type member.")
+                public TerminationHandler make(TypeDescription instrumentedType) {
+                    if (!fieldDescription.isStatic() && !instrumentedType.isAssignableTo(fieldDescription.getDeclaringType().asErasure())) {
+                        throw new IllegalStateException("Cannot set " + fieldDescription + " from " + instrumentedType);
+                    } else if (!fieldDescription.isVisibleTo(instrumentedType)) {
+                        throw new IllegalStateException("Cannot access " + fieldDescription + " from " + instrumentedType);
+                    }
+                    return new FieldSetting(fieldDescription);
+                }
+            }
+
+            /**
+             * A factory for a field-setting termination handler that uses a matcher to locate the target field on the insturmented type.
+             */
+            @HashCodeAndEqualsPlugin.Enhance
+            protected static class Implicit implements TerminationHandler.Factory {
+
+                /**
+                 * The matcher being used for locating a field.
+                 */
+                private final ElementMatcher<? super FieldDescription> matcher;
+
+                /**
+                 * Creates a factory for a field-setting termination handler.
+                 *
+                 * @param matcher The matcher being used for locating a field.
+                 */
+                protected Implicit(ElementMatcher<? super FieldDescription> matcher) {
+                    this.matcher = matcher;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public TerminationHandler make(TypeDescription instrumentedType) {
+                    TypeDefinition current = instrumentedType;
+                    do {
+                        FieldList<?> candidates = current.getDeclaredFields().filter(isVisibleTo(instrumentedType).and(matcher));
+                        if (candidates.size() == 1) {
+                            return new FieldSetting(candidates.getOnly());
+                        } else if (candidates.size() == 2) {
+                            throw new IllegalStateException(matcher + " is ambiguous and resolved: " + candidates);
+                        }
+                        current = current.getSuperClass();
+                    } while (current != null);
+                    throw new IllegalStateException(matcher + " does not locate any accessible fields for " + instrumentedType);
+                }
+            }
+        }
     }
 
     /**
@@ -1862,12 +3211,12 @@ public class MethodCall implements Implementation.Composable {
          *
          * @param methodLocator The method locator to use.
          */
-        protected WithoutSpecifiedTarget(MethodLocator methodLocator) {
+        protected WithoutSpecifiedTarget(MethodLocator.Factory methodLocator) {
             super(methodLocator,
-                    TargetHandler.ForSelfOrStaticInvocation.INSTANCE,
+                    TargetHandler.ForSelfOrStaticInvocation.Factory.INSTANCE,
                     Collections.<ArgumentLoader.Factory>emptyList(),
-                    MethodInvoker.ForContextualInvocation.INSTANCE,
-                    TerminationHandler.RETURNING,
+                    MethodInvoker.ForContextualInvocation.Factory.INSTANCE,
+                    TerminationHandler.Simple.RETURNING,
                     Assigner.DEFAULT,
                     Assigner.Typing.STATIC);
         }
@@ -1893,9 +3242,37 @@ public class MethodCall implements Implementation.Composable {
          */
         public <T> MethodCall on(T target, Class<? super T> type) {
             return new MethodCall(methodLocator,
-                    new TargetHandler.ForValue(target, new TypeDescription.Generic.OfNonGenericType.ForLoadedType(type)),
+                    new TargetHandler.ForValue.Factory(target, TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(type)),
                     argumentLoaders,
-                    new MethodInvoker.ForVirtualInvocation(type),
+                    new MethodInvoker.ForVirtualInvocation.Factory(TypeDescription.ForLoadedType.of(type)),
+                    terminationHandler,
+                    assigner,
+                    typing);
+        }
+
+        /**
+         * Invokes the specified method on an instance that is loaded by the provided stack manipulation.
+         *
+         * @param stackManipulation The stack manipulation that loads the instance that the method is invoked upon.
+         * @param type              The type of the loaded instance.
+         * @return A method call that invokes the provided method on the value of the provided stack manipulation.
+         */
+        public MethodCall on(StackManipulation stackManipulation, Class<?> type) {
+            return on(stackManipulation, TypeDescription.ForLoadedType.of(type));
+        }
+
+        /**
+         * Invokes the specified method on an instance that is loaded by the provided stack manipulation.
+         *
+         * @param stackManipulation The stack manipulation that loads the instance that the method is invoked upon.
+         * @param typeDescription   The type of the loaded instance.
+         * @return A method call that invokes the provided method on the value of the provided stack manipulation.
+         */
+        public MethodCall on(StackManipulation stackManipulation, TypeDescription typeDescription) {
+            return new MethodCall(methodLocator,
+                    new TargetHandler.Simple(typeDescription, stackManipulation),
+                    argumentLoaders,
+                    new MethodInvoker.ForVirtualInvocation.Factory(typeDescription),
                     terminationHandler,
                     assigner,
                     typing);
@@ -1939,7 +3316,49 @@ public class MethodCall implements Implementation.Composable {
          */
         public MethodCall onField(String name, FieldLocator.Factory fieldLocatorFactory) {
             return new MethodCall(methodLocator,
-                    new TargetHandler.ForField(name, fieldLocatorFactory),
+                    new TargetHandler.ForField.Factory(new TargetHandler.ForField.Location.ForImplicitField(name, fieldLocatorFactory)),
+                    argumentLoaders,
+                    MethodInvoker.ForVirtualInvocation.WithImplicitType.INSTANCE,
+                    terminationHandler,
+                    assigner,
+                    typing);
+        }
+
+        /**
+         * Invokes a method on the object stored in the specified field.
+         *
+         * @param field The field on which to invoke the method upon.
+         * @return A method call that invokes the given method on an instance that is read from a field.
+         */
+        public MethodCall onField(Field field) {
+            return onField(new FieldDescription.ForLoadedField(field));
+        }
+
+        /**
+         * Invokes a method on the object stored in the specified field.
+         *
+         * @param fieldDescription The field on which to invoke the method upon.
+         * @return A method call that invokes the given method on an instance that is read from a field.
+         */
+        public MethodCall onField(FieldDescription fieldDescription) {
+            return new MethodCall(methodLocator,
+                    new TargetHandler.ForField.Factory(new TargetHandler.ForField.Location.ForExplicitField(fieldDescription)),
+                    argumentLoaders,
+                    MethodInvoker.ForVirtualInvocation.WithImplicitType.INSTANCE,
+                    terminationHandler,
+                    assigner,
+                    typing);
+        }
+
+        /**
+         * Invokes a method on the method call's return value.
+         *
+         * @param methodCall The method call that return's value is to be used in this method call
+         * @return A method call that invokes the given method on an instance that is returned from a method call.
+         */
+        public MethodCall onMethodCall(MethodCall methodCall) {
+            return new MethodCall(methodLocator,
+                    new TargetHandler.ForMethodCall.Factory(methodCall),
                     argumentLoaders,
                     MethodInvoker.ForVirtualInvocation.WithImplicitType.INSTANCE,
                     terminationHandler,
@@ -1957,24 +3376,24 @@ public class MethodCall implements Implementation.Composable {
          */
         public MethodCall onSuper() {
             return new MethodCall(methodLocator,
-                    TargetHandler.ForSelfOrStaticInvocation.INSTANCE,
+                    TargetHandler.ForSelfOrStaticInvocation.Factory.INSTANCE,
                     argumentLoaders,
-                    MethodInvoker.ForSuperMethodInvocation.INSTANCE,
+                    MethodInvoker.ForSuperMethodInvocation.Factory.INSTANCE,
                     terminationHandler,
                     assigner,
                     typing);
         }
 
         /**
-         * Invokes the given method by a Java 8default method invocation on the instance of the instrumented type.
+         * Invokes the given method by a Java 8 default method invocation on the instance of the instrumented type.
          *
          * @return A method call where the given method is invoked as a super method invocation.
          */
         public MethodCall onDefault() {
             return new MethodCall(methodLocator,
-                    TargetHandler.ForSelfOrStaticInvocation.INSTANCE,
+                    TargetHandler.ForSelfOrStaticInvocation.Factory.INSTANCE,
                     argumentLoaders,
-                    MethodInvoker.ForDefaultMethodInvocation.INSTANCE,
+                    MethodInvoker.ForDefaultMethodInvocation.Factory.INSTANCE,
                     terminationHandler,
                     assigner,
                     typing);
@@ -1982,74 +3401,190 @@ public class MethodCall implements Implementation.Composable {
     }
 
     /**
+     * A {@link MethodCall} that sets the call's result as the value of a field.
+     */
+    @HashCodeAndEqualsPlugin.Enhance
+    public static class FieldSetting implements Composable {
+
+        /**
+         * The represented method call.
+         */
+        private final MethodCall methodCall;
+
+        /**
+         * Creates a new field setting method call.
+         *
+         * @param methodCall The represented method call.
+         */
+        protected FieldSetting(MethodCall methodCall) {
+            this.methodCall = methodCall;
+        }
+
+        /**
+         * Defines an assigner to be used for assigning values to the parameters of the invoked method. This assigner
+         * is also used for assigning the invoked method's return value to the field being set.
+         *
+         * @param assigner The assigner to use.
+         * @param typing   Indicates if dynamic type castings should be attempted for incompatible assignments.
+         * @return This field-setting method call using the provided assigner.
+         */
+        public Composable withAssigner(Assigner assigner, Assigner.Typing typing) {
+            return new FieldSetting((MethodCall) methodCall.withAssigner(assigner, typing));
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public InstrumentedType prepare(InstrumentedType instrumentedType) {
+            return methodCall.prepare(instrumentedType);
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public ByteCodeAppender appender(Target implementationTarget) {
+            return new ByteCodeAppender.Compound(methodCall.appender(implementationTarget), Appender.INSTANCE);
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public Implementation andThen(Implementation implementation) {
+            return new Compound(methodCall, implementation);
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public Composable andThen(Composable implementation) {
+            return new Compound.Composable(methodCall, implementation);
+        }
+
+        /**
+         * A byte code appender to implement a field-setting method call.
+         */
+        protected enum Appender implements ByteCodeAppender {
+
+            /**
+             * The singleton instance.
+             */
+            INSTANCE;
+
+            /**
+             * {@inheritDoc}
+             */
+            public Size apply(MethodVisitor methodVisitor, Context implementationContext, MethodDescription instrumentedMethod) {
+                if (!instrumentedMethod.getReturnType().represents(void.class)) {
+                    throw new IllegalStateException("Instrumented method " + instrumentedMethod + " does not return void for field setting method call");
+                }
+                return new Size(MethodReturn.VOID.apply(methodVisitor, implementationContext).getMaximalSize(), instrumentedMethod.getStackSize());
+            }
+        }
+    }
+
+    /**
      * The appender being used to implement a {@link net.bytebuddy.implementation.MethodCall}.
      */
+    @HashCodeAndEqualsPlugin.Enhance(includeSyntheticFields = true)
     protected class Appender implements ByteCodeAppender {
 
         /**
-         * The implementation target of the current implementation.
+         * The implementation target.
          */
-        private final Target implementationTarget;
+        private final Implementation.Target implementationTarget;
+
+        /**
+         * The method locator to use.
+         */
+        private final MethodLocator methodLocator;
+
+        /**
+         * The argument providers to use.
+         */
+        private final List<ArgumentLoader.ArgumentProvider> argumentProviders;
+
+        /**
+         * The method invoker to use.
+         */
+        private final MethodInvoker methodInvoker;
+
+        /**
+         * The target handler to use.
+         */
+        private final TargetHandler targetHandler;
+
+        /**
+         * The termination handler to use.
+         */
+        private final TerminationHandler terminationHandler;
 
         /**
          * Creates a new appender.
          *
-         * @param implementationTarget The implementation target of the current implementation.
+         * @param implementationTarget The implementation target.
+         * @param terminationHandler   The termination handler to use.
          */
-        protected Appender(Target implementationTarget) {
+        protected Appender(Target implementationTarget, TerminationHandler terminationHandler) {
             this.implementationTarget = implementationTarget;
+            methodLocator = MethodCall.this.methodLocator.make(implementationTarget.getInstrumentedType());
+            argumentProviders = new ArrayList<ArgumentLoader.ArgumentProvider>(argumentLoaders.size());
+            for (ArgumentLoader.Factory factory : argumentLoaders) {
+                argumentProviders.add(factory.make(implementationTarget));
+            }
+            methodInvoker = MethodCall.this.methodInvoker.make(implementationTarget.getInstrumentedType());
+            targetHandler = MethodCall.this.targetHandler.make(implementationTarget);
+            this.terminationHandler = terminationHandler;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Size apply(MethodVisitor methodVisitor, Context implementationContext, MethodDescription instrumentedMethod) {
-            MethodDescription invokedMethod = methodLocator.resolve(implementationTarget.getInstrumentedType(), instrumentedMethod);
-            if (!invokedMethod.isVisibleTo(implementationTarget.getInstrumentedType())) {
-                throw new IllegalStateException("Cannot invoke " + invokedMethod + " from " + implementationContext.getInstrumentedType());
-            }
-            List<ArgumentLoader> argumentLoaders = new ArrayList<ArgumentLoader>(MethodCall.this.argumentLoaders.size());
-            for (ArgumentLoader.Factory argumentLoader : MethodCall.this.argumentLoaders) {
-                argumentLoaders.addAll(argumentLoader.make(implementationTarget.getInstrumentedType(), instrumentedMethod, invokedMethod));
+            TargetHandler.Resolved targetHandler = this.targetHandler.resolve(instrumentedMethod);
+            return new Size(new StackManipulation.Compound(terminationHandler.prepare(), toStackManipulation(instrumentedMethod,
+                    toInvokedMethod(instrumentedMethod, targetHandler),
+                    targetHandler)).apply(methodVisitor, implementationContext).getMaximalSize(), instrumentedMethod.getStackSize());
+        }
+
+        /**
+         * Resolves this appender to the method being invoked.
+         *
+         * @param instrumentedMethod The instrumented method.
+         * @param targetHandler      The resolved target handler to base the stack manipulation upon.
+         * @return The invoked method.
+         */
+        protected MethodDescription toInvokedMethod(MethodDescription instrumentedMethod, TargetHandler.Resolved targetHandler) {
+            return methodLocator.resolve(targetHandler.getTypeDescription(), instrumentedMethod);
+        }
+
+        /**
+         * Resolves this appender to a stack manipulation.
+         *
+         * @param instrumentedMethod The instrumented method.
+         * @param invokedMethod      The invoked method.
+         * @param targetHandler      The resolved target handler to base the stack manipulation upon.
+         * @return A stack manipulation that represents this method call.
+         */
+        protected StackManipulation toStackManipulation(MethodDescription instrumentedMethod, MethodDescription invokedMethod, TargetHandler.Resolved targetHandler) {
+            List<ArgumentLoader> argumentLoaders = new ArrayList<ArgumentLoader>();
+            for (ArgumentLoader.ArgumentProvider argumentProvider : argumentProviders) {
+                argumentLoaders.addAll(argumentProvider.resolve(instrumentedMethod, invokedMethod));
             }
             ParameterList<?> parameters = invokedMethod.getParameters();
             if (parameters.size() != argumentLoaders.size()) {
-                throw new IllegalStateException(invokedMethod + " does not take " + argumentLoaders.size() + " arguments");
+                throw new IllegalStateException(invokedMethod + " does not accept " + argumentLoaders.size() + " arguments");
             }
             Iterator<? extends ParameterDescription> parameterIterator = parameters.iterator();
             List<StackManipulation> argumentInstructions = new ArrayList<StackManipulation>(argumentLoaders.size());
             for (ArgumentLoader argumentLoader : argumentLoaders) {
-                argumentInstructions.add(argumentLoader.resolve(parameterIterator.next(), assigner, typing));
+                argumentInstructions.add(argumentLoader.toStackManipulation(parameterIterator.next(), assigner, typing));
             }
-            StackManipulation.Size size = new StackManipulation.Compound(
-                    targetHandler.resolve(invokedMethod, instrumentedMethod, implementationTarget.getInstrumentedType(), assigner, typing),
+            return new StackManipulation.Compound(
+                    targetHandler.toStackManipulation(invokedMethod, assigner, typing),
                     new StackManipulation.Compound(argumentInstructions),
-                    methodInvoker.invoke(invokedMethod, implementationTarget),
-                    terminationHandler.resolve(invokedMethod, instrumentedMethod, assigner, typing)
-            ).apply(methodVisitor, implementationContext);
-            return new Size(size.getMaximalSize(), instrumentedMethod.getStackSize());
-        }
-
-        /**
-         * Returns the outer instance.
-         *
-         * @return The outer instance.
-         */
-        private MethodCall getOuter() {
-            return MethodCall.this;
-        }
-
-        @Override // HE: Remove when Lombok support for getOuter is added.
-        public boolean equals(Object other) {
-            if (this == other) return true;
-            if (other == null || getClass() != other.getClass()) return false;
-            Appender appender = (Appender) other;
-            return implementationTarget.equals(appender.implementationTarget)
-                    && MethodCall.this.equals(appender.getOuter());
-
-        }
-
-        @Override // HE: Remove when Lombok support for getOuter is added.
-        public int hashCode() {
-            return implementationTarget.hashCode() + 31 * MethodCall.this.hashCode();
+                    methodInvoker.toStackManipulation(invokedMethod, implementationTarget),
+                    terminationHandler.toStackManipulation(invokedMethod, instrumentedMethod, assigner, typing)
+            );
         }
     }
 }

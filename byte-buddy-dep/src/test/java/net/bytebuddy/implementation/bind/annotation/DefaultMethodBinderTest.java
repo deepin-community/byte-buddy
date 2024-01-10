@@ -6,7 +6,6 @@ import net.bytebuddy.description.type.TypeList;
 import net.bytebuddy.implementation.Implementation;
 import net.bytebuddy.implementation.bind.MethodDelegationBinder;
 import net.bytebuddy.implementation.bytecode.assign.Assigner;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.Mock;
@@ -35,13 +34,12 @@ public class DefaultMethodBinderTest extends AbstractAnnotationBinderTest<Defaul
     @Mock
     private Implementation.SpecialMethodInvocation specialMethodInvocation;
 
-    @Override
     protected TargetMethodAnnotationDrivenBinder.ParameterBinder<DefaultMethod> getSimpleBinder() {
         return DefaultMethod.Binder.INSTANCE;
     }
 
-    @Override
     @Before
+    @Override
     public void setUp() throws Exception {
         super.setUp();
         when(target.getType()).thenReturn(genericTargetType);
@@ -50,6 +48,7 @@ public class DefaultMethodBinderTest extends AbstractAnnotationBinderTest<Defaul
         when(genericInterfaceType.asErasure()).thenReturn(interfaceType);
         when(genericTargetType.asErasure()).thenReturn(targetType);
         when(source.asSignatureToken()).thenReturn(token);
+        when(specialMethodInvocation.withCheckedCompatibilityTo(sourceTypeToken)).thenReturn(specialMethodInvocation);
     }
 
     @Test(expected = IllegalStateException.class)
@@ -101,7 +100,7 @@ public class DefaultMethodBinderTest extends AbstractAnnotationBinderTest<Defaul
     public void testBindExplicit() throws Exception {
         when(targetType.isAssignableFrom(Method.class)).thenReturn(true);
         when(source.isMethod()).thenReturn(true);
-        when(implementationTarget.invokeDefault(token, new TypeDescription.ForLoadedType(Runnable.class))).thenReturn(specialMethodInvocation);
+        when(implementationTarget.invokeDefault(token, TypeDescription.ForLoadedType.of(Runnable.class))).thenReturn(specialMethodInvocation);
         when(specialMethodInvocation.isValid()).thenReturn(true);
         when(annotation.targetType()).thenReturn((Class) Runnable.class);
         when(instrumentedType.getInterfaces()).thenReturn(new TypeList.Generic.Explicit(genericInterfaceType, genericInterfaceType));
@@ -172,13 +171,5 @@ public class DefaultMethodBinderTest extends AbstractAnnotationBinderTest<Defaul
                 assigner,
                 Assigner.Typing.STATIC);
         assertThat(binding.isValid(), is(true));
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(DefaultMethod.Binder.class).apply();
-        ObjectPropertyAssertion.of(DefaultMethod.Binder.MethodLocator.ForExplicitType.class).apply();
-        ObjectPropertyAssertion.of(DefaultMethod.Binder.MethodLocator.ForImplicitType.class).apply();
-        ObjectPropertyAssertion.of(DefaultMethod.Binder.DelegationMethod.class).apply();
     }
 }

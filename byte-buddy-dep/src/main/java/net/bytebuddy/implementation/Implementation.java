@@ -1,7 +1,23 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation;
 
-import lombok.EqualsAndHashCode;
 import net.bytebuddy.ClassFileVersion;
+import net.bytebuddy.build.CachedReturnPlugin;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.annotation.AnnotationList;
 import net.bytebuddy.description.annotation.AnnotationValue;
 import net.bytebuddy.description.field.FieldDescription;
@@ -25,12 +41,15 @@ import net.bytebuddy.implementation.bytecode.member.FieldAccess;
 import net.bytebuddy.implementation.bytecode.member.MethodInvocation;
 import net.bytebuddy.implementation.bytecode.member.MethodReturn;
 import net.bytebuddy.implementation.bytecode.member.MethodVariableAccess;
+import net.bytebuddy.utility.CompoundList;
 import net.bytebuddy.utility.RandomString;
+import net.bytebuddy.utility.nullability.MaybeNull;
 import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.FieldVisitor;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 
+import javax.annotation.Nonnull;
 import java.util.*;
 
 /**
@@ -74,6 +93,14 @@ public interface Implementation extends InstrumentedType.Prepareable {
          * @return An implementation that combines this implementation with the provided one.
          */
         Implementation andThen(Implementation implementation);
+
+        /**
+         * Appends the supplied composable implementation to this implementation.
+         *
+         * @param implementation The subsequent composable implementation.
+         * @return A composable implementation that combines this implementation with the provided one.
+         */
+        Composable andThen(Composable implementation);
     }
 
     /**
@@ -100,6 +127,14 @@ public interface Implementation extends InstrumentedType.Prepareable {
         TypeDescription getTypeDescription();
 
         /**
+         * Checks that this special method invocation is compatible with the supplied type representation.
+         *
+         * @param token The type token to check against.
+         * @return This special method invocation or an illegal invocation if the method invocation is not applicable.
+         */
+        SpecialMethodInvocation withCheckedCompatibilityTo(MethodDescription.TypeToken token);
+
+        /**
          * A canonical implementation of an illegal {@link Implementation.SpecialMethodInvocation}.
          */
         enum Illegal implements SpecialMethodInvocation {
@@ -109,49 +144,63 @@ public interface Implementation extends InstrumentedType.Prepareable {
              */
             INSTANCE;
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public boolean isValid() {
                 return false;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 throw new IllegalStateException("Cannot implement an undefined method");
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public MethodDescription getMethodDescription() {
                 throw new IllegalStateException("An illegal special method invocation must not be applied");
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public TypeDescription getTypeDescription() {
                 throw new IllegalStateException("An illegal special method invocation must not be applied");
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public SpecialMethodInvocation withCheckedCompatibilityTo(MethodDescription.TypeToken token) {
+                return this;
             }
         }
 
         /**
          * An abstract base implementation of a valid special method invocation.
          */
-        abstract class AbstractBase implements SpecialMethodInvocation {
+        abstract class AbstractBase extends StackManipulation.AbstractBase implements SpecialMethodInvocation {
 
             @Override
-            public boolean isValid() {
-                return true;
-            }
-
-            @Override
+            @CachedReturnPlugin.Enhance("hashCode")
             public int hashCode() {
                 return 31 * getMethodDescription().asSignatureToken().hashCode() + getTypeDescription().hashCode();
             }
 
             @Override
-            public boolean equals(Object other) {
-                if (this == other) return true;
-                if (!(other instanceof SpecialMethodInvocation)) return false;
+            public boolean equals(@MaybeNull Object other) {
+                if (this == other) {
+                    return true;
+                } else if (!(other instanceof SpecialMethodInvocation)) {
+                    return false;
+                }
                 SpecialMethodInvocation specialMethodInvocation = (SpecialMethodInvocation) other;
                 return getMethodDescription().asSignatureToken().equals(specialMethodInvocation.getMethodDescription().asSignatureToken())
-                        && getTypeDescription().equals(((SpecialMethodInvocation) other).getTypeDescription());
+                        && getTypeDescription().equals(specialMethodInvocation.getTypeDescription());
             }
         }
 
@@ -201,23 +250,40 @@ public interface Implementation extends InstrumentedType.Prepareable {
             public static SpecialMethodInvocation of(MethodDescription methodDescription, TypeDescription typeDescription) {
                 StackManipulation stackManipulation = MethodInvocation.invoke(methodDescription).special(typeDescription);
                 return stackManipulation.isValid()
-                        ? new Simple(methodDescription, typeDescription, stackManipulation)
+                        ? new SpecialMethodInvocation.Simple(methodDescription, typeDescription, stackManipulation)
                         : SpecialMethodInvocation.Illegal.INSTANCE;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public MethodDescription getMethodDescription() {
                 return methodDescription;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public TypeDescription getTypeDescription() {
                 return typeDescription;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 return stackManipulation.apply(methodVisitor, implementationContext);
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public SpecialMethodInvocation withCheckedCompatibilityTo(MethodDescription.TypeToken token) {
+                if (methodDescription.asTypeToken().equals(token)) {
+                    return this;
+                } else {
+                    return SpecialMethodInvocation.Illegal.INSTANCE;
+                }
             }
         }
     }
@@ -303,7 +369,7 @@ public interface Implementation extends InstrumentedType.Prepareable {
         /**
          * An abstract base implementation for an {@link Implementation.Target}.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         abstract class AbstractBase implements Target {
 
             /**
@@ -334,16 +400,20 @@ public interface Implementation extends InstrumentedType.Prepareable {
                 this.defaultMethodInvocation = defaultMethodInvocation;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public TypeDescription getInstrumentedType() {
                 return instrumentedType;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public SpecialMethodInvocation invokeDefault(MethodDescription.SignatureToken token) {
                 SpecialMethodInvocation specialMethodInvocation = SpecialMethodInvocation.Illegal.INSTANCE;
                 for (TypeDescription interfaceType : instrumentedType.getInterfaces().asErasures()) {
-                    SpecialMethodInvocation invocation = invokeDefault(token, interfaceType);
+                    SpecialMethodInvocation invocation = invokeDefault(token, interfaceType).withCheckedCompatibilityTo(token.asTypeToken());
                     if (invocation.isValid()) {
                         if (specialMethodInvocation.isValid()) {
                             return SpecialMethodInvocation.Illegal.INSTANCE;
@@ -355,12 +425,16 @@ public interface Implementation extends InstrumentedType.Prepareable {
                 return specialMethodInvocation;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public SpecialMethodInvocation invokeDefault(MethodDescription.SignatureToken token, TypeDescription targetType) {
                 return defaultMethodInvocation.apply(methodGraph.getInterfaceGraph(targetType).locate(token), targetType);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public SpecialMethodInvocation invokeDominant(MethodDescription.SignatureToken token) {
                 SpecialMethodInvocation specialMethodInvocation = invokeSuper(token);
                 return specialMethodInvocation.isValid()
@@ -459,11 +533,250 @@ public interface Implementation extends InstrumentedType.Prepareable {
         TypeDescription getInstrumentedType();
 
         /**
-         * Returns the class file version of the currently created dynamic type.
+         * Returns the class file version of the currently creatgetClassFileVersioned dynamic type.
          *
          * @return The class file version of the currently created dynamic type.
          */
         ClassFileVersion getClassFileVersion();
+
+        /**
+         * Returns {@code true} if the explicit generation of stack map frames is expected.
+         *
+         * @return {@code true} if the explicit generation of stack map frames is expected.
+         */
+        FrameGeneration getFrameGeneration();
+
+        /**
+         * Indicates the frame generation being applied.
+         */
+        enum FrameGeneration {
+
+            /**
+             * Indicates that frames should be generated.
+             */
+            GENERATE(true) {
+                @Override
+                public void generate(MethodVisitor methodVisitor,
+                                     int type,
+                                     int stackCount,
+                                     @MaybeNull Object[] stack,
+                                     int changedLocalVariableCount,
+                                     @MaybeNull Object[] changedLocalVariable,
+                                     int fullLocalVariableCount,
+                                     @MaybeNull Object[] fullLocalVariable) {
+                    methodVisitor.visitFrame(type, changedLocalVariableCount, changedLocalVariable, stackCount, stack);
+                }
+            },
+
+            /**
+             * Indicates that frames should be generated and expanded.
+             */
+            EXPAND(true) {
+                @Override
+                public void generate(MethodVisitor methodVisitor,
+                                     int type,
+                                     int stackCount,
+                                     @MaybeNull Object[] stack,
+                                     int changedLocalVariableCount,
+                                     @MaybeNull Object[] changedLocalVariable,
+                                     int fullLocalVariableCount,
+                                     @MaybeNull Object[] fullLocalVariable) {
+                    methodVisitor.visitFrame(Opcodes.F_NEW, fullLocalVariableCount, fullLocalVariable, stackCount, stack);
+                }
+            },
+
+            /**
+             * Indicates that no frames should be generated.
+             */
+            DISABLED(false) {
+                @Override
+                public void generate(MethodVisitor methodVisitor,
+                                     int type,
+                                     int stackCount,
+                                     @MaybeNull Object[] stack,
+                                     int changedLocalVariableCount,
+                                     @MaybeNull Object[] changedLocalVariable,
+                                     int fullLocalVariableCount,
+                                     @MaybeNull Object[] fullLocalVariable) {
+                    /* do nothing */
+                }
+            };
+
+            /**
+             * An empty array to reuse for empty frames.
+             */
+            private static final Object[] EMPTY = new Object[0];
+
+            /**
+             * {@code true} if frames should be generated.
+             */
+            private final boolean active;
+
+            /**
+             * Creates a new frame generation type.
+             *
+             * @param active {@code true} if frames should be generated.
+             */
+            FrameGeneration(boolean active) {
+                this.active = active;
+            }
+
+            /**
+             * Returns {@code true} if frames should be generated.
+             *
+             * @return {@code true} if frames should be generated.
+             */
+            public boolean isActive() {
+                return active;
+            }
+
+            /**
+             * Inserts a {@link Opcodes#F_SAME} frame.
+             *
+             * @param methodVisitor  The method visitor to write to.
+             * @param localVariables The local variables that are defined at this frame location.
+             */
+            public void same(MethodVisitor methodVisitor,
+                             List<? extends TypeDefinition> localVariables) {
+                generate(methodVisitor,
+                        Opcodes.F_SAME,
+                        EMPTY.length,
+                        EMPTY,
+                        EMPTY.length,
+                        EMPTY,
+                        localVariables.size(),
+                        toStackMapFrames(localVariables));
+            }
+
+            /**
+             * Inserts a {@link Opcodes#F_SAME1} frame.
+             *
+             * @param methodVisitor  The method visitor to write to.
+             * @param stackValue     The single stack value.
+             * @param localVariables The local variables that are defined at this frame location.
+             */
+            public void same1(MethodVisitor methodVisitor,
+                              TypeDefinition stackValue,
+                              List<? extends TypeDefinition> localVariables) {
+                generate(methodVisitor,
+                        Opcodes.F_SAME1,
+                        1,
+                        new Object[]{toStackMapFrame(stackValue)},
+                        EMPTY.length,
+                        EMPTY,
+                        localVariables.size(),
+                        toStackMapFrames(localVariables));
+            }
+
+            /**
+             * Inserts a {@link Opcodes#F_APPEND} frame.
+             *
+             * @param methodVisitor  The method visitor to write to.
+             * @param appended       The appended local variables.
+             * @param localVariables The local variables that are defined at this frame location, excluding the ones appended.
+             */
+            public void append(MethodVisitor methodVisitor,
+                               List<? extends TypeDefinition> appended,
+                               List<? extends TypeDefinition> localVariables) {
+                generate(methodVisitor,
+                        Opcodes.F_APPEND,
+                        EMPTY.length,
+                        EMPTY,
+                        appended.size(),
+                        toStackMapFrames(appended),
+                        localVariables.size() + appended.size(),
+                        toStackMapFrames(CompoundList.of(localVariables, appended)));
+            }
+
+            /**
+             * Inserts a {@link Opcodes#F_CHOP} frame.
+             *
+             * @param methodVisitor  The method visitor to write to.
+             * @param chopped        The number of chopped values.
+             * @param localVariables The local variables that are defined at this frame location, excluding the chopped variables.
+             */
+            public void chop(MethodVisitor methodVisitor,
+                             int chopped,
+                             List<? extends TypeDefinition> localVariables) {
+                generate(methodVisitor,
+                        Opcodes.F_CHOP,
+                        EMPTY.length,
+                        EMPTY,
+                        chopped,
+                        EMPTY,
+                        localVariables.size(),
+                        toStackMapFrames(localVariables));
+            }
+
+            /**
+             * Inserts a {@link Opcodes#F_FULL} frame.
+             *
+             * @param methodVisitor  The method visitor to write to.
+             * @param stackValues    The values on the operand stack.
+             * @param localVariables The local variables that are defined at this frame location.
+             */
+            public void full(MethodVisitor methodVisitor,
+                             List<? extends TypeDefinition> stackValues,
+                             List<? extends TypeDefinition> localVariables) {
+                generate(methodVisitor,
+                        Opcodes.F_FULL,
+                        stackValues.size(),
+                        toStackMapFrames(stackValues),
+                        localVariables.size(),
+                        toStackMapFrames(localVariables),
+                        localVariables.size(),
+                        toStackMapFrames(localVariables));
+            }
+
+            /**
+             * Writes frames to a {@link MethodVisitor}, if applicable.
+             *
+             * @param methodVisitor             The method visitor to use
+             * @param type                      The frame type.
+             * @param stackCount                The number of values on the operand stack.
+             * @param stack                     The values on the operand stack up to {@code stackCount}, or {@code null}, if none.
+             * @param changedLocalVariableCount The number of local variables that were changed.
+             * @param changedLocalVariable      The values added to the local variable array up to {@code changedLocalVariableCount}
+             *                                  or {@code null}, if none or not applicable.
+             * @param fullLocalVariableCount    The number of local variables.
+             * @param fullLocalVariable         The total number of local variables up to {@code fullLocalVariableCount} or
+             *                                  {@code null}, if none.
+             */
+            protected abstract void generate(MethodVisitor methodVisitor,
+                                             int type,
+                                             int stackCount,
+                                             @MaybeNull Object[] stack,
+                                             int changedLocalVariableCount,
+                                             @MaybeNull Object[] changedLocalVariable,
+                                             int fullLocalVariableCount,
+                                             @MaybeNull Object[] fullLocalVariable);
+
+            private static Object[] toStackMapFrames(List<? extends TypeDefinition> typeDefinitions) {
+                Object[] value = typeDefinitions.isEmpty() ? EMPTY : new Object[typeDefinitions.size()];
+                for (int index = 0; index < typeDefinitions.size(); index++) {
+                    value[index] = toStackMapFrame(typeDefinitions.get(index));
+                }
+                return value;
+            }
+
+            private static Object toStackMapFrame(TypeDefinition typeDefinition) {
+                if (typeDefinition.represents(boolean.class)
+                        || typeDefinition.represents(byte.class)
+                        || typeDefinition.represents(short.class)
+                        || typeDefinition.represents(char.class)
+                        || typeDefinition.represents(int.class)) {
+                    return Opcodes.INTEGER;
+                } else if (typeDefinition.represents(long.class)) {
+                    return Opcodes.LONG;
+                } else if (typeDefinition.represents(float.class)) {
+                    return Opcodes.FLOAT;
+                } else if (typeDefinition.represents(double.class)) {
+                    return Opcodes.DOUBLE;
+                } else {
+                    return typeDefinition.asErasure().getInternalName();
+                }
+            }
+        }
 
         /**
          * Represents an extractable view of an {@link Implementation.Context} which
@@ -500,7 +813,7 @@ public interface Implementation extends InstrumentedType.Prepareable {
             /**
              * An abstract base implementation of an extractable view of an implementation context.
              */
-            @EqualsAndHashCode
+            @HashCodeAndEqualsPlugin.Enhance
             abstract class AbstractBase implements ExtractableView {
 
                 /**
@@ -514,24 +827,42 @@ public interface Implementation extends InstrumentedType.Prepareable {
                 protected final ClassFileVersion classFileVersion;
 
                 /**
+                 * Determines the frame generation to be applied.
+                 */
+                protected final FrameGeneration frameGeneration;
+
+                /**
                  * Create a new extractable view.
                  *
                  * @param instrumentedType The instrumented type.
                  * @param classFileVersion The class file version of the dynamic type.
+                 * @param frameGeneration  Determines the frame generation to be applied.
                  */
-                protected AbstractBase(TypeDescription instrumentedType, ClassFileVersion classFileVersion) {
+                protected AbstractBase(TypeDescription instrumentedType, ClassFileVersion classFileVersion, FrameGeneration frameGeneration) {
                     this.instrumentedType = instrumentedType;
                     this.classFileVersion = classFileVersion;
+                    this.frameGeneration = frameGeneration;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public TypeDescription getInstrumentedType() {
                     return instrumentedType;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public ClassFileVersion getClassFileVersion() {
                     return classFileVersion;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public FrameGeneration getFrameGeneration() {
+                    return frameGeneration;
                 }
             }
         }
@@ -550,12 +881,32 @@ public interface Implementation extends InstrumentedType.Prepareable {
              * @param classFileVersion            The class file version of the created class.
              * @param auxiliaryClassFileVersion   The class file version of any auxiliary classes.
              * @return An implementation context in its extractable view.
+             * @deprecated Use {@link Implementation.Context.Factory#make(TypeDescription, AuxiliaryType.NamingStrategy, TypeInitializer, ClassFileVersion, ClassFileVersion, Implementation.Context.FrameGeneration)}.
              */
+            @Deprecated
             ExtractableView make(TypeDescription instrumentedType,
                                  AuxiliaryType.NamingStrategy auxiliaryTypeNamingStrategy,
                                  TypeInitializer typeInitializer,
                                  ClassFileVersion classFileVersion,
                                  ClassFileVersion auxiliaryClassFileVersion);
+
+            /**
+             * Creates a new implementation context.
+             *
+             * @param instrumentedType            The description of the type that is currently subject of creation.
+             * @param auxiliaryTypeNamingStrategy The naming strategy for naming an auxiliary type.
+             * @param typeInitializer             The type initializer of the created instrumented type.
+             * @param classFileVersion            The class file version of the created class.
+             * @param auxiliaryClassFileVersion   The class file version of any auxiliary classes.
+             * @param frameGeneration             Indicates the frame generation being applied.
+             * @return An implementation context in its extractable view.
+             */
+            ExtractableView make(TypeDescription instrumentedType,
+                                 AuxiliaryType.NamingStrategy auxiliaryTypeNamingStrategy,
+                                 TypeInitializer typeInitializer,
+                                 ClassFileVersion classFileVersion,
+                                 ClassFileVersion auxiliaryClassFileVersion,
+                                 FrameGeneration frameGeneration);
         }
 
         /**
@@ -570,47 +921,64 @@ public interface Implementation extends InstrumentedType.Prepareable {
              *
              * @param instrumentedType The instrumented type.
              * @param classFileVersion The class file version to create the class in.
+             * @param frameGeneration  Determines the frame generation to be applied.
              */
-            protected Disabled(TypeDescription instrumentedType, ClassFileVersion classFileVersion) {
-                super(instrumentedType, classFileVersion);
+            protected Disabled(TypeDescription instrumentedType, ClassFileVersion classFileVersion, FrameGeneration frameGeneration) {
+                super(instrumentedType, classFileVersion, frameGeneration);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public boolean isEnabled() {
                 return false;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public List<DynamicType> getAuxiliaryTypes() {
                 return Collections.emptyList();
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public void drain(TypeInitializer.Drain drain, ClassVisitor classVisitor, AnnotationValueFilter.Factory annotationValueFilterFactory) {
                 drain.apply(classVisitor, TypeInitializer.None.INSTANCE, this);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public TypeDescription register(AuxiliaryType auxiliaryType) {
                 throw new IllegalStateException("Registration of auxiliary types was disabled: " + auxiliaryType);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public MethodDescription.InDefinedShape registerAccessorFor(SpecialMethodInvocation specialMethodInvocation, AccessType accessType) {
                 throw new IllegalStateException("Registration of method accessors was disabled: " + specialMethodInvocation.getMethodDescription());
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public MethodDescription.InDefinedShape registerGetterFor(FieldDescription fieldDescription, AccessType accessType) {
                 throw new IllegalStateException("Registration of field accessor was disabled: " + fieldDescription);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public MethodDescription.InDefinedShape registerSetterFor(FieldDescription fieldDescription, AccessType accessType) {
                 throw new IllegalStateException("Registration of field accessor was disabled: " + fieldDescription);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public FieldDescription.InDefinedShape cache(StackManipulation fieldValue, TypeDescription fieldType) {
                 throw new IllegalStateException("Field values caching was disabled: " + fieldType);
             }
@@ -625,16 +993,38 @@ public interface Implementation extends InstrumentedType.Prepareable {
                  */
                 INSTANCE;
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
+                @Deprecated
                 public ExtractableView make(TypeDescription instrumentedType,
                                             AuxiliaryType.NamingStrategy auxiliaryTypeNamingStrategy,
                                             TypeInitializer typeInitializer,
                                             ClassFileVersion classFileVersion,
                                             ClassFileVersion auxiliaryClassFileVersion) {
+                    return make(instrumentedType,
+                            auxiliaryTypeNamingStrategy,
+                            typeInitializer,
+                            classFileVersion,
+                            auxiliaryClassFileVersion,
+                            classFileVersion.isAtLeast(ClassFileVersion.JAVA_V6)
+                                    ? FrameGeneration.GENERATE
+                                    : FrameGeneration.DISABLED);
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public ExtractableView make(TypeDescription instrumentedType,
+                                            AuxiliaryType.NamingStrategy auxiliaryTypeNamingStrategy,
+                                            TypeInitializer typeInitializer,
+                                            ClassFileVersion classFileVersion,
+                                            ClassFileVersion auxiliaryClassFileVersion,
+                                            FrameGeneration frameGeneration) {
                     if (typeInitializer.isDefined()) {
                         throw new IllegalStateException("Cannot define type initializer which was explicitly disabled: " + typeInitializer);
                     }
-                    return new Disabled(instrumentedType, classFileVersion);
+                    return new Disabled(instrumentedType, classFileVersion, frameGeneration);
                 }
             }
         }
@@ -701,7 +1091,7 @@ public interface Implementation extends InstrumentedType.Prepareable {
             private final Set<FieldDescription.InDefinedShape> registeredFieldCacheFields;
 
             /**
-             * A random suffix to append to the names of accessor methods.
+             * The suffix to append to the names of accessor methods.
              */
             private final String suffix;
 
@@ -718,32 +1108,40 @@ public interface Implementation extends InstrumentedType.Prepareable {
              * @param auxiliaryTypeNamingStrategy The naming strategy for naming an auxiliary type.
              * @param typeInitializer             The type initializer of the created instrumented type.
              * @param auxiliaryClassFileVersion   The class file version to use for auxiliary classes.
+             * @param frameGeneration             Determines the frame generation to be applied.
+             * @param suffix                      The suffix to append to the names of accessor methods.
              */
             protected Default(TypeDescription instrumentedType,
                               ClassFileVersion classFileVersion,
                               AuxiliaryType.NamingStrategy auxiliaryTypeNamingStrategy,
                               TypeInitializer typeInitializer,
-                              ClassFileVersion auxiliaryClassFileVersion) {
-                super(instrumentedType, classFileVersion);
+                              ClassFileVersion auxiliaryClassFileVersion,
+                              FrameGeneration frameGeneration,
+                              String suffix) {
+                super(instrumentedType, classFileVersion, frameGeneration);
                 this.auxiliaryTypeNamingStrategy = auxiliaryTypeNamingStrategy;
                 this.typeInitializer = typeInitializer;
                 this.auxiliaryClassFileVersion = auxiliaryClassFileVersion;
+                this.suffix = suffix;
                 registeredAccessorMethods = new HashMap<SpecialMethodInvocation, DelegationRecord>();
                 registeredGetters = new HashMap<FieldDescription, DelegationRecord>();
                 registeredSetters = new HashMap<FieldDescription, DelegationRecord>();
                 auxiliaryTypes = new HashMap<AuxiliaryType, DynamicType>();
                 registeredFieldCacheEntries = new HashMap<FieldCacheEntry, FieldDescription.InDefinedShape>();
                 registeredFieldCacheFields = new HashSet<FieldDescription.InDefinedShape>();
-                suffix = RandomString.make();
                 fieldCacheCanAppendEntries = true;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public boolean isEnabled() {
                 return true;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public MethodDescription.InDefinedShape registerAccessorFor(SpecialMethodInvocation specialMethodInvocation, AccessType accessType) {
                 DelegationRecord record = registeredAccessorMethods.get(specialMethodInvocation);
                 record = record == null
@@ -753,7 +1151,9 @@ public interface Implementation extends InstrumentedType.Prepareable {
                 return record.getMethod();
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public MethodDescription.InDefinedShape registerGetterFor(FieldDescription fieldDescription, AccessType accessType) {
                 DelegationRecord record = registeredGetters.get(fieldDescription);
                 record = record == null
@@ -763,7 +1163,9 @@ public interface Implementation extends InstrumentedType.Prepareable {
                 return record.getMethod();
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public MethodDescription.InDefinedShape registerSetterFor(FieldDescription fieldDescription, AccessType accessType) {
                 DelegationRecord record = registeredSetters.get(fieldDescription);
                 record = record == null
@@ -773,22 +1175,30 @@ public interface Implementation extends InstrumentedType.Prepareable {
                 return record.getMethod();
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public TypeDescription register(AuxiliaryType auxiliaryType) {
                 DynamicType dynamicType = auxiliaryTypes.get(auxiliaryType);
                 if (dynamicType == null) {
-                    dynamicType = auxiliaryType.make(auxiliaryTypeNamingStrategy.name(instrumentedType), auxiliaryClassFileVersion, this);
+                    dynamicType = auxiliaryType.make(auxiliaryTypeNamingStrategy.name(instrumentedType, auxiliaryType),
+                            auxiliaryClassFileVersion,
+                            this);
                     auxiliaryTypes.put(auxiliaryType, dynamicType);
                 }
                 return dynamicType.getTypeDescription();
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public List<DynamicType> getAuxiliaryTypes() {
                 return new ArrayList<DynamicType>(auxiliaryTypes.values());
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public FieldDescription.InDefinedShape cache(StackManipulation fieldValue, TypeDescription fieldType) {
                 FieldCacheEntry fieldCacheEntry = new FieldCacheEntry(fieldValue, fieldType);
                 FieldDescription.InDefinedShape fieldCache = registeredFieldCacheEntries.get(fieldCacheEntry);
@@ -806,7 +1216,9 @@ public interface Implementation extends InstrumentedType.Prepareable {
                 return fieldCache;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public void drain(TypeInitializer.Drain drain,
                               ClassVisitor classVisitor,
                               AnnotationValueFilter.Factory annotationValueFilterFactory) {
@@ -869,29 +1281,40 @@ public interface Implementation extends InstrumentedType.Prepareable {
                     name = FIELD_CACHE_PREFIX + "$" + suffix + "$" + RandomString.hashOf(hashCode);
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public TypeDescription.Generic getType() {
                     return fieldType;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public AnnotationList getDeclaredAnnotations() {
                     return new AnnotationList.Empty();
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
+                @Nonnull
                 public TypeDescription getDeclaringType() {
                     return instrumentedType;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public int getModifiers() {
                     return Opcodes.ACC_SYNTHETIC | Opcodes.ACC_FINAL | Opcodes.ACC_STATIC | (instrumentedType.isInterface()
                             ? Opcodes.ACC_PUBLIC
                             : Opcodes.ACC_PRIVATE);
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public String getName() {
                     return name;
                 }
@@ -901,7 +1324,6 @@ public interface Implementation extends InstrumentedType.Prepareable {
              * A field cache entry for uniquely identifying a cached field. A cached field is described by the stack
              * manipulation that loads the field's value onto the operand stack and the type of the field.
              */
-            @EqualsAndHashCode
             protected static class FieldCacheEntry implements StackManipulation {
 
                 /**
@@ -944,14 +1366,36 @@ public interface Implementation extends InstrumentedType.Prepareable {
                     return fieldType;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public boolean isValid() {
                     return fieldValue.isValid();
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                     return fieldValue.apply(methodVisitor, implementationContext);
+                }
+
+                @Override
+                public int hashCode() {
+                    int result = fieldValue.hashCode();
+                    result = 31 * result + fieldType.hashCode();
+                    return result;
+                }
+
+                @Override
+                public boolean equals(@MaybeNull Object other) {
+                    if (this == other) {
+                        return true;
+                    } else if (other == null || getClass() != other.getClass()) {
+                        return false;
+                    }
+                    FieldCacheEntry fieldCacheEntry = (FieldCacheEntry) other;
+                    return fieldValue.equals(fieldCacheEntry.fieldValue) && fieldType.equals(fieldCacheEntry.fieldType);
                 }
             }
 
@@ -960,7 +1404,9 @@ public interface Implementation extends InstrumentedType.Prepareable {
              */
             protected abstract static class AbstractPropertyAccessorMethod extends MethodDescription.InDefinedShape.AbstractBase {
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public int getModifiers() {
                     return Opcodes.ACC_SYNTHETIC | getBaseModifiers() | (getDeclaringType().isInterface()
                             ? Opcodes.ACC_PUBLIC
@@ -1000,57 +1446,82 @@ public interface Implementation extends InstrumentedType.Prepareable {
                  *
                  * @param instrumentedType  The instrumented type.
                  * @param methodDescription The method that is being accessed.
+                 * @param typeDescription   The targeted type of the accessor method.
                  * @param suffix            The suffix to append to the accessor method's name.
                  */
-                protected AccessorMethod(TypeDescription instrumentedType, MethodDescription methodDescription, String suffix) {
+                protected AccessorMethod(TypeDescription instrumentedType,
+                                         MethodDescription methodDescription,
+                                         TypeDescription typeDescription,
+                                         String suffix) {
                     this.instrumentedType = instrumentedType;
                     this.methodDescription = methodDescription;
-                    name = methodDescription.getInternalName() + "$" + ACCESSOR_METHOD_SUFFIX + "$" + suffix;
+                    name = methodDescription.getInternalName()
+                            + "$" + ACCESSOR_METHOD_SUFFIX
+                            + "$" + suffix
+                            + (typeDescription.isInterface() ? "$" + RandomString.hashOf(typeDescription.hashCode()) : "");
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public TypeDescription.Generic getReturnType() {
                     return methodDescription.getReturnType().asRawType();
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public ParameterList<ParameterDescription.InDefinedShape> getParameters() {
                     return new ParameterList.Explicit.ForTypes(this, methodDescription.getParameters().asTypeList().asRawTypes());
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public TypeList.Generic getExceptionTypes() {
                     return methodDescription.getExceptionTypes().asRawTypes();
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
+                @MaybeNull
                 public AnnotationValue<?, ?> getDefaultValue() {
                     return AnnotationValue.UNDEFINED;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public TypeList.Generic getTypeVariables() {
                     return new TypeList.Generic.Empty();
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public AnnotationList getDeclaredAnnotations() {
                     return new AnnotationList.Empty();
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
+                @Nonnull
                 public TypeDescription getDeclaringType() {
                     return instrumentedType;
                 }
 
                 @Override
-                public int getBaseModifiers() {
+                protected int getBaseModifiers() {
                     return methodDescription.isStatic()
                             ? Opcodes.ACC_STATIC
                             : EMPTY_MASK;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public String getInternalName() {
                     return name;
                 }
@@ -1089,37 +1560,53 @@ public interface Implementation extends InstrumentedType.Prepareable {
                     name = fieldDescription.getName() + "$" + ACCESSOR_METHOD_SUFFIX + "$" + suffix;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public TypeDescription.Generic getReturnType() {
                     return fieldDescription.getType().asRawType();
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public ParameterList<ParameterDescription.InDefinedShape> getParameters() {
                     return new ParameterList.Empty<ParameterDescription.InDefinedShape>();
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public TypeList.Generic getExceptionTypes() {
                     return new TypeList.Generic.Empty();
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
+                @MaybeNull
                 public AnnotationValue<?, ?> getDefaultValue() {
                     return AnnotationValue.UNDEFINED;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public TypeList.Generic getTypeVariables() {
                     return new TypeList.Generic.Empty();
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public AnnotationList getDeclaredAnnotations() {
                     return new AnnotationList.Empty();
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
+                @Nonnull
                 public TypeDescription getDeclaringType() {
                     return instrumentedType;
                 }
@@ -1131,7 +1618,9 @@ public interface Implementation extends InstrumentedType.Prepareable {
                             : EMPTY_MASK;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public String getInternalName() {
                     return name;
                 }
@@ -1170,37 +1659,53 @@ public interface Implementation extends InstrumentedType.Prepareable {
                     name = fieldDescription.getName() + "$" + ACCESSOR_METHOD_SUFFIX + "$" + suffix;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public TypeDescription.Generic getReturnType() {
-                    return TypeDescription.Generic.VOID;
+                    return TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(void.class);
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public ParameterList<ParameterDescription.InDefinedShape> getParameters() {
                     return new ParameterList.Explicit.ForTypes(this, Collections.singletonList(fieldDescription.getType().asRawType()));
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public TypeList.Generic getExceptionTypes() {
                     return new TypeList.Generic.Empty();
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
+                @MaybeNull
                 public AnnotationValue<?, ?> getDefaultValue() {
                     return AnnotationValue.UNDEFINED;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public TypeList.Generic getTypeVariables() {
                     return new TypeList.Generic.Empty();
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public AnnotationList getDeclaredAnnotations() {
                     return new AnnotationList.Empty();
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
+                @Nonnull
                 public TypeDescription getDeclaringType() {
                     return instrumentedType;
                 }
@@ -1212,7 +1717,9 @@ public interface Implementation extends InstrumentedType.Prepareable {
                             : EMPTY_MASK;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public String getInternalName() {
                     return name;
                 }
@@ -1221,7 +1728,7 @@ public interface Implementation extends InstrumentedType.Prepareable {
             /**
              * An abstract method pool entry that delegates the implementation of a method to itself.
              */
-            @EqualsAndHashCode(callSuper = false)
+            @HashCodeAndEqualsPlugin.Enhance
             protected abstract static class DelegationRecord extends TypeWriter.MethodPool.Record.ForDefinedMethod implements ByteCodeAppender {
 
                 /**
@@ -1253,44 +1760,60 @@ public interface Implementation extends InstrumentedType.Prepareable {
                  */
                 protected abstract DelegationRecord with(AccessType accessType);
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public MethodDescription.InDefinedShape getMethod() {
                     return methodDescription;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public Sort getSort() {
                     return Sort.IMPLEMENTED;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public Visibility getVisibility() {
                     return visibility;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public void applyHead(MethodVisitor methodVisitor) {
                     /* do nothing */
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public void applyBody(MethodVisitor methodVisitor, Context implementationContext, AnnotationValueFilter.Factory annotationValueFilterFactory) {
                     methodVisitor.visitCode();
                     Size size = applyCode(methodVisitor, implementationContext);
                     methodVisitor.visitMaxs(size.getOperandStackSize(), size.getLocalVariableSize());
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public void applyAttributes(MethodVisitor methodVisitor, AnnotationValueFilter.Factory annotationValueFilterFactory) {
                     /* do nothing */
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public Size applyCode(MethodVisitor methodVisitor, Context implementationContext) {
                     return apply(methodVisitor, implementationContext, getMethod());
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public TypeWriter.MethodPool.Record prepend(ByteCodeAppender byteCodeAppender) {
                     throw new UnsupportedOperationException("Cannot prepend code to a delegation for " + methodDescription);
                 }
@@ -1300,7 +1823,7 @@ public interface Implementation extends InstrumentedType.Prepareable {
              * An implementation of a {@link TypeWriter.MethodPool.Record} for implementing
              * an accessor method.
              */
-            @EqualsAndHashCode(callSuper = true)
+            @HashCodeAndEqualsPlugin.Enhance
             protected static class AccessorMethodDelegation extends DelegationRecord {
 
                 /**
@@ -1320,9 +1843,10 @@ public interface Implementation extends InstrumentedType.Prepareable {
                                                    String suffix,
                                                    AccessType accessType,
                                                    SpecialMethodInvocation specialMethodInvocation) {
-                    this(new AccessorMethod(instrumentedType, specialMethodInvocation.getMethodDescription(), suffix),
-                            accessType.getVisibility(),
-                            specialMethodInvocation);
+                    this(new AccessorMethod(instrumentedType,
+                            specialMethodInvocation.getMethodDescription(),
+                            specialMethodInvocation.getTypeDescription(),
+                            suffix), accessType.getVisibility(), specialMethodInvocation);
                 }
 
                 /**
@@ -1344,7 +1868,9 @@ public interface Implementation extends InstrumentedType.Prepareable {
                     return new AccessorMethodDelegation(methodDescription, visibility.expandTo(accessType.getVisibility()), accessorMethodInvocation);
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext, MethodDescription instrumentedMethod) {
                     StackManipulation.Size stackSize = new StackManipulation.Compound(
                             MethodVariableAccess.allArgumentsOf(instrumentedMethod).prependThisReference(),
@@ -1358,7 +1884,7 @@ public interface Implementation extends InstrumentedType.Prepareable {
             /**
              * An implementation for a field getter.
              */
-            @EqualsAndHashCode(callSuper = true)
+            @HashCodeAndEqualsPlugin.Enhance
             protected static class FieldGetterDelegation extends DelegationRecord {
 
                 /**
@@ -1395,7 +1921,9 @@ public interface Implementation extends InstrumentedType.Prepareable {
                     return new FieldGetterDelegation(methodDescription, visibility.expandTo(accessType.getVisibility()), fieldDescription);
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public Size apply(MethodVisitor methodVisitor, Context implementationContext, MethodDescription instrumentedMethod) {
                     StackManipulation.Size stackSize = new StackManipulation.Compound(
                             fieldDescription.isStatic()
@@ -1411,7 +1939,7 @@ public interface Implementation extends InstrumentedType.Prepareable {
             /**
              * An implementation for a field setter.
              */
-            @EqualsAndHashCode(callSuper = true)
+            @HashCodeAndEqualsPlugin.Enhance
             protected static class FieldSetterDelegation extends DelegationRecord {
 
                 /**
@@ -1448,7 +1976,9 @@ public interface Implementation extends InstrumentedType.Prepareable {
                     return new FieldSetterDelegation(methodDescription, visibility.expandTo(accessType.getVisibility()), fieldDescription);
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public Size apply(MethodVisitor methodVisitor, Context implementationContext, MethodDescription instrumentedMethod) {
                     StackManipulation.Size stackSize = new StackManipulation.Compound(
                             MethodVariableAccess.allArgumentsOf(instrumentedMethod).prependThisReference(),
@@ -1460,7 +1990,8 @@ public interface Implementation extends InstrumentedType.Prepareable {
             }
 
             /**
-             * A factory for creating a {@link net.bytebuddy.implementation.Implementation.Context.Default}.
+             * A factory for creating a {@link net.bytebuddy.implementation.Implementation.Context.Default}
+             * that uses a random suffix for accessors.
              */
             public enum Factory implements ExtractableView.Factory {
 
@@ -1469,13 +2000,100 @@ public interface Implementation extends InstrumentedType.Prepareable {
                  */
                 INSTANCE;
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
+                @Deprecated
                 public ExtractableView make(TypeDescription instrumentedType,
                                             AuxiliaryType.NamingStrategy auxiliaryTypeNamingStrategy,
                                             TypeInitializer typeInitializer,
                                             ClassFileVersion classFileVersion,
                                             ClassFileVersion auxiliaryClassFileVersion) {
-                    return new Default(instrumentedType, classFileVersion, auxiliaryTypeNamingStrategy, typeInitializer, auxiliaryClassFileVersion);
+                    return make(instrumentedType,
+                            auxiliaryTypeNamingStrategy,
+                            typeInitializer,
+                            classFileVersion,
+                            auxiliaryClassFileVersion,
+                            classFileVersion.isAtLeast(ClassFileVersion.JAVA_V6)
+                                    ? FrameGeneration.GENERATE
+                                    : FrameGeneration.DISABLED);
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public ExtractableView make(TypeDescription instrumentedType,
+                                            AuxiliaryType.NamingStrategy auxiliaryTypeNamingStrategy,
+                                            TypeInitializer typeInitializer,
+                                            ClassFileVersion classFileVersion,
+                                            ClassFileVersion auxiliaryClassFileVersion,
+                                            FrameGeneration frameGeneration) {
+                    return new Default(instrumentedType,
+                            classFileVersion,
+                            auxiliaryTypeNamingStrategy,
+                            typeInitializer,
+                            auxiliaryClassFileVersion,
+                            frameGeneration,
+                            RandomString.make());
+                }
+
+                /**
+                 * A factory for creating a {@link net.bytebuddy.implementation.Implementation.Context.Default}
+                 * that uses a given suffix for accessors.
+                 */
+                @HashCodeAndEqualsPlugin.Enhance
+                public static class WithFixedSuffix implements ExtractableView.Factory {
+
+                    /**
+                     * The suffix to use.
+                     */
+                    private final String suffix;
+
+                    /**
+                     * Creates a factory for an implementation context with a fixed suffix.
+                     *
+                     * @param suffix The suffix to use.
+                     */
+                    public WithFixedSuffix(String suffix) {
+                        this.suffix = suffix;
+                    }
+
+                    /**
+                     * {@inheritDoc}
+                     */
+                    @Deprecated
+                    public ExtractableView make(TypeDescription instrumentedType,
+                                                AuxiliaryType.NamingStrategy auxiliaryTypeNamingStrategy,
+                                                TypeInitializer typeInitializer,
+                                                ClassFileVersion classFileVersion,
+                                                ClassFileVersion auxiliaryClassFileVersion) {
+                        return make(instrumentedType,
+                                auxiliaryTypeNamingStrategy,
+                                typeInitializer,
+                                classFileVersion,
+                                auxiliaryClassFileVersion,
+                                classFileVersion.isAtLeast(ClassFileVersion.JAVA_V6)
+                                        ? FrameGeneration.GENERATE
+                                        : FrameGeneration.DISABLED);
+                    }
+
+                    /**
+                     * {@inheritDoc}
+                     */
+                    public ExtractableView make(TypeDescription instrumentedType,
+                                                AuxiliaryType.NamingStrategy auxiliaryTypeNamingStrategy,
+                                                TypeInitializer typeInitializer,
+                                                ClassFileVersion classFileVersion,
+                                                ClassFileVersion auxiliaryClassFileVersion,
+                                                FrameGeneration frameGeneration) {
+                        return new Default(instrumentedType,
+                                classFileVersion,
+                                auxiliaryTypeNamingStrategy,
+                                typeInitializer,
+                                auxiliaryClassFileVersion,
+                                frameGeneration,
+                                suffix);
+                    }
                 }
             }
         }
@@ -1490,7 +2108,7 @@ public interface Implementation extends InstrumentedType.Prepareable {
      *
      * @see Implementation
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class Compound implements Implementation {
 
         /**
@@ -1515,7 +2133,10 @@ public interface Implementation extends InstrumentedType.Prepareable {
         public Compound(List<? extends Implementation> implementations) {
             this.implementations = new ArrayList<Implementation>();
             for (Implementation implementation : implementations) {
-                if (implementation instanceof Compound) {
+                if (implementation instanceof Compound.Composable) {
+                    this.implementations.addAll(((Compound.Composable) implementation).implementations);
+                    this.implementations.add(((Compound.Composable) implementation).composable);
+                } else if (implementation instanceof Compound) {
                     this.implementations.addAll(((Compound) implementation).implementations);
                 } else {
                     this.implementations.add(implementation);
@@ -1523,7 +2144,9 @@ public interface Implementation extends InstrumentedType.Prepareable {
             }
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public InstrumentedType prepare(InstrumentedType instrumentedType) {
             for (Implementation implementation : implementations) {
                 instrumentedType = implementation.prepare(instrumentedType);
@@ -1531,7 +2154,9 @@ public interface Implementation extends InstrumentedType.Prepareable {
             return instrumentedType;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public ByteCodeAppender appender(Target implementationTarget) {
             ByteCodeAppender[] byteCodeAppender = new ByteCodeAppender[implementations.size()];
             int index = 0;
@@ -1540,13 +2165,114 @@ public interface Implementation extends InstrumentedType.Prepareable {
             }
             return new ByteCodeAppender.Compound(byteCodeAppender);
         }
+
+        /**
+         * A compound implementation that allows to combine several implementations and that is {@link Implementation.Composable}.
+         * <p>&nbsp;</p>
+         * Note that the combination of two implementation might break the contract for implementing
+         * {@link java.lang.Object#equals(Object)} and {@link Object#hashCode()} as described for
+         * {@link Implementation}.
+         *
+         * @see Implementation
+         */
+        @HashCodeAndEqualsPlugin.Enhance
+        public static class Composable implements Implementation.Composable {
+
+            /**
+             * The composable implementation that is applied last.
+             */
+            private final Implementation.Composable composable;
+
+            /**
+             * All implementation that are represented by this compound implementation.
+             */
+            private final List<Implementation> implementations;
+
+            /**
+             * Creates a new compound composable.
+             *
+             * @param implementation An implementation that is represented by this compound implementation prior to the composable.
+             * @param composable     The composable implementation that is applied last.
+             */
+            public Composable(Implementation implementation, Implementation.Composable composable) {
+                this(Collections.singletonList(implementation), composable);
+            }
+
+            /**
+             * Creates a new compound composable.
+             *
+             * @param implementations All implementation that are represented by this compound implementation excluding the composable.
+             * @param composable      The composable implementation that is applied last.
+             */
+            public Composable(List<? extends Implementation> implementations, Implementation.Composable composable) {
+                this.implementations = new ArrayList<Implementation>();
+                for (Implementation implementation : implementations) {
+                    if (implementation instanceof Compound.Composable) {
+                        this.implementations.addAll(((Compound.Composable) implementation).implementations);
+                        this.implementations.add(((Compound.Composable) implementation).composable);
+                    } else if (implementation instanceof Compound) {
+                        this.implementations.addAll(((Compound) implementation).implementations);
+                    } else {
+                        this.implementations.add(implementation);
+                    }
+                }
+                if (composable instanceof Compound.Composable) {
+                    this.implementations.addAll(((Compound.Composable) composable).implementations);
+                    this.composable = ((Compound.Composable) composable).composable;
+                } else {
+                    this.composable = composable;
+                }
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public InstrumentedType prepare(InstrumentedType instrumentedType) {
+                for (Implementation implementation : implementations) {
+                    instrumentedType = implementation.prepare(instrumentedType);
+                }
+                return composable.prepare(instrumentedType);
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public ByteCodeAppender appender(Target implementationTarget) {
+                ByteCodeAppender[] byteCodeAppender = new ByteCodeAppender[implementations.size() + 1];
+                int index = 0;
+                for (Implementation implementation : implementations) {
+                    byteCodeAppender[index++] = implementation.appender(implementationTarget);
+                }
+                byteCodeAppender[index] = composable.appender(implementationTarget);
+                return new ByteCodeAppender.Compound(byteCodeAppender);
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public Implementation andThen(Implementation implementation) {
+                return new Compound(CompoundList.of(implementations, composable.andThen(implementation)));
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public Implementation.Composable andThen(Implementation.Composable implementation) {
+                return new Compound.Composable(implementations, composable.andThen(implementation));
+            }
+        }
     }
 
     /**
      * A simple implementation that does not register any members with the instrumented type.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class Simple implements Implementation {
+
+        /**
+         * Indicates that no additional local variable slots are required.
+         */
+        private static final int NO_ADDITIONAL_VARIABLES = 0;
 
         /**
          * The byte code appender to emmit.
@@ -1572,14 +2298,159 @@ public interface Implementation extends InstrumentedType.Prepareable {
             byteCodeAppender = new ByteCodeAppender.Simple(stackManipulation);
         }
 
-        @Override
+        /**
+         * Resolves a simple implementation that applies the given dispatcher without defining additional local variables.
+         *
+         * @param dispatcher The dispatcher to use.
+         * @return An implementation for the supplied dispatcher.
+         */
+        public static Implementation of(Dispatcher dispatcher) {
+            return of(dispatcher, NO_ADDITIONAL_VARIABLES);
+        }
+
+        /**
+         * Resolves a simple implementation that applies the given dispatcher.
+         *
+         * @param dispatcher               The dispatcher to use.
+         * @param additionalVariableLength The amount of additional slots required in the local variable array.
+         * @return An implementation for the supplied dispatcher.
+         */
+        public static Implementation of(Dispatcher dispatcher, int additionalVariableLength) {
+            return of(dispatcher, NoOp.INSTANCE, additionalVariableLength);
+        }
+
+        /**
+         * Resolves a simple implementation that applies the given dispatcher without defining additional local variables.
+         *
+         * @param dispatcher  The dispatcher to use.
+         * @param prepareable A preparation of the instrumented type.
+         * @return An implementation for the supplied dispatcher.
+         */
+        public static Implementation of(Dispatcher dispatcher, InstrumentedType.Prepareable prepareable) {
+            return of(dispatcher, prepareable, NO_ADDITIONAL_VARIABLES);
+        }
+
+        /**
+         * Resolves a simple implementation that applies the given dispatcher.
+         *
+         * @param dispatcher               The dispatcher to use.
+         * @param prepareable              A preparation of the instrumented type.
+         * @param additionalVariableLength The amount of additional slots required in the local variable array.
+         * @return An implementation for the supplied dispatcher.
+         */
+        public static Implementation of(Dispatcher dispatcher, InstrumentedType.Prepareable prepareable, int additionalVariableLength) {
+            if (additionalVariableLength < NO_ADDITIONAL_VARIABLES) {
+                throw new IllegalArgumentException("Additional variable length cannot be negative: " + additionalVariableLength);
+            }
+            return new ForDispatcher(dispatcher, prepareable, additionalVariableLength);
+        }
+
+        /**
+         * {@inheritDoc}
+         */
         public InstrumentedType prepare(InstrumentedType instrumentedType) {
             return instrumentedType;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public ByteCodeAppender appender(Target implementationTarget) {
             return byteCodeAppender;
+        }
+
+        /**
+         * A dispatcher for a simple {@link Implementation}, typically implemented as a lambda expression.
+         */
+        public interface Dispatcher {
+
+            /**
+             * Creates a stack manipulation from a simple method dispatch.
+             *
+             * @param implementationTarget The implementation target to use.
+             * @param instrumentedMethod   The instrumented method.
+             * @return The stack manipulation to apply.
+             */
+            StackManipulation apply(Target implementationTarget, MethodDescription instrumentedMethod);
+        }
+
+        /**
+         * A {@link ByteCodeAppender} for a dispatcher.
+         */
+        @HashCodeAndEqualsPlugin.Enhance
+        protected static class ForDispatcher implements Implementation {
+
+            /**
+             * The dispatcher to use.
+             */
+            private final Dispatcher dispatcher;
+
+            /**
+             * A preparation of the instrumented type.
+             */
+            private final InstrumentedType.Prepareable prepareable;
+
+            /**
+             * The additional length of the local variable array.
+             */
+            private final int additionalVariableLength;
+
+            /**
+             * Creates a new byte code appender for a dispatcher.
+             *
+             * @param dispatcher               The dispatcher to use.
+             * @param prepareable              A preparation of the instrumented type.
+             * @param additionalVariableLength The additional length of the local variable array.
+             */
+            protected ForDispatcher(Dispatcher dispatcher, InstrumentedType.Prepareable prepareable, int additionalVariableLength) {
+                this.dispatcher = dispatcher;
+                this.prepareable = prepareable;
+                this.additionalVariableLength = additionalVariableLength;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public InstrumentedType prepare(InstrumentedType instrumentedType) {
+                return prepareable.prepare(instrumentedType);
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public ByteCodeAppender appender(Target implementationTarget) {
+                return new Appender(implementationTarget);
+            }
+
+            /**
+             * An appender for a dispatcher-based simple implementation.
+             */
+            @HashCodeAndEqualsPlugin.Enhance(includeSyntheticFields = true)
+            protected class Appender implements ByteCodeAppender {
+
+                /**
+                 * The implementation target.
+                 */
+                private final Target implementationTarget;
+
+                /**
+                 * Creates a new appender.
+                 *
+                 * @param implementationTarget The implementation target.
+                 */
+                protected Appender(Target implementationTarget) {
+                    this.implementationTarget = implementationTarget;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public Size apply(MethodVisitor methodVisitor, Context implementationContext, MethodDescription instrumentedMethod) {
+                    return new Size(dispatcher.apply(implementationTarget, instrumentedMethod)
+                            .apply(methodVisitor, implementationContext)
+                            .getMaximalSize(), instrumentedMethod.getStackSize() + additionalVariableLength);
+                }
+            }
         }
     }
 }

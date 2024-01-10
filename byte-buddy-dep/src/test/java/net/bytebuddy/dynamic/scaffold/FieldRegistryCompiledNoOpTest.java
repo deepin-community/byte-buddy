@@ -2,12 +2,11 @@ package net.bytebuddy.dynamic.scaffold;
 
 import net.bytebuddy.description.field.FieldDescription;
 import net.bytebuddy.implementation.attribute.AnnotationValueFilter;
-import net.bytebuddy.test.utility.MockitoRule;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 import org.objectweb.asm.FieldVisitor;
 
 import static org.hamcrest.CoreMatchers.is;
@@ -17,7 +16,7 @@ import static org.mockito.Mockito.mock;
 public class FieldRegistryCompiledNoOpTest {
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     @Mock
     private FieldDescription fieldDescription;
@@ -42,10 +41,5 @@ public class FieldRegistryCompiledNoOpTest {
     public void testReturnsFieldAttributeAppender() throws Exception {
         TypeWriter.FieldPool.Record record = FieldRegistry.Compiled.NoOp.INSTANCE.target(fieldDescription);
         assertThat(record.isImplicit(), is(true));
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(FieldRegistry.Compiled.NoOp.class).apply();
     }
 }

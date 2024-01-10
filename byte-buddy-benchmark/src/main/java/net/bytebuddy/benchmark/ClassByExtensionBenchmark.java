@@ -1,3 +1,18 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.benchmark;
 
 import javassist.util.proxy.MethodFilter;
@@ -13,6 +28,7 @@ import net.bytebuddy.implementation.MethodDelegation;
 import net.bytebuddy.implementation.SuperMethodCall;
 import net.bytebuddy.implementation.bind.annotation.*;
 import net.bytebuddy.pool.TypePool;
+import net.bytebuddy.utility.nullability.MaybeNull;
 import net.sf.cglib.proxy.*;
 import org.openjdk.jmh.annotations.*;
 
@@ -71,51 +87,61 @@ public class ClassByExtensionBenchmark {
     /**
      * An implementation to be used by {@link ClassByExtensionBenchmark#benchmarkByteBuddyWithProxyAndReusedDelegator()}.
      */
+    @MaybeNull
     private Implementation proxyInterceptor;
 
     /**
      * An implementation to be used by {@link ClassByExtensionBenchmark#benchmarkByteBuddyWithAccessorAndReusedDelegator()}.
      */
+    @MaybeNull
     private Implementation accessInterceptor;
 
     /**
      * An implementation to be used by {@link ClassByExtensionBenchmark#benchmarkByteBuddyWithPrefixAndReusedDelegator()}.
      */
+    @MaybeNull
     private Implementation.Composable prefixInterceptor;
 
     /**
      * A description of {@link ClassByExtensionBenchmark#baseClass}.
      */
+    @MaybeNull
     private TypeDescription baseClassDescription;
 
     /**
      * A description of {@link ByteBuddyProxyInterceptor}.
      */
+    @MaybeNull
     private TypeDescription proxyClassDescription;
 
     /**
      * A description of {@link ByteBuddyAccessInterceptor}.
      */
+    @MaybeNull
     private TypeDescription accessClassDescription;
 
     /**
      * A description of {@link ByteBuddyPrefixInterceptor}.
      */
+    @MaybeNull
     private TypeDescription prefixClassDescription;
 
     /**
      * A method delegation to {@link ByteBuddyProxyInterceptor}.
      */
+    @MaybeNull
     private Implementation proxyInterceptorDescription;
 
     /**
      * A method delegation to {@link ByteBuddyAccessInterceptor}.
      */
+    @MaybeNull
     private Implementation accessInterceptorDescription;
 
     /**
      * A method delegation to {@link ByteBuddyPrefixInterceptor}.
      */
+    @MaybeNull
     private Implementation.Composable prefixInterceptorDescription;
 
     /**
@@ -126,10 +152,10 @@ public class ClassByExtensionBenchmark {
         proxyInterceptor = MethodDelegation.to(ByteBuddyProxyInterceptor.class);
         accessInterceptor = MethodDelegation.to(ByteBuddyAccessInterceptor.class);
         prefixInterceptor = MethodDelegation.to(ByteBuddyPrefixInterceptor.class);
-        baseClassDescription = TypePool.Default.ofClassPath().describe(baseClass.getName()).resolve();
-        proxyClassDescription = TypePool.Default.ofClassPath().describe(ByteBuddyProxyInterceptor.class.getName()).resolve();
-        accessClassDescription = TypePool.Default.ofClassPath().describe(ByteBuddyAccessInterceptor.class.getName()).resolve();
-        prefixClassDescription = TypePool.Default.ofClassPath().describe(ByteBuddyPrefixInterceptor.class.getName()).resolve();
+        baseClassDescription = TypePool.Default.ofSystemLoader().describe(baseClass.getName()).resolve();
+        proxyClassDescription = TypePool.Default.ofSystemLoader().describe(ByteBuddyProxyInterceptor.class.getName()).resolve();
+        accessClassDescription = TypePool.Default.ofSystemLoader().describe(ByteBuddyAccessInterceptor.class.getName()).resolve();
+        prefixClassDescription = TypePool.Default.ofSystemLoader().describe(ByteBuddyPrefixInterceptor.class.getName()).resolve();
         proxyInterceptorDescription = MethodDelegation.to(proxyClassDescription);
         accessInterceptorDescription = MethodDelegation.to(accessClassDescription);
         prefixInterceptorDescription = MethodDelegation.to(prefixClassDescription);
@@ -438,12 +464,10 @@ public class ClassByExtensionBenchmark {
         enhancer.setInterceptDuringConstruction(true);
         enhancer.setClassLoader(newClassLoader());
         enhancer.setSuperclass(baseClass);
-        CallbackHelper callbackHelper = new CallbackHelper(baseClass, new Class[0]) {
-            @Override
+        CallbackHelper callbackHelper = new CallbackHelper(baseClass, new Class<?>[0]) {
             protected Object getCallback(Method method) {
                 if (method.getDeclaringClass() == baseClass) {
                     return new MethodInterceptor() {
-                        @Override
                         public Object intercept(Object object,
                                                 Method method,
                                                 Object[] arguments,
@@ -470,12 +494,12 @@ public class ClassByExtensionBenchmark {
     @Benchmark
     public ExampleClass benchmarkJavassist() throws Exception {
         ProxyFactory proxyFactory = new ProxyFactory() {
-            @Override
             protected ClassLoader getClassLoader() {
                 return newClassLoader();
             }
         };
         proxyFactory.setUseCache(false);
+        proxyFactory.setUseWriteReplace(false);
         proxyFactory.setSuperclass(baseClass);
         proxyFactory.setFilter(new MethodFilter() {
             public boolean isHandled(Method method) {
@@ -488,8 +512,8 @@ public class ClassByExtensionBenchmark {
             public Object invoke(Object self,
                                  Method thisMethod,
                                  Method proceed,
-                                 Object[] args) throws Throwable {
-                return proceed.invoke(self, args);
+                                 Object[] argument) throws Throwable {
+                return proceed.invoke(self, argument);
             }
         });
         return (ExampleClass) instance;
@@ -545,7 +569,7 @@ public class ClassByExtensionBenchmark {
          * @throws Exception If the super method call yields an exception.
          */
         @RuntimeType
-        public static Object intercept(@This Object target, @AllArguments Object[] arguments, @SuperMethod Method method) throws Exception {
+        public static Object intercept(@This Object target, @AllArguments Object[] arguments, @SuperMethod(privileged = false) Method method) throws Exception {
             return method.invoke(target, arguments);
         }
     }

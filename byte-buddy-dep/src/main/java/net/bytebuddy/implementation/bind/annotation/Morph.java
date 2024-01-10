@@ -1,8 +1,23 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation.bind.annotation;
 
-import lombok.EqualsAndHashCode;
 import net.bytebuddy.ByteBuddy;
 import net.bytebuddy.ClassFileVersion;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.annotation.AnnotationDescription;
 import net.bytebuddy.description.field.FieldDescription;
 import net.bytebuddy.description.method.MethodDescription;
@@ -11,6 +26,7 @@ import net.bytebuddy.description.method.ParameterDescription;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.dynamic.DynamicType;
 import net.bytebuddy.dynamic.scaffold.InstrumentedType;
+import net.bytebuddy.dynamic.scaffold.TypeValidation;
 import net.bytebuddy.dynamic.scaffold.subclass.ConstructorStrategy;
 import net.bytebuddy.implementation.Implementation;
 import net.bytebuddy.implementation.MethodAccessorFactory;
@@ -28,6 +44,7 @@ import net.bytebuddy.implementation.bytecode.member.MethodInvocation;
 import net.bytebuddy.implementation.bytecode.member.MethodReturn;
 import net.bytebuddy.implementation.bytecode.member.MethodVariableAccess;
 import net.bytebuddy.matcher.ElementMatchers;
+import net.bytebuddy.utility.RandomString;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 
@@ -81,7 +98,7 @@ public @interface Morph {
     /**
      * A binder for the {@link net.bytebuddy.implementation.bind.annotation.Morph} annotation.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class Binder implements TargetMethodAnnotationDrivenBinder.ParameterBinder<Morph> {
 
         /**
@@ -103,7 +120,7 @@ public @interface Morph {
          * Looks up references for all annotation properties of the morph annotation.
          */
         static {
-            MethodList<MethodDescription.InDefinedShape> methodList = new TypeDescription.ForLoadedType(Morph.class).getDeclaredMethods();
+            MethodList<MethodDescription.InDefinedShape> methodList = TypeDescription.ForLoadedType.of(Morph.class).getDeclaredMethods();
             SERIALIZABLE_PROXY = methodList.filter(named("serializableProxy")).getOnly();
             DEFAULT_METHOD = methodList.filter(named("defaultMethod")).getOnly();
             DEFAULT_TARGET = methodList.filter(named("defaultTarget")).getOnly();
@@ -134,7 +151,7 @@ public @interface Morph {
          * annotation.
          */
         public static TargetMethodAnnotationDrivenBinder.ParameterBinder<Morph> install(Class<?> type) {
-            return install(new TypeDescription.ForLoadedType(type));
+            return install(TypeDescription.ForLoadedType.of(type));
         }
 
         /**
@@ -178,12 +195,16 @@ public @interface Morph {
             return methodDescription;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Class<Morph> getHandledType() {
             return Morph.class;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public MethodDelegationBinder.ParameterBinding<?> bind(AnnotationDescription.Loadable<Morph> annotation,
                                                                MethodDescription source,
                                                                ParameterDescription target,
@@ -196,7 +217,7 @@ public @interface Morph {
             Implementation.SpecialMethodInvocation specialMethodInvocation;
             TypeDescription typeDescription = annotation.getValue(DEFAULT_TARGET).resolve(TypeDescription.class);
             if (typeDescription.represents(void.class) && !annotation.getValue(DEFAULT_METHOD).resolve(Boolean.class)) {
-                specialMethodInvocation = implementationTarget.invokeSuper(source.asSignatureToken());
+                specialMethodInvocation = implementationTarget.invokeSuper(source.asSignatureToken()).withCheckedCompatibilityTo(source.asTypeToken());
             } else {
                 specialMethodInvocation = (typeDescription.represents(void.class)
                         ? DefaultMethodLocator.Implicit.INSTANCE
@@ -238,16 +259,18 @@ public @interface Morph {
                  */
                 INSTANCE;
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public Implementation.SpecialMethodInvocation resolve(Implementation.Target implementationTarget, MethodDescription source) {
-                    return implementationTarget.invokeDefault(source.asSignatureToken());
+                    return implementationTarget.invokeDefault(source.asSignatureToken()).withCheckedCompatibilityTo(source.asTypeToken());
                 }
             }
 
             /**
              * An explicit default method locator attempts to look up a default method in the specified interface type.
              */
-            @EqualsAndHashCode
+            @HashCodeAndEqualsPlugin.Enhance
             class Explicit implements DefaultMethodLocator {
 
                 /**
@@ -265,12 +288,16 @@ public @interface Morph {
                     this.typeDescription = typeDescription;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public Implementation.SpecialMethodInvocation resolve(Implementation.Target implementationTarget, MethodDescription source) {
                     if (!typeDescription.isInterface()) {
                         throw new IllegalStateException(source + " method carries default method call parameter on non-interface type");
                     }
-                    return implementationTarget.invokeDefault(source.asSignatureToken(), typeDescription);
+                    return implementationTarget
+                            .invokeDefault(source.asSignatureToken(), typeDescription)
+                            .withCheckedCompatibilityTo(source.asTypeToken());
                 }
             }
         }
@@ -278,8 +305,8 @@ public @interface Morph {
         /**
          * A proxy that implements the installed interface in order to allow for a morphed super method invocation.
          */
-        @EqualsAndHashCode
-        protected static class RedirectionProxy implements AuxiliaryType, StackManipulation {
+        @HashCodeAndEqualsPlugin.Enhance
+        protected static class RedirectionProxy extends StackManipulation.AbstractBase implements AuxiliaryType {
 
             /**
              * The name of the field that carries an instance for invoking a super method on.
@@ -334,11 +361,21 @@ public @interface Morph {
                 this.serializableProxy = serializableProxy;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
+            public String getSuffix() {
+                return RandomString.hashOf(morphingType.hashCode()) + (serializableProxy ? "S" : "0");
+            }
+
+            /**
+             * {@inheritDoc}
+             */
             public DynamicType make(String auxiliaryTypeName,
                                     ClassFileVersion classFileVersion,
                                     MethodAccessorFactory methodAccessorFactory) {
                 return new ByteBuddy(classFileVersion)
+                        .with(TypeValidation.DISABLED)
                         .subclass(morphingType, ConstructorStrategy.Default.NO_CONSTRUCTORS)
                         .name(auxiliaryTypeName)
                         .modifiers(DEFAULT_TYPE_MODIFIER)
@@ -354,12 +391,9 @@ public @interface Morph {
                         .make();
             }
 
-            @Override
-            public boolean isValid() {
-                return true;
-            }
-
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext) {
                 TypeDescription forwardingType = implementationContext.register(this);
                 return new Compound(
@@ -391,17 +425,21 @@ public @interface Morph {
                  * Creates the constructor call singleton.
                  */
                 StaticFieldConstructor() {
-                    objectTypeDefaultConstructor = TypeDescription.OBJECT.getDeclaredMethods()
+                    objectTypeDefaultConstructor = TypeDescription.ForLoadedType.of(Object.class).getDeclaredMethods()
                             .filter(isConstructor())
                             .getOnly();
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public InstrumentedType prepare(InstrumentedType instrumentedType) {
                     return instrumentedType;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public ByteCodeAppender appender(Target implementationTarget) {
                     return new ByteCodeAppender.Simple(MethodVariableAccess.loadThis(), MethodInvocation.invoke(objectTypeDefaultConstructor), MethodReturn.VOID);
                 }
@@ -410,7 +448,7 @@ public @interface Morph {
             /**
              * Creates an instance of the proxy when instrumenting an instance method.
              */
-            @EqualsAndHashCode
+            @HashCodeAndEqualsPlugin.Enhance
             protected static class InstanceFieldConstructor implements Implementation {
 
                 /**
@@ -427,14 +465,18 @@ public @interface Morph {
                     this.instrumentedType = instrumentedType;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public InstrumentedType prepare(InstrumentedType instrumentedType) {
                     return instrumentedType.withField(new FieldDescription.Token(RedirectionProxy.FIELD_NAME,
                             Opcodes.ACC_FINAL | Opcodes.ACC_PRIVATE,
                             this.instrumentedType.asGenericType()));
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public ByteCodeAppender appender(Target implementationTarget) {
                     return new Appender(implementationTarget);
                 }
@@ -442,7 +484,7 @@ public @interface Morph {
                 /**
                  * The byte code appender that implements the constructor.
                  */
-                @EqualsAndHashCode
+                @HashCodeAndEqualsPlugin.Enhance
                 protected static class Appender implements ByteCodeAppender {
 
                     /**
@@ -462,7 +504,9 @@ public @interface Morph {
                                 .getOnly();
                     }
 
-                    @Override
+                    /**
+                     * {@inheritDoc}
+                     */
                     public Size apply(MethodVisitor methodVisitor,
                                       Context implementationContext,
                                       MethodDescription instrumentedMethod) {
@@ -481,7 +525,7 @@ public @interface Morph {
             /**
              * Implements a the method call of the morphing method.
              */
-            @EqualsAndHashCode
+            @HashCodeAndEqualsPlugin.Enhance
             protected static class MethodCall implements Implementation {
 
                 /**
@@ -505,12 +549,16 @@ public @interface Morph {
                     this.assigner = assigner;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public InstrumentedType prepare(InstrumentedType instrumentedType) {
                     return instrumentedType;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public ByteCodeAppender appender(Target implementationTarget) {
                     return new Appender(implementationTarget);
                 }
@@ -518,6 +566,7 @@ public @interface Morph {
                 /**
                  * The byte code appender to implement the method.
                  */
+                @HashCodeAndEqualsPlugin.Enhance(includeSyntheticFields = true)
                 protected class Appender implements ByteCodeAppender {
 
                     /**
@@ -534,7 +583,9 @@ public @interface Morph {
                         typeDescription = implementationTarget.getInstrumentedType();
                     }
 
-                    @Override
+                    /**
+                     * {@inheritDoc}
+                     */
                     public Size apply(MethodVisitor methodVisitor,
                                       Context implementationContext,
                                       MethodDescription instrumentedMethod) {
@@ -545,7 +596,7 @@ public @interface Morph {
                             parameterLoading[index] = new StackManipulation.Compound(arrayReference,
                                     IntegerConstant.forValue(index),
                                     ArrayAccess.REFERENCE.load(),
-                                    assigner.assign(TypeDescription.Generic.OBJECT, parameterType, Assigner.Typing.DYNAMIC));
+                                    assigner.assign(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class), parameterType, Assigner.Typing.DYNAMIC));
                             index++;
                         }
                         StackManipulation.Size stackSize = new StackManipulation.Compound(
@@ -562,27 +613,6 @@ public @interface Morph {
                                 MethodReturn.REFERENCE
                         ).apply(methodVisitor, implementationContext);
                         return new Size(stackSize.getMaximalSize(), instrumentedMethod.getStackSize());
-                    }
-
-                    /**
-                     * Returns the outer instance.
-                     *
-                     * @return The outer instance.
-                     */
-                    private MethodCall getMethodCall() {
-                        return MethodCall.this;
-                    }
-
-                    @Override // HE: Remove when Lombok support for getOuter is added.
-                    public boolean equals(Object other) {
-                        return this == other || !(other == null || getClass() != other.getClass())
-                                && MethodCall.this.equals(((Appender) other).getMethodCall())
-                                && typeDescription.equals(((Appender) other).typeDescription);
-                    }
-
-                    @Override // HE: Remove when Lombok support for getOuter is added.
-                    public int hashCode() {
-                        return typeDescription.hashCode() + 31 * MethodCall.this.hashCode();
                     }
                 }
             }

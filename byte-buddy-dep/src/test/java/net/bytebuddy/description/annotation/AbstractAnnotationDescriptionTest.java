@@ -1,6 +1,7 @@
 package net.bytebuddy.description.annotation;
 
 import net.bytebuddy.ByteBuddy;
+import net.bytebuddy.ClassFileVersion;
 import net.bytebuddy.asm.AsmVisitorWrapper;
 import net.bytebuddy.description.enumeration.EnumerationDescription;
 import net.bytebuddy.description.field.FieldDescription;
@@ -13,10 +14,13 @@ import net.bytebuddy.description.type.TypeVariableToken;
 import net.bytebuddy.dynamic.loading.ClassLoadingStrategy;
 import net.bytebuddy.implementation.Implementation;
 import net.bytebuddy.pool.TypePool;
+import net.bytebuddy.test.utility.JavaVersionRule;
+import net.bytebuddy.utility.OpenedClassReader;
 import org.hamcrest.CoreMatchers;
 import org.junit.Before;
-import org.junit.Ignore;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.MethodRule;
 import org.mockito.Mockito;
 import org.mockito.invocation.InvocationOnMock;
 import org.mockito.stubbing.Answer;
@@ -26,7 +30,6 @@ import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
 
 import java.lang.annotation.*;
-import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
@@ -137,7 +140,10 @@ public abstract class AbstractAnnotationDescriptionTest {
 
     private static final String[] OTHER_STRING_ARRAY = new String[]{BAR};
 
-    private Annotation first, second, defaultFirst, defaultSecond, explicitTarget, broken;
+    @Rule
+    public MethodRule javaVersionRule = new JavaVersionRule();
+
+    private Annotation first, second, defaultFirst, defaultSecond, empty, explicitTarget, broken;
 
     private Class<?> brokenCarrier;
 
@@ -153,6 +159,8 @@ public abstract class AbstractAnnotationDescriptionTest {
             carrier = DefaultSample.class;
         } else if (annotation == defaultSecond) {
             carrier = NonDefaultSample.class;
+        } else if (annotation == empty) {
+            carrier = EmptySample.class;
         } else if (annotation == explicitTarget) {
             carrier = ExplicitTarget.Carrier.class;
         } else if (annotation == broken) {
@@ -169,14 +177,30 @@ public abstract class AbstractAnnotationDescriptionTest {
         second = BarSample.class.getAnnotation(Sample.class);
         defaultFirst = DefaultSample.class.getAnnotation(SampleDefault.class);
         defaultSecond = NonDefaultSample.class.getAnnotation(SampleDefault.class);
+        empty = EmptySample.class.getAnnotation(SampleDefault.class);
         explicitTarget = ExplicitTarget.Carrier.class.getAnnotation(ExplicitTarget.class);
         brokenCarrier = new ByteBuddy()
                 .subclass(Object.class)
-                .visit(new AnnotationValueBreaker())
+                .name(AbstractAnnotationDescriptionTest.class.getPackage().getName() + "." + "BrokenAnnotationCarrier")
+                .visit(new AnnotationValueBreaker(ClassFileVersion.ofThisVm().isAtLeast(ClassFileVersion.JAVA_V12),
+                        ClassFileVersion.ofThisVm().isAtLeast(ClassFileVersion.JAVA_V18),
+                        ClassFileVersion.ofThisVm().isAtLeast(ClassFileVersion.JAVA_V17),
+                        ClassFileVersion.ofThisVm().isAtLeast(ClassFileVersion.JAVA_V17)))
                 .make()
-                .load(getClass().getClassLoader(), ClassLoadingStrategy.Default.WRAPPER_PERSISTENT)
+                .include(new ByteBuddy().decorate(AbstractAnnotationDescriptionTest.class).make())
+                .include(new ByteBuddy().decorate(IncompatibleAnnotationProperty.class).make())
+                .include(new ByteBuddy().decorate(IncompatibleEnumerationProperty.class).make())
+                .include(new ByteBuddy().decorate(SampleEnumeration.class).make())
+                .include(new ByteBuddy().decorate(DefectiveAnnotation.class).make())
+                .include(new ByteBuddy().subclass(Object.class).name(BrokenAnnotationProperty.class.getName()).make())
+                .include(new ByteBuddy().subclass(Object.class).name(BrokenEnumerationProperty.class.getName()).make())
+                .load(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassLoadingStrategy.Default.WRAPPER_PERSISTENT)
                 .getLoaded();
         broken = brokenCarrier.getAnnotations()[0];
+    }
+
+    protected ClassLoader getClassLoader() {
+        return getClass().getClassLoader();
     }
 
     @Test
@@ -185,8 +209,8 @@ public abstract class AbstractAnnotationDescriptionTest {
         assertThat(describe(second), is(describe(second)));
         assertThat(describe(first), not(describe(second)));
         assertThat(describe(first).getAnnotationType(), is(describe(second).getAnnotationType()));
-        assertThat(describe(first).getAnnotationType(), not((TypeDescription) new TypeDescription.ForLoadedType(Other.class)));
-        assertThat(describe(second).getAnnotationType(), not((TypeDescription) new TypeDescription.ForLoadedType(Other.class)));
+        assertThat(describe(first).getAnnotationType(), not(TypeDescription.ForLoadedType.of(Other.class)));
+        assertThat(describe(second).getAnnotationType(), not(TypeDescription.ForLoadedType.of(Other.class)));
         assertThat(describe(first).getAnnotationType().represents(first.annotationType()), is(true));
         assertThat(describe(second).getAnnotationType().represents(second.annotationType()), is(true));
     }
@@ -195,18 +219,26 @@ public abstract class AbstractAnnotationDescriptionTest {
     public void assertToString() throws Exception {
         assertToString(describe(first).toString(), first);
         assertToString(describe(second).toString(), second);
+        assertToString(describe(empty).toString(), empty);
     }
 
-    private void assertToString(String actual, Annotation loaded) throws Exception {
-        assertThat(actual, startsWith("@" + loaded.annotationType().getName()));
-        String loadedString = loaded.toString();
-        if (loadedString.length() - loadedString.replace(",", "").length() != loaded.annotationType().getDeclaredMethods().length - 1) {
-            throw new AssertionError("Unexpected amount of commas for " + loaded); // Expect tested annotations not to contain commas in values.
+    private void assertToString(String toString, Annotation actual) throws Exception {
+        String prefix = "@" + (ClassFileVersion.ofThisVm().isAtLeast(ClassFileVersion.JAVA_V19)
+                ? actual.annotationType().getCanonicalName()
+                : actual.annotationType().getName()) + "(";
+        assertThat(toString, startsWith(prefix));
+        assertThat(toString, endsWith(")"));
+        String actualString = actual.toString();
+        String[] element = toString.substring(prefix.length(), toString.length() - 1).split(", ");
+        Set<String> actualElements = new HashSet<String>(Arrays.asList(actualString.substring(prefix.length(), actualString.length() - 1).split(", ")));
+        assertThat(element.length, is(actualElements.size()));
+        for (String anElement : element) {
+            if (!actualElements.remove(anElement)) {
+                throw new AssertionError("Could not find " + anElement + " in " + actualElements);
+            }
         }
-        for (Method method : loaded.annotationType().getDeclaredMethods()) {
-            assertThat(loadedString.split(method.getName() + "=", -1).length - 1, is(1)); // Expect property delimiter not to exist as value.
-            int start = loadedString.indexOf(method.getName() + "="), end = loadedString.indexOf(',', start);
-            assertThat(actual, containsString(loadedString.substring(start, end == -1 ? loadedString.length() - 1 : end)));
+        if (!actualElements.isEmpty()) {
+            throw new AssertionError("Missing value: " + actualElements);
         }
     }
 
@@ -215,6 +247,7 @@ public abstract class AbstractAnnotationDescriptionTest {
         assertThat(describe(first).hashCode(), is(describe(first).hashCode()));
         assertThat(describe(second).hashCode(), is(describe(second).hashCode()));
         assertThat(describe(first).hashCode(), not(describe(second).hashCode()));
+        assertThat(describe(empty).hashCode(), is(describe(empty).hashCode()));
     }
 
     @Test
@@ -223,9 +256,8 @@ public abstract class AbstractAnnotationDescriptionTest {
         AnnotationDescription identical = describe(first);
         assertThat(identical, is(identical));
         AnnotationDescription equalFirst = mock(AnnotationDescription.class);
-        when(equalFirst.getAnnotationType()).thenReturn(new TypeDescription.ForLoadedType(first.annotationType()));
+        when(equalFirst.getAnnotationType()).thenReturn(TypeDescription.ForLoadedType.of(first.annotationType()));
         when(equalFirst.getValue(Mockito.any(MethodDescription.InDefinedShape.class))).then(new Answer<Object>() {
-            @Override
             public Object answer(InvocationOnMock invocation) throws Throwable {
                 MethodDescription.InDefinedShape method = (MethodDescription.InDefinedShape) invocation.getArguments()[0];
                 return AnnotationDescription.ForLoadedAnnotation.of(first).getValue(method);
@@ -233,9 +265,8 @@ public abstract class AbstractAnnotationDescriptionTest {
         });
         assertThat(describe(first), is(equalFirst));
         AnnotationDescription equalSecond = mock(AnnotationDescription.class);
-        when(equalSecond.getAnnotationType()).thenReturn(new TypeDescription.ForLoadedType(first.annotationType()));
+        when(equalSecond.getAnnotationType()).thenReturn(TypeDescription.ForLoadedType.of(first.annotationType()));
         when(equalSecond.getValue(Mockito.any(MethodDescription.InDefinedShape.class))).then(new Answer<Object>() {
-            @Override
             public Object answer(InvocationOnMock invocation) throws Throwable {
                 MethodDescription.InDefinedShape method = (MethodDescription.InDefinedShape) invocation.getArguments()[0];
                 return AnnotationDescription.ForLoadedAnnotation.of(second).getValue(method);
@@ -243,9 +274,8 @@ public abstract class AbstractAnnotationDescriptionTest {
         });
         assertThat(describe(second), is(equalSecond));
         AnnotationDescription equalFirstTypeOnly = mock(AnnotationDescription.class);
-        when(equalFirstTypeOnly.getAnnotationType()).thenReturn(new TypeDescription.ForLoadedType(Other.class));
+        when(equalFirstTypeOnly.getAnnotationType()).thenReturn(TypeDescription.ForLoadedType.of(Other.class));
         when(equalFirstTypeOnly.getValue(Mockito.any(MethodDescription.InDefinedShape.class))).then(new Answer<Object>() {
-            @Override
             public Object answer(InvocationOnMock invocation) throws Throwable {
                 MethodDescription.InDefinedShape method = (MethodDescription.InDefinedShape) invocation.getArguments()[0];
                 return AnnotationDescription.ForLoadedAnnotation.of(first).getValue(method);
@@ -253,7 +283,7 @@ public abstract class AbstractAnnotationDescriptionTest {
         });
         assertThat(describe(first), not(equalFirstTypeOnly));
         AnnotationDescription equalFirstNameOnly = mock(AnnotationDescription.class);
-        when(equalFirstNameOnly.getAnnotationType()).thenReturn(new TypeDescription.ForLoadedType(first.annotationType()));
+        when(equalFirstNameOnly.getAnnotationType()).thenReturn(TypeDescription.ForLoadedType.of(first.annotationType()));
         AnnotationValue<?, ?> annotationValue = mock(AnnotationValue.class);
         when(annotationValue.resolve()).thenReturn(null);
         when(equalFirstNameOnly.getValue(Mockito.any(MethodDescription.InDefinedShape.class))).thenReturn((AnnotationValue) annotationValue);
@@ -261,11 +291,17 @@ public abstract class AbstractAnnotationDescriptionTest {
         assertThat(describe(first), not(equalSecond));
         assertThat(describe(first), not(new Object()));
         assertThat(describe(first), not(equalTo(null)));
+        assertThat(describe(empty), is(describe(empty)));
     }
 
     @Test(expected = IllegalArgumentException.class)
     public void testIllegalMethod() throws Exception {
         describe(first).getValue(new MethodDescription.ForLoadedMethod(Object.class.getMethod("toString")));
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void testIllegalProperty() throws Exception {
+        describe(first).getValue("toString");
     }
 
     @Test
@@ -291,15 +327,327 @@ public abstract class AbstractAnnotationDescriptionTest {
     }
 
     @Test
+    public void testPreparedToString() throws Exception {
+        assertToString(describe(first).prepare(Sample.class).toString(), first);
+        assertToString(describe(second).prepare(Sample.class).toString(), second);
+    }
+
+    @Test
     public void testToString() throws Exception {
         assertToString(describe(first).prepare(Sample.class).toString(), first);
         assertToString(describe(second).prepare(Sample.class).toString(), second);
     }
 
     @Test
-    @Ignore("Add better handling for annotations with inconsistent values")
-    public void testBrokenAnnotation() throws Exception {
-        describe(broken);
+    public void testDefectiveAnnotationCanBeResolved() throws Exception {
+        assertThat(describe(broken), notNullValue(AnnotationDescription.class));
+    }
+
+    @Test
+    public void testDefectiveAnnotationDuplicateValue() throws Exception {
+        assertThat(describe(broken).prepare(DefectiveAnnotation.class).load().duplicateValue(), is(BAR));
+    }
+
+    @Test
+    public void testDefectiveAnnotationDuplicateValueState() throws Exception {
+        assertThat(describe(broken).getValue(new MethodDescription.ForLoadedMethod(DefectiveAnnotation.class.getMethod("duplicateValue"))).getState(),
+                is(AnnotationValue.State.RESOLVED));
+    }
+
+    @Test(expected = AnnotationTypeMismatchException.class)
+    public void testDefectiveAnnotationIncompatibleValue() throws Exception {
+        describe(broken).prepare(DefectiveAnnotation.class).load().incompatibleValue();
+    }
+
+    @Test
+    public void testDefectiveAnnotationIncompatibleValueState() throws Exception {
+        assertThat(describe(broken).getValue(new MethodDescription.ForLoadedMethod(DefectiveAnnotation.class.getMethod("incompatibleValue"))).getState(),
+                is(AnnotationValue.State.UNRESOLVED));
+    }
+
+    @Test(expected = AnnotationTypeMismatchException.class)
+    public void testDefectiveAnnotationIncompatibleValueArray() throws Exception {
+        describe(broken).prepare(DefectiveAnnotation.class).load().incompatibleValueArray();
+    }
+
+    @Test
+    public void testDefectiveAnnotationIncompatibleValueArrayState() throws Exception {
+        assertThat(describe(broken).getValue(new MethodDescription.ForLoadedMethod(DefectiveAnnotation.class.getMethod("incompatibleValueArray"))).getState(),
+                is(AnnotationValue.State.UNRESOLVED));
+    }
+
+    @Test(expected = IncompleteAnnotationException.class)
+    public void testDefectiveAnnotationMissingValue() throws Exception {
+        describe(broken).prepare(DefectiveAnnotation.class).load().missingValue();
+    }
+
+    @Test
+    public void testDefectiveAnnotationMissingValueState() throws Exception {
+        assertThat(describe(broken).getValue(new MethodDescription.ForLoadedMethod(DefectiveAnnotation.class.getMethod("missingValue"))).getState(),
+                is(AnnotationValue.State.UNDEFINED));
+    }
+
+    @Test(expected = IncompleteAnnotationException.class)
+    public void testDefectiveAnnotationMissingValueArray() throws Exception {
+        describe(broken).prepare(DefectiveAnnotation.class).load().missingValueArray();
+    }
+
+    @Test
+    public void testDefectiveAnnotationMissingValueArrayState() throws Exception {
+        assertThat(describe(broken).getValue(new MethodDescription.ForLoadedMethod(DefectiveAnnotation.class.getMethod("missingValueArray"))).getState(),
+                is(AnnotationValue.State.UNDEFINED));
+    }
+
+    @Test(expected = AnnotationTypeMismatchException.class)
+    @JavaVersionRule.Enforce(17)
+    public void testDefectiveAnnotationBrokenAnnotationDeclaration() throws Exception {
+        describe(broken).prepare(DefectiveAnnotation.class).load().brokenAnnotationDeclaration();
+    }
+
+    @Test(expected = AnnotationTypeMismatchException.class)
+    @JavaVersionRule.Enforce(18)
+    public void testDefectiveAnnotationWrongArity() throws Exception {
+        describe(broken).prepare(DefectiveAnnotation.class).load().wrongArity();
+    }
+
+    @Test
+    @JavaVersionRule.Enforce(18)
+    public void testDefectiveAnnotationWrongArityState() throws Exception {
+        assertThat(describe(broken).getValue(new MethodDescription.ForLoadedMethod(DefectiveAnnotation.class.getMethod("wrongArity"))).getState(),
+                is(AnnotationValue.State.UNRESOLVED));
+    }
+
+    @Test(expected = AnnotationTypeMismatchException.class)
+    @JavaVersionRule.Enforce(18)
+    public void testDefectiveAnnotationWrongArityArray() throws Exception {
+        describe(broken).prepare(DefectiveAnnotation.class).load().wrongArityArray();
+    }
+
+    @Test
+    @JavaVersionRule.Enforce(18)
+    public void testDefectiveAnnotationWrongArityArrayState() throws Exception {
+        assertThat(describe(broken).getValue(new MethodDescription.ForLoadedMethod(DefectiveAnnotation.class.getMethod("wrongArityArray"))).getState(),
+                is(AnnotationValue.State.UNRESOLVED));
+    }
+
+    @Test
+    @JavaVersionRule.Enforce(17)
+    public void testDefectiveAnnotationBrokenAnnotationDeclarationState() throws Exception {
+        assertThat(describe(broken).getValue(new MethodDescription.ForLoadedMethod(DefectiveAnnotation.class.getMethod("brokenAnnotationDeclaration"))).getState(),
+                is(AnnotationValue.State.UNRESOLVED));
+    }
+
+    @Test(expected = AnnotationTypeMismatchException.class)
+    @JavaVersionRule.Enforce(17)
+    public void testDefectiveAnnotationBrokenAnnotationDeclarationArray() throws Exception {
+        describe(broken).prepare(DefectiveAnnotation.class).load().brokenAnnotationDeclarationArray();
+    }
+
+    @Test
+    @JavaVersionRule.Enforce(17)
+    public void testDefectiveAnnotationBrokenAnnotationDeclarationArrayState() throws Exception {
+        assertThat(describe(broken).getValue(new MethodDescription.ForLoadedMethod(DefectiveAnnotation.class.getMethod("brokenAnnotationDeclarationArray"))).getState(),
+                is(AnnotationValue.State.UNRESOLVED));
+    }
+
+    @Test(expected = AnnotationTypeMismatchException.class)
+    @JavaVersionRule.Enforce(17)
+    public void testDefectiveAnnotationBrokenAnnotationDeclarationEmptyArray() throws Exception {
+        describe(broken).prepare(DefectiveAnnotation.class).load().brokenAnnotationDeclarationEmptyArray();
+    }
+
+    @Test
+    @JavaVersionRule.Enforce(17)
+    public void testDefectiveAnnotationBrokenAnnotationDeclarationArrayEmptyState() throws Exception {
+        assertThat(describe(broken).getValue(new MethodDescription.ForLoadedMethod(DefectiveAnnotation.class.getMethod("brokenAnnotationDeclarationEmptyArray"))).getState(),
+                is(AnnotationValue.State.UNRESOLVED));
+    }
+
+    @Test(expected = AnnotationTypeMismatchException.class)
+    @JavaVersionRule.Enforce(17)
+    public void testDefectiveAnnotationBrokenEnumerationDeclaration() throws Exception {
+        describe(broken).prepare(DefectiveAnnotation.class).load().brokenEnumerationDeclaration();
+    }
+
+    @Test
+    @JavaVersionRule.Enforce(17)
+    public void testDefectiveAnnotationBrokenEnumerationDeclarationState() throws Exception {
+        assertThat(describe(broken).getValue(new MethodDescription.ForLoadedMethod(DefectiveAnnotation.class.getMethod("brokenEnumerationDeclaration"))).getState(),
+                is(AnnotationValue.State.UNRESOLVED));
+    }
+
+    @Test(expected = AnnotationTypeMismatchException.class)
+    @JavaVersionRule.Enforce(17)
+    public void testDefectiveAnnotationBrokenEnumerationDeclarationArray() throws Exception {
+        describe(broken).prepare(DefectiveAnnotation.class).load().brokenEnumerationDeclarationArray();
+    }
+
+    @Test
+    @JavaVersionRule.Enforce(17)
+    public void testDefectiveAnnotationBrokenEnumerationDeclarationArrayState() throws Exception {
+        assertThat(describe(broken).getValue(new MethodDescription.ForLoadedMethod(DefectiveAnnotation.class.getMethod("brokenEnumerationDeclarationArray"))).getState(),
+                is(AnnotationValue.State.UNRESOLVED));
+    }
+
+    @Test(expected = AnnotationTypeMismatchException.class)
+    @JavaVersionRule.Enforce(17)
+    public void testDefectiveAnnotationBrokenEnumerationDeclarationEmptyArray() throws Exception {
+        describe(broken).prepare(DefectiveAnnotation.class).load().brokenEnumerationDeclarationEmptyArray();
+    }
+
+    @Test
+    @JavaVersionRule.Enforce(17)
+    public void testDefectiveAnnotationBrokenEnumerationDeclarationEmptyArrayState() throws Exception {
+        assertThat(describe(broken).getValue(new MethodDescription.ForLoadedMethod(DefectiveAnnotation.class.getMethod("brokenEnumerationDeclarationEmptyArray"))).getState(),
+                is(AnnotationValue.State.UNRESOLVED));
+    }
+
+    @Test(expected = AnnotationTypeMismatchException.class)
+    @JavaVersionRule.Enforce(17)
+    public void testDefectiveAnnotationIncompatibleAnnotationDeclaration() throws Exception {
+        describe(broken).prepare(DefectiveAnnotation.class).load().incompatibleAnnotationDeclaration();
+    }
+
+    @Test
+    @JavaVersionRule.Enforce(17)
+    public void testDefectiveAnnotationIncompatibleAnnotationDeclarationState() throws Exception {
+        assertThat(describe(broken).getValue(new MethodDescription.ForLoadedMethod(DefectiveAnnotation.class.getMethod("incompatibleAnnotationDeclaration"))).getState(),
+                is(AnnotationValue.State.UNRESOLVED));
+    }
+
+    @Test(expected = AnnotationTypeMismatchException.class)
+    @JavaVersionRule.Enforce(17)
+    public void testDefectiveAnnotationIncompatibleAnnotationDeclarationArray() throws Exception {
+        describe(broken).prepare(DefectiveAnnotation.class).load().incompatibleAnnotationDeclarationArray();
+    }
+
+    @Test
+    @JavaVersionRule.Enforce(17)
+    public void testDefectiveAnnotationIncompatibleAnnotationDeclarationArrayState() throws Exception {
+        assertThat(describe(broken).getValue(new MethodDescription.ForLoadedMethod(DefectiveAnnotation.class.getMethod("incompatibleAnnotationDeclarationArray"))).getState(),
+                is(AnnotationValue.State.UNRESOLVED));
+    }
+
+    @Test
+    @JavaVersionRule.Enforce(17)
+    public void testDefectiveAnnotationIncompatibleAnnotationDeclarationEmptyArray() throws Exception {
+        assertThat(describe(broken).prepare(DefectiveAnnotation.class).load().incompatibleAnnotationDeclarationEmptyArray().length, is(0));
+    }
+
+    @Test
+    @JavaVersionRule.Enforce(17)
+    public void testDefectiveAnnotationIncompatibleAnnotationDeclarationEmptyArrayState() throws Exception {
+        assertThat(describe(broken).getValue(new MethodDescription.ForLoadedMethod(DefectiveAnnotation.class.getMethod("incompatibleAnnotationDeclarationEmptyArray"))).getState(),
+                is(AnnotationValue.State.RESOLVED));
+    }
+
+    @Test(expected = AnnotationTypeMismatchException.class)
+    @JavaVersionRule.Enforce(17)
+    public void testDefectiveAnnotationIncompatibleEnumerationDeclaration() throws Exception {
+        describe(broken).prepare(DefectiveAnnotation.class).load().incompatibleEnumerationDeclaration();
+    }
+
+    @Test
+    @JavaVersionRule.Enforce(17)
+    public void testDefectiveAnnotationIncompatibleEnumerationDeclarationState() throws Exception {
+        assertThat(describe(broken).getValue(new MethodDescription.ForLoadedMethod(DefectiveAnnotation.class.getMethod("incompatibleEnumerationDeclaration"))).getState(),
+                is(AnnotationValue.State.UNRESOLVED));
+    }
+
+    @Test(expected = AnnotationTypeMismatchException.class)
+    @JavaVersionRule.Enforce(17)
+    public void testDefectiveAnnotationIncompatibleEnumerationDeclarationArray() throws Exception {
+        describe(broken).prepare(DefectiveAnnotation.class).load().incompatibleEnumerationDeclarationArray();
+    }
+
+    @Test
+    @JavaVersionRule.Enforce(17)
+    public void testDefectiveAnnotationIncompatibleEnumerationDeclarationArrayState() throws Exception {
+        assertThat(describe(broken).getValue(new MethodDescription.ForLoadedMethod(DefectiveAnnotation.class.getMethod("incompatibleEnumerationDeclarationArray"))).getState(),
+                is(AnnotationValue.State.UNRESOLVED));
+    }
+
+    @Test
+    @JavaVersionRule.Enforce(17)
+    public void testDefectiveAnnotationIncompatibleEnumerationDeclarationEmptyArray() throws Exception {
+        assertThat(describe(broken).prepare(DefectiveAnnotation.class).load().incompatibleEnumerationDeclarationEmptyArray().length, is(0));
+    }
+
+    @Test
+    @JavaVersionRule.Enforce(17)
+    public void testDefectiveAnnotationIncompatibleEnumerationDeclarationEmptyArrayState() throws Exception {
+        assertThat(describe(broken).getValue(new MethodDescription.ForLoadedMethod(DefectiveAnnotation.class.getMethod("incompatibleEnumerationDeclarationEmptyArray"))).getState(),
+                is(AnnotationValue.State.RESOLVED));
+    }
+
+    @Test(expected = EnumConstantNotPresentException.class)
+    @JavaVersionRule.Enforce(12)
+    public void testDefectiveAnnotationUnknownEnumerationConstant() throws Exception {
+        describe(broken).prepare(DefectiveAnnotation.class).load().unknownEnumerationConstant();
+    }
+
+    @Test
+    @JavaVersionRule.Enforce(12)
+    public void testDefectiveAnnotationUnknownEnumerationConstantState() throws Exception {
+        assertThat(describe(broken).getValue(new MethodDescription.ForLoadedMethod(DefectiveAnnotation.class.getMethod("unknownEnumerationConstant"))).getState(),
+                is(AnnotationValue.State.UNRESOLVED));
+    }
+
+    @Test(expected = EnumConstantNotPresentException.class)
+    @JavaVersionRule.Enforce(12)
+    public void testDefectiveAnnotationUnknownEnumerationConstantArray() throws Exception {
+        describe(broken).prepare(DefectiveAnnotation.class).load().unknownEnumerationConstantArray();
+    }
+
+    @Test
+    @JavaVersionRule.Enforce(12)
+    public void testDefectiveAnnotationUnknownEnumerationConstantArrayState() throws Exception {
+        assertThat(describe(broken).getValue(new MethodDescription.ForLoadedMethod(DefectiveAnnotation.class.getMethod("unknownEnumerationConstantArray"))).getState(),
+                is(AnnotationValue.State.UNRESOLVED));
+    }
+
+    @Test(expected = TypeNotPresentException.class)
+    @JavaVersionRule.Enforce(12)
+    public void testDefectiveAnnotationMissingType() throws Exception {
+        describe(broken).prepare(DefectiveAnnotation.class).load().missingType();
+    }
+
+    @Test
+    @JavaVersionRule.Enforce(12)
+    public void testDefectiveAnnotationMissingTypeState() throws Exception {
+        assertThat(describe(broken).getValue(new MethodDescription.ForLoadedMethod(DefectiveAnnotation.class.getMethod("missingType"))).getState(),
+                is(AnnotationValue.State.UNRESOLVED));
+    }
+
+    @Test(expected = TypeNotPresentException.class)
+    @JavaVersionRule.Enforce(12)
+    public void testDefectiveAnnotationMissingTypeArray() throws Exception {
+        describe(broken).prepare(DefectiveAnnotation.class).load().missingTypeArray();
+    }
+
+    @Test
+    @JavaVersionRule.Enforce(12)
+    public void testDefectiveAnnotationMissingTypeStateArray() throws Exception {
+        assertThat(describe(broken).getValue(new MethodDescription.ForLoadedMethod(DefectiveAnnotation.class.getMethod("missingTypeArray"))).getState(),
+                is(AnnotationValue.State.UNRESOLVED));
+    }
+
+    @Test
+    @JavaVersionRule.Enforce(12)
+    public void testDefectiveAnnotationLoadedToString() throws Exception {
+        assertToString(describe(broken).prepare(DefectiveAnnotation.class).load().toString(), broken);
+    }
+
+    @Test
+    @JavaVersionRule.Enforce(12)
+    public void testDefectiveAnnotationPreparedToString() throws Exception {
+        assertToString(describe(broken).prepare(DefectiveAnnotation.class).toString(), broken);
+    }
+
+    @Test
+    @JavaVersionRule.Enforce(12)
+    public void testDefectiveAnnotationToString() throws Exception {
+        assertToString(describe(broken).toString(), broken);
     }
 
     @Test
@@ -333,10 +681,10 @@ public abstract class AbstractAnnotationDescriptionTest {
         assertValue(second, "doubleValue", DOUBLE, DOUBLE);
         assertValue(first, "stringValue", FOO, FOO);
         assertValue(second, "stringValue", BAR, BAR);
-        assertValue(first, "classValue", new TypeDescription.ForLoadedType(CLASS), CLASS);
-        assertValue(second, "classValue", new TypeDescription.ForLoadedType(CLASS), CLASS);
-        assertValue(first, "arrayClassValue", new TypeDescription.ForLoadedType(ARRAY_CLASS), ARRAY_CLASS);
-        assertValue(second, "arrayClassValue", new TypeDescription.ForLoadedType(ARRAY_CLASS), ARRAY_CLASS);
+        assertValue(first, "classValue", TypeDescription.ForLoadedType.of(CLASS), CLASS);
+        assertValue(second, "classValue", TypeDescription.ForLoadedType.of(CLASS), CLASS);
+        assertValue(first, "arrayClassValue", TypeDescription.ForLoadedType.of(ARRAY_CLASS), ARRAY_CLASS);
+        assertValue(second, "arrayClassValue", TypeDescription.ForLoadedType.of(ARRAY_CLASS), ARRAY_CLASS);
         assertValue(first, "enumValue", new EnumerationDescription.ForLoadedEnumeration(ENUMERATION), ENUMERATION);
         assertValue(second, "enumValue", new EnumerationDescription.ForLoadedEnumeration(ENUMERATION), ENUMERATION);
         assertValue(first, "annotationValue", AnnotationDescription.ForLoadedAnnotation.of(ANNOTATION), ANNOTATION);
@@ -359,8 +707,8 @@ public abstract class AbstractAnnotationDescriptionTest {
         assertValue(second, "doubleArrayValue", DOUBLE_ARRAY, DOUBLE_ARRAY);
         assertValue(first, "stringArrayValue", STRING_ARRAY, STRING_ARRAY);
         assertValue(second, "stringArrayValue", STRING_ARRAY, STRING_ARRAY);
-        assertValue(first, "classArrayValue", new TypeDescription[]{new TypeDescription.ForLoadedType(CLASS)}, CLASS_ARRAY);
-        assertValue(second, "classArrayValue", new TypeDescription[]{new TypeDescription.ForLoadedType(CLASS)}, CLASS_ARRAY);
+        assertValue(first, "classArrayValue", new TypeDescription[]{TypeDescription.ForLoadedType.of(CLASS)}, CLASS_ARRAY);
+        assertValue(second, "classArrayValue", new TypeDescription[]{TypeDescription.ForLoadedType.of(CLASS)}, CLASS_ARRAY);
         assertValue(first, "enumArrayValue", new EnumerationDescription[]{new EnumerationDescription.ForLoadedEnumeration(ENUMERATION)}, ENUMERATION_ARRAY);
         assertValue(second, "enumArrayValue", new EnumerationDescription[]{new EnumerationDescription.ForLoadedEnumeration(ENUMERATION)}, ENUMERATION_ARRAY);
         assertValue(first, "annotationArrayValue", new AnnotationDescription[]{AnnotationDescription.ForLoadedAnnotation.of(ANNOTATION)}, ANNOTATION_ARRAY);
@@ -387,10 +735,10 @@ public abstract class AbstractAnnotationDescriptionTest {
         assertValue(defaultSecond, "doubleValue", OTHER_DOUBLE, OTHER_DOUBLE);
         assertValue(defaultFirst, "stringValue", FOO, FOO);
         assertValue(defaultSecond, "stringValue", BAR, BAR);
-        assertValue(defaultFirst, "classValue", new TypeDescription.ForLoadedType(CLASS), CLASS);
-        assertValue(defaultSecond, "classValue", new TypeDescription.ForLoadedType(OTHER_CLASS), OTHER_CLASS);
-        assertValue(defaultFirst, "arrayClassValue", new TypeDescription.ForLoadedType(ARRAY_CLASS), ARRAY_CLASS);
-        assertValue(defaultSecond, "arrayClassValue", new TypeDescription.ForLoadedType(OTHER_ARRAY_CLASS), OTHER_ARRAY_CLASS);
+        assertValue(defaultFirst, "classValue", TypeDescription.ForLoadedType.of(CLASS), CLASS);
+        assertValue(defaultSecond, "classValue", TypeDescription.ForLoadedType.of(OTHER_CLASS), OTHER_CLASS);
+        assertValue(defaultFirst, "arrayClassValue", TypeDescription.ForLoadedType.of(ARRAY_CLASS), ARRAY_CLASS);
+        assertValue(defaultSecond, "arrayClassValue", TypeDescription.ForLoadedType.of(OTHER_ARRAY_CLASS), OTHER_ARRAY_CLASS);
         assertValue(defaultFirst, "enumValue", new EnumerationDescription.ForLoadedEnumeration(ENUMERATION), ENUMERATION);
         assertValue(defaultSecond, "enumValue", new EnumerationDescription.ForLoadedEnumeration(OTHER_ENUMERATION), OTHER_ENUMERATION);
         assertValue(defaultFirst, "annotationValue", AnnotationDescription.ForLoadedAnnotation.of(ANNOTATION), ANNOTATION);
@@ -413,8 +761,8 @@ public abstract class AbstractAnnotationDescriptionTest {
         assertValue(defaultSecond, "doubleArrayValue", OTHER_DOUBLE_ARRAY, OTHER_DOUBLE_ARRAY);
         assertValue(defaultFirst, "stringArrayValue", STRING_ARRAY, STRING_ARRAY);
         assertValue(defaultSecond, "stringArrayValue", OTHER_STRING_ARRAY, OTHER_STRING_ARRAY);
-        assertValue(defaultFirst, "classArrayValue", new TypeDescription[]{new TypeDescription.ForLoadedType(CLASS)}, CLASS_ARRAY);
-        assertValue(defaultSecond, "classArrayValue", new TypeDescription[]{new TypeDescription.ForLoadedType(OTHER_CLASS)}, OTHER_CLASS_ARRAY);
+        assertValue(defaultFirst, "classArrayValue", new TypeDescription[]{TypeDescription.ForLoadedType.of(CLASS)}, CLASS_ARRAY);
+        assertValue(defaultSecond, "classArrayValue", new TypeDescription[]{TypeDescription.ForLoadedType.of(OTHER_CLASS)}, OTHER_CLASS_ARRAY);
         assertValue(defaultFirst, "enumArrayValue", new EnumerationDescription[]{new EnumerationDescription.ForLoadedEnumeration(ENUMERATION)}, ENUMERATION_ARRAY);
         assertValue(defaultSecond, "enumArrayValue", new EnumerationDescription[]{new EnumerationDescription.ForLoadedEnumeration(OTHER_ENUMERATION)}, OTHER_ENUMERATION_ARRAY);
         assertValue(defaultFirst, "annotationArrayValue", new AnnotationDescription[]{AnnotationDescription.ForLoadedAnnotation.of(ANNOTATION)}, ANNOTATION_ARRAY);
@@ -428,10 +776,25 @@ public abstract class AbstractAnnotationDescriptionTest {
 
     @Test
     public void testAnnotationTarget() throws Exception {
-        assertThat(describe(first).getElementTypes(), is((Set<ElementType>) new HashSet<ElementType>(Arrays.asList(ElementType.ANNOTATION_TYPE,
-                ElementType.CONSTRUCTOR, ElementType.FIELD, ElementType.LOCAL_VARIABLE, ElementType.METHOD,
-                ElementType.PACKAGE, ElementType.PARAMETER, ElementType.TYPE))));
+        Set<ElementType> elementTypes = new HashSet<ElementType>();
+        for (ElementType elementType : ElementType.values()) {
+            if (!elementType.name().equals("TYPE_PARAMETER")) {
+                elementTypes.add(elementType);
+            }
+        }
+        assertThat(describe(first).getElementTypes(), is(elementTypes));
         assertThat(describe(explicitTarget).getElementTypes(), is(Collections.singleton(ElementType.TYPE)));
+    }
+
+    @Test
+    public void testIsSupportedOn() throws Exception {
+        for (ElementType elementType : ElementType.values()) {
+            assertThat(describe(first).isSupportedOn(elementType), is(!elementType.name().equals("TYPE_PARAMETER")));
+        }
+        assertThat(describe(explicitTarget).isSupportedOn(ElementType.TYPE), is(true));
+        assertThat(describe(explicitTarget).isSupportedOn(ElementType.ANNOTATION_TYPE), is(false));
+        assertThat(describe(explicitTarget).isSupportedOn(ElementType.TYPE.name()), is(true));
+        assertThat(describe(explicitTarget).isSupportedOn(ElementType.ANNOTATION_TYPE.name()), is(false));
     }
 
     @Test
@@ -447,13 +810,13 @@ public abstract class AbstractAnnotationDescriptionTest {
     }
 
     private void assertValue(Annotation annotation, String methodName, Object unloadedValue, Object loadedValue) throws Exception {
-        assertThat(describe(annotation).getValue(new MethodDescription.ForLoadedMethod(annotation.annotationType().getDeclaredMethod(methodName))).resolve(),
+        assertThat(describe(annotation).getValue(methodName).resolve(),
                 is(unloadedValue));
-        assertThat(describe(annotation).getValue(new MethodDescription.Latent(new TypeDescription.ForLoadedType(annotation.annotationType()),
+        assertThat(describe(annotation).getValue(new MethodDescription.Latent(TypeDescription.ForLoadedType.of(annotation.annotationType()),
                 methodName,
                 Opcodes.ACC_PUBLIC,
                 Collections.<TypeVariableToken>emptyList(),
-                new TypeDescription.Generic.OfNonGenericType.ForLoadedType(annotation.annotationType().getDeclaredMethod(methodName).getReturnType()),
+                TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(annotation.annotationType().getDeclaredMethod(methodName).getReturnType()),
                 Collections.<ParameterDescription.Token>emptyList(),
                 Collections.<TypeDescription.Generic>emptyList(),
                 Collections.<AnnotationDescription>emptyList(),
@@ -466,12 +829,6 @@ public abstract class AbstractAnnotationDescriptionTest {
     public enum SampleEnumeration {
         VALUE,
         OTHER
-    }
-
-    @Retention(RetentionPolicy.RUNTIME)
-    public @interface Sample2 {
-
-        Class<?> foo();
     }
 
     @Retention(RetentionPolicy.RUNTIME)
@@ -682,6 +1039,22 @@ public abstract class AbstractAnnotationDescriptionTest {
         /* empty */
     }
 
+    @SampleDefault(booleanArrayValue = {},
+            byteArrayValue = {},
+            shortArrayValue = {},
+            charArrayValue = {},
+            intArrayValue = {},
+            longArrayValue = {},
+            floatArrayValue = {},
+            doubleArrayValue = {},
+            stringArrayValue = {},
+            classArrayValue = {},
+            enumArrayValue = {},
+            annotationArrayValue = {})
+    private static class EmptySample {
+        /* empty */
+    }
+
     @Other
     private static class EnumerationCarrier {
         /* empty */
@@ -703,18 +1076,85 @@ public abstract class AbstractAnnotationDescriptionTest {
     }
 
     @Retention(RetentionPolicy.RUNTIME)
-    public @interface BrokenAnnotation {
+    public @interface DefectiveAnnotation {
 
-        String stringValue();
+        String duplicateValue();
 
-        SampleEnumeration enumValue();
+        String incompatibleValue();
 
-        Class<?> classValue();
+        String[] incompatibleValueArray();
+
+        String missingValue();
+
+        String[] missingValueArray();
+
+        String wrongArity();
+
+        String[] wrongArityArray();
+
+        IncompatibleAnnotationProperty incompatibleAnnotationDeclaration();
+
+        IncompatibleAnnotationProperty[] incompatibleAnnotationDeclarationArray();
+
+        IncompatibleAnnotationProperty[] incompatibleAnnotationDeclarationEmptyArray();
+
+        IncompatibleEnumerationProperty incompatibleEnumerationDeclaration();
+
+        IncompatibleEnumerationProperty[] incompatibleEnumerationDeclarationArray();
+
+        IncompatibleEnumerationProperty[] incompatibleEnumerationDeclarationEmptyArray();
+
+        BrokenAnnotationProperty brokenAnnotationDeclaration();
+
+        BrokenAnnotationProperty[] brokenAnnotationDeclarationArray();
+
+        BrokenAnnotationProperty[] brokenAnnotationDeclarationEmptyArray();
+
+        BrokenEnumerationProperty brokenEnumerationDeclaration();
+
+        BrokenEnumerationProperty[] brokenEnumerationDeclarationArray();
+
+        BrokenEnumerationProperty[] brokenEnumerationDeclarationEmptyArray();
+
+        SampleEnumeration unknownEnumerationConstant();
+
+        SampleEnumeration[] unknownEnumerationConstantArray();
+
+        Class<?> missingType();
+
+        Class<?>[] missingTypeArray();
+    }
+
+    public @interface IncompatibleAnnotationProperty {
+        /* empty */
+    }
+
+    public enum IncompatibleEnumerationProperty {
+        FOO
+    }
+
+    public @interface BrokenAnnotationProperty {
+        /* empty */
+    }
+
+    public enum BrokenEnumerationProperty {
+        FOO
     }
 
     private static class AnnotationValueBreaker extends AsmVisitorWrapper.AbstractBase {
 
-        @Override
+        private final boolean allowMissingValues, allowWrongArity, allowIncompatibleDeclaration, allowBrokenDeclaration;
+
+        private AnnotationValueBreaker(boolean allowMissingValues,
+                                       boolean allowWrongArity,
+                                       boolean allowIncompatibleDeclaration,
+                                       boolean allowBrokenDeclaration) {
+            this.allowMissingValues = allowMissingValues;
+            this.allowWrongArity = allowWrongArity;
+            this.allowIncompatibleDeclaration = allowIncompatibleDeclaration;
+            this.allowBrokenDeclaration = allowBrokenDeclaration;
+        }
+
         public ClassVisitor wrap(TypeDescription instrumentedType,
                                  ClassVisitor classVisitor,
                                  Implementation.Context implementationContext,
@@ -726,19 +1166,63 @@ public abstract class AbstractAnnotationDescriptionTest {
             return new BreakingClassVisitor(classVisitor);
         }
 
-        private static class BreakingClassVisitor extends ClassVisitor {
+        private class BreakingClassVisitor extends ClassVisitor {
 
-            public BreakingClassVisitor(ClassVisitor classVisitor) {
-                super(Opcodes.ASM6, classVisitor);
+            private BreakingClassVisitor(ClassVisitor classVisitor) {
+                super(OpenedClassReader.ASM_API, classVisitor);
             }
 
             @Override
             public void visit(int version, int access, String name, String signature, String superName, String[] interfaces) {
                 super.visit(version, access, name, signature, superName, interfaces);
-                AnnotationVisitor annotationVisitor = visitAnnotation(Type.getDescriptor(BrokenAnnotation.class), true);
-                annotationVisitor.visit("stringValue", INTEGER);
-                annotationVisitor.visitEnum("enumValue", Type.getDescriptor(SampleEnumeration.class), FOO);
-                annotationVisitor.visit("classValue", Type.getType("Lnet/bytebuddy/inexistant/Foo;"));
+                AnnotationVisitor annotationVisitor = visitAnnotation(Type.getDescriptor(DefectiveAnnotation.class), true);
+                annotationVisitor.visit("duplicateValue", FOO);
+                annotationVisitor.visit("duplicateValue", BAR);
+                annotationVisitor.visit("incompatibleValue", INTEGER);
+                annotationVisitor.visit("excessValue", FOO);
+                AnnotationVisitor incompatibleValueArray = annotationVisitor.visitArray("incompatibleValueArray");
+                incompatibleValueArray.visit(null, INTEGER);
+                incompatibleValueArray.visitEnd();
+                if (allowMissingValues) {
+                    annotationVisitor.visitEnum("unknownEnumerationConstant", Type.getDescriptor(SampleEnumeration.class), FOO);
+                    AnnotationVisitor unknownEnumConstantArray = annotationVisitor.visitArray("unknownEnumerationConstantArray");
+                    unknownEnumConstantArray.visitEnum(null, Type.getDescriptor(SampleEnumeration.class), FOO);
+                    unknownEnumConstantArray.visitEnd();
+                    annotationVisitor.visit("missingType", Type.getType("Lnet/bytebuddy/inexistent/Foo;"));
+                    AnnotationVisitor missingTypeArray = annotationVisitor.visitArray("missingTypeArray");
+                    missingTypeArray.visit(null, Type.getType("Lnet/bytebuddy/inexistent/Foo;"));
+                    missingTypeArray.visitEnd();
+                }
+                if (allowWrongArity) {
+                    AnnotationVisitor wrongArityValue = annotationVisitor.visitArray("wrongArity");
+                    wrongArityValue.visit(null, FOO);
+                    wrongArityValue.visitEnd();
+                    annotationVisitor.visit("wrongArityArray", FOO);
+                }
+                if (allowIncompatibleDeclaration) {
+                    annotationVisitor.visitAnnotation("incompatibleEnumerationDeclaration", Type.getDescriptor(IncompatibleAnnotationProperty.class)).visitEnd();
+                    AnnotationVisitor incompatibleAnnotationDeclarationArray = annotationVisitor.visitArray("incompatibleEnumerationDeclarationArray");
+                    incompatibleAnnotationDeclarationArray.visitAnnotation(null, Type.getDescriptor(IncompatibleAnnotationProperty.class));
+                    incompatibleAnnotationDeclarationArray.visitEnd();
+                    annotationVisitor.visitArray("incompatibleEnumerationDeclarationEmptyArray").visitEnd();
+                    annotationVisitor.visitEnum("incompatibleAnnotationDeclaration", Type.getDescriptor(IncompatibleEnumerationProperty.class), FOO.toUpperCase());
+                    AnnotationVisitor incompatibleEnumerationDeclarationArray = annotationVisitor.visitArray("incompatibleAnnotationDeclarationArray");
+                    incompatibleEnumerationDeclarationArray.visitEnum(null, Type.getDescriptor(IncompatibleEnumerationProperty.class), FOO.toUpperCase());
+                    incompatibleEnumerationDeclarationArray.visitEnd();
+                    annotationVisitor.visitArray("incompatibleAnnotationDeclarationEmptyArray").visitEnd();
+                }
+                if (allowBrokenDeclaration) {
+                    annotationVisitor.visitAnnotation("brokenEnumerationDeclaration", Type.getDescriptor(BrokenEnumerationProperty.class)).visitEnd();
+                    AnnotationVisitor incompatibleAnnotationDeclarationArray = annotationVisitor.visitArray("brokenEnumerationDeclarationArray");
+                    incompatibleAnnotationDeclarationArray.visitAnnotation(null, Type.getDescriptor(BrokenEnumerationProperty.class));
+                    incompatibleAnnotationDeclarationArray.visitEnd();
+                    annotationVisitor.visitArray("brokenEnumerationDeclarationEmptyArray").visitEnd();
+                    annotationVisitor.visitEnum("brokenAnnotationDeclaration", Type.getDescriptor(BrokenAnnotationProperty.class), FOO.toUpperCase());
+                    AnnotationVisitor incompatibleEnumerationDeclarationArray = annotationVisitor.visitArray("brokenAnnotationDeclarationArray");
+                    incompatibleEnumerationDeclarationArray.visitEnum(null, Type.getDescriptor(BrokenAnnotationProperty.class), FOO.toUpperCase());
+                    incompatibleEnumerationDeclarationArray.visitEnd();
+                    annotationVisitor.visitArray("brokenAnnotationDeclarationEmptyArray").visitEnd();
+                }
                 annotationVisitor.visitEnd();
             }
         }
