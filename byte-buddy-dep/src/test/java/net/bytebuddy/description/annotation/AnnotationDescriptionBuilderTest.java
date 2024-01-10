@@ -1,18 +1,12 @@
 package net.bytebuddy.description.annotation;
 
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Test;
 
 import java.lang.annotation.Annotation;
 
 public class AnnotationDescriptionBuilderTest {
 
-    private static final String FOO = "foo", BAR = "bar", QUX = "qux", BAZ = "baz";
-
-    @Test(expected = IllegalArgumentException.class)
-    public void testNonMatchingEnumerationValue() throws Exception {
-        AnnotationDescription.Builder.ofType(Foo.class).define(FOO, FooBar.FIRST);
-    }
+    private static final String FOO = "foo", BAR = "bar", BAZ = "baz";
 
     @Test(expected = IllegalArgumentException.class)
     public void testNonMatchingAnnotationValue() throws Exception {
@@ -48,18 +42,8 @@ public class AnnotationDescriptionBuilderTest {
     }
 
     @Test(expected = IllegalArgumentException.class)
-    public void testIllegalProperty() throws Exception {
-        AnnotationDescription.Builder.ofType(Foo.class).define(FOO, FOO);
-    }
-
-    @Test(expected = IllegalArgumentException.class)
     public void testDuplicateProperty() throws Exception {
         AnnotationDescription.Builder.ofType(Foo.class).define(BAZ, FOO).define(BAZ, FOO);
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(AnnotationDescription.Builder.class).apply();
     }
 
     public enum Bar {
@@ -87,7 +71,6 @@ public class AnnotationDescriptionBuilderTest {
 
         class Instance implements Qux {
 
-            @Override
             public Class<? extends Annotation> annotationType() {
                 return Qux.class;
             }
@@ -98,7 +81,6 @@ public class AnnotationDescriptionBuilderTest {
 
         class Instance implements QuxBaz {
 
-            @Override
             public Class<? extends Annotation> annotationType() {
                 return QuxBaz.class;
             }

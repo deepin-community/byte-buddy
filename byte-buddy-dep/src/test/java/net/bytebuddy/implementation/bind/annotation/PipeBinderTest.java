@@ -2,9 +2,9 @@ package net.bytebuddy.implementation.bind.annotation;
 
 import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.type.TypeDescription;
+import net.bytebuddy.implementation.Implementation;
 import net.bytebuddy.implementation.bind.MethodDelegationBinder;
 import net.bytebuddy.implementation.bytecode.assign.Assigner;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.Mock;
@@ -31,8 +31,8 @@ public class PipeBinderTest extends AbstractAnnotationBinderTest<Pipe> {
         super(Pipe.class);
     }
 
-    @Override
     @Before
+    @Override
     public void setUp() throws Exception {
         super.setUp();
         when(targetMethod.getDeclaringType()).thenReturn(targetMethodType);
@@ -40,7 +40,6 @@ public class PipeBinderTest extends AbstractAnnotationBinderTest<Pipe> {
         binder = new Pipe.Binder(targetMethod);
     }
 
-    @Override
     protected TargetMethodAnnotationDrivenBinder.ParameterBinder<Pipe> getSimpleBinder() {
         return binder;
     }
@@ -85,10 +84,11 @@ public class PipeBinderTest extends AbstractAnnotationBinderTest<Pipe> {
     }
 
     @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(Pipe.Binder.class).apply();
-        ObjectPropertyAssertion.of(Pipe.Binder.Redirection.class).apply();
-        ObjectPropertyAssertion.of(Pipe.Binder.Redirection.MethodCall.class).skipSynthetic().apply();
-        ObjectPropertyAssertion.of(Pipe.Binder.Redirection.ConstructorCall.class).apply();
+    public void testRedirectionSuffix() {
+        assertThat(new Morph.Binder.RedirectionProxy(new TypeDescription.ForLoadedType(Object.class),
+                mock(TypeDescription.class),
+                mock(Implementation.SpecialMethodInvocation.class),
+                mock(Assigner.class),
+                false).getSuffix(), is("jcuimv00"));
     }
 }

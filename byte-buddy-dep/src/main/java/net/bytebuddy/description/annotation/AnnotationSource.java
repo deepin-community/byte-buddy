@@ -1,6 +1,21 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.description.annotation;
 
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 
 import java.util.Arrays;
 import java.util.List;
@@ -27,7 +42,9 @@ public interface AnnotationSource {
          */
         INSTANCE;
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public AnnotationList getDeclaredAnnotations() {
             return new AnnotationList.Empty();
         }
@@ -36,7 +53,7 @@ public interface AnnotationSource {
     /**
      * An annotation source that declares a given list of annotations.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class Explicit implements AnnotationSource {
 
         /**
@@ -62,7 +79,9 @@ public interface AnnotationSource {
             this.annotations = annotations;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public AnnotationList getDeclaredAnnotations() {
             return new AnnotationList.Explicit(annotations);
         }

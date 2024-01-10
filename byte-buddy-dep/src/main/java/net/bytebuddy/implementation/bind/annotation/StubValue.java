@@ -1,3 +1,18 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation.bind.annotation;
 
 import net.bytebuddy.description.annotation.AnnotationDescription;
@@ -14,12 +29,21 @@ import net.bytebuddy.implementation.bytecode.constant.NullConstant;
 import java.lang.annotation.*;
 
 /**
+ * <p>
  * A stub value represents the (boxed) default value of the intercepted method's return type. This value can
  * only be assigned to a {@link java.lang.Object} parameter. This annotation is useful to conditionally return a
  * default value from a method when using an {@link java.lang.Object} return type in combination with the
  * {@link net.bytebuddy.implementation.bind.annotation.RuntimeType} annotation. The value is either representing
  * {@code null} if a method returns a reference type or {@code void} or a boxed primitive of the return type
  * representing the numeric value {@code 0}.
+ * </p>
+ * <p>
+ * <b>Important</b>: Don't confuse this annotation with {@link net.bytebuddy.asm.Advice.StubValue} annotation. This
+ * annotation should be used only in combination with method delegation
+ * ({@link net.bytebuddy.implementation.MethodDelegation MethodDelegation.to(...)}).
+ * For {@link net.bytebuddy.asm.Advice} ASM visitor use alternative annotation from
+ * <code>net.bytebuddy.asm.Advice</code> package.
+ * </p>
  *
  * @see net.bytebuddy.implementation.MethodDelegation
  * @see net.bytebuddy.implementation.bind.annotation.TargetMethodAnnotationDrivenBinder
@@ -39,12 +63,16 @@ public @interface StubValue {
          */
         INSTANCE;
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Class<StubValue> getHandledType() {
             return StubValue.class;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public MethodDelegationBinder.ParameterBinding<?> bind(AnnotationDescription.Loadable<StubValue> annotation,
                                                                MethodDescription source,
                                                                ParameterDescription target,
@@ -57,7 +85,7 @@ public @interface StubValue {
             return new MethodDelegationBinder.ParameterBinding.Anonymous(source.getReturnType().represents(void.class)
                     ? NullConstant.INSTANCE
                     : new StackManipulation.Compound(DefaultValue.of(source.getReturnType().asErasure()),
-                    assigner.assign(source.getReturnType(), TypeDescription.Generic.OBJECT, typing)));
+                    assigner.assign(source.getReturnType(), TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class), typing)));
         }
     }
 }

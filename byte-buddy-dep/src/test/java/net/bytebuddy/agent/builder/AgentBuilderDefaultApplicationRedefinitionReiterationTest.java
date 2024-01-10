@@ -2,12 +2,13 @@ package net.bytebuddy.agent.builder;
 
 import net.bytebuddy.agent.ByteBuddyAgent;
 import net.bytebuddy.asm.Advice;
+import net.bytebuddy.dynamic.ClassFileLocator;
 import net.bytebuddy.dynamic.loading.ByteArrayClassLoader;
+import net.bytebuddy.dynamic.loading.ClassLoadingStrategy;
 import net.bytebuddy.implementation.bytecode.Removal;
 import net.bytebuddy.implementation.bytecode.assign.Assigner;
 import net.bytebuddy.matcher.ElementMatchers;
 import net.bytebuddy.test.utility.AgentAttachmentRule;
-import net.bytebuddy.test.utility.ClassFileExtraction;
 import net.bytebuddy.test.utility.JavaVersionRule;
 import org.junit.Before;
 import org.junit.Rule;
@@ -37,9 +38,10 @@ public class AgentBuilderDefaultApplicationRedefinitionReiterationTest {
 
     @Before
     public void setUp() throws Exception {
-        classLoader = new ByteArrayClassLoader.ChildFirst(getClass().getClassLoader(),
-                ClassFileExtraction.of(Foo.class, Bar.class),
-                ByteArrayClassLoader.PersistenceHandler.MANIFEST);
+        classLoader = new ByteArrayClassLoader(ClassLoadingStrategy.BOOTSTRAP_LOADER,
+                ClassFileLocator.ForClassLoader.readToNames(AgentBuilderDefaultApplicationRedefinitionReiterationTest.class,
+                        Foo.class,
+                        Bar.class), ByteArrayClassLoader.PersistenceHandler.MANIFEST);
     }
 
     @Test
@@ -50,7 +52,7 @@ public class AgentBuilderDefaultApplicationRedefinitionReiterationTest {
         try {
             assertAdvice();
         } finally {
-            ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer);
+            assertThat(ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer), is(true));
         }
     }
 
@@ -63,7 +65,7 @@ public class AgentBuilderDefaultApplicationRedefinitionReiterationTest {
         try {
             assertAdvice();
         } finally {
-            ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer);
+            assertThat(ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer), is(true));
         }
     }
 
@@ -77,7 +79,7 @@ public class AgentBuilderDefaultApplicationRedefinitionReiterationTest {
         try {
             assertAdvice();
         } finally {
-            ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer);
+            assertThat(ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer), is(true));
         }
     }
 
@@ -97,17 +99,15 @@ public class AgentBuilderDefaultApplicationRedefinitionReiterationTest {
                         .with(AgentBuilder.LocationStrategy.ForClassLoader.STRONG)
                         .include(FooAdvice.class.getClassLoader())
                         .with(Assigner.DEFAULT)
-                        .withExceptionHandler(Removal.SINGLE)
+                        .withExceptionHandler(new Advice.ExceptionHandler.Simple(Removal.SINGLE))
                         .advice(named("createBar"), FooAdvice.class.getName()))
-                .asDecorator()
                 .type(ElementMatchers.named(Bar.class.getName()), ElementMatchers.is(classLoader))
                 .transform(new AgentBuilder.Transformer.ForAdvice()
                         .with(AgentBuilder.LocationStrategy.ForClassLoader.STRONG)
                         .include(BarAdvice.class.getClassLoader())
                         .with(Assigner.DEFAULT)
-                        .withExceptionHandler(Removal.SINGLE)
+                        .withExceptionHandler(new Advice.ExceptionHandler.Simple(Removal.SINGLE))
                         .advice(named("toString"), BarAdvice.class.getName()))
-                .asDecorator()
                 .installOnByteBuddyAgent();
     }
 
@@ -117,7 +117,6 @@ public class AgentBuilderDefaultApplicationRedefinitionReiterationTest {
         public Bar createBar() throws Exception {
             return new Bar();
         }
-
     }
 
     public static class Bar {
@@ -128,7 +127,6 @@ public class AgentBuilderDefaultApplicationRedefinitionReiterationTest {
             this.x += x;
         }
 
-        @Override
         public String toString() {
             return x;
         }

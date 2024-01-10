@@ -1,1 +1,3 @@
 byte-buddy/dependency-reduced-pom.xml
+byte-buddy-dep/src/main/precompiled-6/
+debian/plugin/

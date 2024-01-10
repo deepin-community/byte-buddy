@@ -1,6 +1,21 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation;
 
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.field.FieldDescription;
 import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.method.MethodList;
@@ -17,6 +32,7 @@ import net.bytebuddy.implementation.bytecode.StackManipulation;
 import net.bytebuddy.implementation.bytecode.TypeCreation;
 import net.bytebuddy.implementation.bytecode.assign.Assigner;
 import net.bytebuddy.implementation.bytecode.member.FieldAccess;
+import net.bytebuddy.implementation.bytecode.member.MethodInvocation;
 import net.bytebuddy.implementation.bytecode.member.MethodVariableAccess;
 import net.bytebuddy.matcher.ElementMatcher;
 import net.bytebuddy.utility.CompoundList;
@@ -33,11 +49,13 @@ import java.util.List;
 import static net.bytebuddy.matcher.ElementMatchers.*;
 
 /**
- * This implementation delegates an method call to another method which can either be {@code static} by providing
+ * This implementation delegates a method call to another method which can either be {@code static} by providing
  * a reference to a {@link java.lang.Class} or an instance method when another object is provided. The potential
  * targets of the method delegation can further be filtered by applying a filter. The method delegation can be
  * customized by invoking the {@code MethodDelegation}'s several builder methods.
- * <h3>Without any customization, the method delegation will work as follows:</h3>
+ * <p>&nbsp;</p>
+ * <b>Without any customization, the method delegation will work as follows:</b>
+ * <p>&nbsp;</p>
  * <span style="text-decoration: underline">Binding an instrumented method to a given delegate method</span>
  * <p>&nbsp;</p>
  * A method will be bound parameter by parameter. Considering a method {@code Foo#bar} being bound to a method
@@ -162,7 +180,7 @@ import static net.bytebuddy.matcher.ElementMatchers.*;
  * @see MethodCall
  * @see net.bytebuddy.implementation.bind.annotation.TargetMethodAnnotationDrivenBinder.ParameterBinder.ForFixedValue
  */
-@EqualsAndHashCode
+@HashCodeAndEqualsPlugin.Enhance
 public class MethodDelegation implements Implementation.Composable {
 
     /**
@@ -394,6 +412,70 @@ public class MethodDelegation implements Implementation.Composable {
     }
 
     /**
+     * Delegates any intercepted method to invoke a non-{@code static} method that is declared by the supplied type's instance or any
+     * of its super types. To be considered a valid delegation target, a method must be visible and accessible to the instrumented type.
+     * This is the case if the method's declaring type is either public or in the same package as the instrumented type and if the method
+     * is either public or non-private and in the same package as the instrumented type. Private methods can only be used as
+     * a delegation target if the delegation is targeting the instrumented type.
+     *
+     * @param target         The target instance for the delegation.
+     * @param typeDefinition The most specific type of which {@code target} should be considered. Must be a super type of the target's actual type.
+     * @return A method delegation that redirects method calls to a static method of the supplied type.
+     */
+    public static MethodDelegation to(Object target, TypeDefinition typeDefinition) {
+        return withDefaultConfiguration().to(target, typeDefinition);
+    }
+
+    /**
+     * Delegates any intercepted method to invoke a non-{@code static} method that is declared by the supplied type's instance or any
+     * of its super types. To be considered a valid delegation target, a method must be visible and accessible to the instrumented type.
+     * This is the case if the method's declaring type is either public or in the same package as the instrumented type and if the method
+     * is either public or non-private and in the same package as the instrumented type. Private methods can only be used as
+     * a delegation target if the delegation is targeting the instrumented type.
+     *
+     * @param target              The target instance for the delegation.
+     * @param typeDefinition      The most specific type of which {@code target} should be considered. Must be a super type of the target's actual type.
+     * @param methodGraphCompiler The method graph compiler to use.
+     * @return A method delegation that redirects method calls to a static method of the supplied type.
+     */
+    public static MethodDelegation to(Object target, TypeDefinition typeDefinition, MethodGraph.Compiler methodGraphCompiler) {
+        return withDefaultConfiguration().to(target, typeDefinition, methodGraphCompiler);
+    }
+
+    /**
+     * Delegates any intercepted method to invoke a non-{@code static} method that is declared by the supplied type's instance or any
+     * of its super types. To be considered a valid delegation target, a method must be visible and accessible to the instrumented type.
+     * This is the case if the method's declaring type is either public or in the same package as the instrumented type and if the method
+     * is either public or non-private and in the same package as the instrumented type. Private methods can only be used as
+     * a delegation target if the delegation is targeting the instrumented type.
+     *
+     * @param target         The target instance for the delegation.
+     * @param typeDefinition The most specific type of which {@code target} should be considered. Must be a super type of the target's actual type.
+     * @param fieldName      The name of the field that is holding the {@code target} instance.
+     * @return A method delegation that redirects method calls to a static method of the supplied type.
+     */
+    public static MethodDelegation to(Object target, TypeDefinition typeDefinition, String fieldName) {
+        return withDefaultConfiguration().to(target, typeDefinition, fieldName);
+    }
+
+    /**
+     * Delegates any intercepted method to invoke a non-{@code static} method that is declared by the supplied type's instance or any
+     * of its super types. To be considered a valid delegation target, a method must be visible and accessible to the instrumented type.
+     * This is the case if the method's declaring type is either public or in the same package as the instrumented type and if the method
+     * is either public or non-private and in the same package as the instrumented type. Private methods can only be used as
+     * a delegation target if the delegation is targeting the instrumented type.
+     *
+     * @param target              The target instance for the delegation.
+     * @param typeDefinition      The most specific type of which {@code target} should be considered. Must be a super type of the target's actual type.
+     * @param fieldName           The name of the field that is holding the {@code target} instance.
+     * @param methodGraphCompiler The method graph compiler to use.
+     * @return A method delegation that redirects method calls to a static method of the supplied type.
+     */
+    public static MethodDelegation to(Object target, TypeDefinition typeDefinition, String fieldName, MethodGraph.Compiler methodGraphCompiler) {
+        return withDefaultConfiguration().to(target, typeDefinition, fieldName, methodGraphCompiler);
+    }
+
+    /**
      * Delegates any intercepted method to invoke a constructor of the supplied type. To be considered a valid delegation target,
      * a constructor must be visible and accessible to the instrumented type. This is the case if the constructor's declaring type is
      * either public or in the same package as the instrumented type and if the constructor is either public or non-private and in
@@ -482,6 +564,35 @@ public class MethodDelegation implements Implementation.Composable {
     }
 
     /**
+     * Delegates any intercepted method to invoke a method on an instance that is returned by a parameterless method of the
+     * given name. To be considered a valid delegation target, a method must be visible and accessible to the instrumented type.
+     * This is the case if the method's declaring type is either public or in the same package as the instrumented type and if
+     * the method is either public or non-private and in the same package as the instrumented type. Private methods can only
+     * be used as a delegation target if the delegation is targeting the instrumented type.
+     *
+     * @param name The name of the method that returns the delegation target.
+     * @return A delegation that redirects invocations to the return value of a method that is declared by the instrumented type.
+     */
+    public static MethodDelegation toMethodReturnOf(String name) {
+        return withDefaultConfiguration().toMethodReturnOf(name);
+    }
+
+    /**
+     * Delegates any intercepted method to invoke a method on an instance that is returned by a parameterless method of the
+     * given name. To be considered a valid delegation target, a method must be visible and accessible to the instrumented type.
+     * This is the case if the method's declaring type is either public or in the same package as the instrumented type and if
+     * the method is either public or non-private and in the same package as the instrumented type. Private methods can only
+     * be used as a delegation target if the delegation is targeting the instrumented type.
+     *
+     * @param name                The name of the method that returns the delegation target.
+     * @param methodGraphCompiler The method graph compiler to use.
+     * @return A delegation that redirects invocations to the return value of a method that is declared by the instrumented type.
+     */
+    public static MethodDelegation toMethodReturnOf(String name, MethodGraph.Compiler methodGraphCompiler) {
+        return withDefaultConfiguration().toMethodReturnOf(name, methodGraphCompiler);
+    }
+
+    /**
      * Creates a configuration builder for a method delegation that is pre-configured with the ambiguity resolvers defined by
      * {@link net.bytebuddy.implementation.bind.MethodDelegationBinder.AmbiguityResolver#DEFAULT} and the parameter binders
      * defined by {@link net.bytebuddy.implementation.bind.annotation.TargetMethodAnnotationDrivenBinder.ParameterBinder#DEFAULTS}.
@@ -518,7 +629,9 @@ public class MethodDelegation implements Implementation.Composable {
                 assigner);
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public Implementation andThen(Implementation implementation) {
         return new Compound(new MethodDelegation(implementationDelegate,
                 parameterBinders,
@@ -528,12 +641,28 @@ public class MethodDelegation implements Implementation.Composable {
                 assigner), implementation);
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
+    public Composable andThen(Composable implementation) {
+        return new Compound.Composable(new MethodDelegation(implementationDelegate,
+                parameterBinders,
+                ambiguityResolver,
+                MethodDelegationBinder.TerminationHandler.Default.DROPPING,
+                bindingResolver,
+                assigner), implementation);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
     public InstrumentedType prepare(InstrumentedType instrumentedType) {
         return implementationDelegate.prepare(instrumentedType);
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public ByteCodeAppender appender(Target implementationTarget) {
         ImplementationDelegate.Compiled compiled = implementationDelegate.compile(implementationTarget.getInstrumentedType());
         return new Appender(implementationTarget,
@@ -591,7 +720,7 @@ public class MethodDelegation implements Implementation.Composable {
             /**
              * A compiled implementation delegate for invoking a static method.
              */
-            @EqualsAndHashCode
+            @HashCodeAndEqualsPlugin.Enhance
             class ForStaticCall implements Compiled {
 
                 /**
@@ -608,17 +737,23 @@ public class MethodDelegation implements Implementation.Composable {
                     this.records = records;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public StackManipulation prepare(MethodDescription instrumentedMethod) {
                     return StackManipulation.Trivial.INSTANCE;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public MethodDelegationBinder.MethodInvoker invoke() {
                     return MethodDelegationBinder.MethodInvoker.Simple.INSTANCE;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public List<MethodDelegationBinder.Record> getRecords() {
                     return records;
                 }
@@ -627,7 +762,7 @@ public class MethodDelegation implements Implementation.Composable {
             /**
              * A compiled implementation delegate that invokes methods on a field.
              */
-            @EqualsAndHashCode
+            @HashCodeAndEqualsPlugin.Enhance
             class ForField implements Compiled {
 
                 /**
@@ -651,7 +786,9 @@ public class MethodDelegation implements Implementation.Composable {
                     this.records = records;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public StackManipulation prepare(MethodDescription instrumentedMethod) {
                     if (instrumentedMethod.isStatic() && !fieldDescription.isStatic()) {
                         throw new IllegalStateException("Cannot read " + fieldDescription + " from " + instrumentedMethod);
@@ -661,12 +798,70 @@ public class MethodDelegation implements Implementation.Composable {
                             : MethodVariableAccess.loadThis(), FieldAccess.forField(fieldDescription).read());
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public MethodDelegationBinder.MethodInvoker invoke() {
                     return new MethodDelegationBinder.MethodInvoker.Virtual(fieldDescription.getType().asErasure());
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
+                public List<MethodDelegationBinder.Record> getRecords() {
+                    return records;
+                }
+            }
+
+            /**
+             * A compiled implementation delegate that invokes a method on an instance that is returned by another method.
+             */
+            @HashCodeAndEqualsPlugin.Enhance
+            class ForMethodReturn implements Compiled {
+
+                /**
+                 * The method to call for result.
+                 */
+                private final MethodDescription methodDescription;
+
+                /**
+                 * The records to consider for delegation.
+                 */
+                private final List<MethodDelegationBinder.Record> records;
+
+                /**
+                 * Creates a new compiled implementation delegate for a field delegation.
+                 *
+                 * @param methodDescription The method to call for result.
+                 * @param records           The records to consider for delegation.
+                 */
+                protected ForMethodReturn(MethodDescription methodDescription, List<MethodDelegationBinder.Record> records) {
+                    this.methodDescription = methodDescription;
+                    this.records = records;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public StackManipulation prepare(MethodDescription instrumentedMethod) {
+                    if (instrumentedMethod.isStatic() && !methodDescription.isStatic()) {
+                        throw new IllegalStateException("Cannot invoke " + methodDescription + " from " + instrumentedMethod);
+                    }
+                    return new StackManipulation.Compound(methodDescription.isStatic()
+                            ? StackManipulation.Trivial.INSTANCE
+                            : MethodVariableAccess.loadThis(), MethodInvocation.invoke(methodDescription));
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public MethodDelegationBinder.MethodInvoker invoke() {
+                    return new MethodDelegationBinder.MethodInvoker.Virtual(methodDescription.getReturnType().asErasure());
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
                 public List<MethodDelegationBinder.Record> getRecords() {
                     return records;
                 }
@@ -675,7 +870,7 @@ public class MethodDelegation implements Implementation.Composable {
             /**
              * A compiled implementation delegate for a constructor delegation.
              */
-            @EqualsAndHashCode
+            @HashCodeAndEqualsPlugin.Enhance
             class ForConstruction implements Compiled {
 
                 /**
@@ -699,17 +894,23 @@ public class MethodDelegation implements Implementation.Composable {
                     this.records = records;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public StackManipulation prepare(MethodDescription instrumentedMethod) {
                     return new StackManipulation.Compound(TypeCreation.of(typeDescription), Duplication.SINGLE);
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public MethodDelegationBinder.MethodInvoker invoke() {
                     return MethodDelegationBinder.MethodInvoker.Simple.INSTANCE;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public List<MethodDelegationBinder.Record> getRecords() {
                     return records;
                 }
@@ -719,7 +920,7 @@ public class MethodDelegation implements Implementation.Composable {
         /**
          * An implementation delegate for a static method delegation.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class ForStaticMethod implements ImplementationDelegate {
 
             /**
@@ -751,12 +952,16 @@ public class MethodDelegation implements Implementation.Composable {
                 return new ForStaticMethod(records);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public InstrumentedType prepare(InstrumentedType instrumentedType) {
                 return instrumentedType;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public ImplementationDelegate.Compiled compile(TypeDescription instrumentedType) {
                 return new Compiled.ForStaticCall(records);
             }
@@ -765,7 +970,7 @@ public class MethodDelegation implements Implementation.Composable {
         /**
          * An implementation delegate for invoking methods on a field that is declared by the instrumented type or a super type.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         abstract class ForField implements ImplementationDelegate {
 
             /**
@@ -806,7 +1011,9 @@ public class MethodDelegation implements Implementation.Composable {
                 this.matcher = matcher;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Compiled compile(TypeDescription instrumentedType) {
                 FieldDescription fieldDescription = resolve(instrumentedType);
                 if (!fieldDescription.getType().asErasure().isVisibleTo(instrumentedType)) {
@@ -836,7 +1043,7 @@ public class MethodDelegation implements Implementation.Composable {
             /**
              * An implementation target for a static field that is declared by the instrumented type and that is assigned an instance.
              */
-            @EqualsAndHashCode(callSuper = true)
+            @HashCodeAndEqualsPlugin.Enhance
             protected static class WithInstance extends ForField {
 
                 /**
@@ -870,13 +1077,13 @@ public class MethodDelegation implements Implementation.Composable {
                     this.fieldType = fieldType;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public InstrumentedType prepare(InstrumentedType instrumentedType) {
-                    return instrumentedType
-                            .withField(new FieldDescription.Token(fieldName,
-                                    Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC | Opcodes.ACC_VOLATILE | Opcodes.ACC_SYNTHETIC,
-                                    fieldType))
-                            .withInitializer(new LoadedTypeInitializer.ForStaticField(fieldName, target));
+                    return instrumentedType.withAuxiliaryField(new FieldDescription.Token(fieldName,
+                            Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC | Opcodes.ACC_VOLATILE | Opcodes.ACC_SYNTHETIC,
+                            fieldType), target);
                 }
 
                 @Override
@@ -894,7 +1101,7 @@ public class MethodDelegation implements Implementation.Composable {
             /**
              * An implementation target for a field that is declared by the instrumented type or a super type.
              */
-            @EqualsAndHashCode(callSuper = true)
+            @HashCodeAndEqualsPlugin.Enhance
             protected static class WithLookup extends ForField {
 
                 /**
@@ -920,7 +1127,9 @@ public class MethodDelegation implements Implementation.Composable {
                     this.fieldLocatorFactory = fieldLocatorFactory;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public InstrumentedType prepare(InstrumentedType instrumentedType) {
                     return instrumentedType;
                 }
@@ -938,9 +1147,87 @@ public class MethodDelegation implements Implementation.Composable {
         }
 
         /**
+         * An implementation delegate for invoking a delegation target on the another methods return value.
+         */
+        @HashCodeAndEqualsPlugin.Enhance
+        class ForMethodReturn implements ImplementationDelegate {
+
+            /**
+             * The name of the method to invoke.
+             */
+            private final String name;
+
+            /**
+             * The method graph compiler to use.
+             */
+            private final MethodGraph.Compiler methodGraphCompiler;
+
+            /**
+             * The parameter binders to use.
+             */
+            private final List<? extends TargetMethodAnnotationDrivenBinder.ParameterBinder<?>> parameterBinders;
+
+            /**
+             * The matcher to use for filtering methods.
+             */
+            private final ElementMatcher<? super MethodDescription> matcher;
+
+            /**
+             * Creates a new implementation delegate for a method return value delegation.
+             *
+             * @param name                The name of the method to invoke.
+             * @param methodGraphCompiler The method graph compiler to use.
+             * @param parameterBinders    The parameter binders to use.
+             * @param matcher             The matcher to use for filtering methods.
+             */
+            protected ForMethodReturn(String name,
+                                      MethodGraph.Compiler methodGraphCompiler,
+                                      List<? extends TargetMethodAnnotationDrivenBinder.ParameterBinder<?>> parameterBinders,
+                                      ElementMatcher<? super MethodDescription> matcher) {
+                this.name = name;
+                this.methodGraphCompiler = methodGraphCompiler;
+                this.parameterBinders = parameterBinders;
+                this.matcher = matcher;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public Compiled compile(TypeDescription instrumentedType) {
+                MethodList<?> targets = new MethodList.Explicit<MethodDescription>(CompoundList.<MethodDescription>of(
+                        instrumentedType.getDeclaredMethods().filter(isStatic().or(isPrivate())),
+                        methodGraphCompiler.compile((TypeDefinition) instrumentedType).listNodes().asMethodList())
+                ).filter(named(name).and(takesArguments(0)).and(not(returns(isPrimitive().or(isArray())))));
+                if (targets.size() != 1) {
+                    throw new IllegalStateException(instrumentedType + " does not define method without arguments with name " + name + ": " + targets);
+                } else if (!targets.getOnly().getReturnType().asErasure().isVisibleTo(instrumentedType)) {
+                    throw new IllegalStateException(targets.getOnly() + " is not visible to " + instrumentedType);
+                } else {
+                    MethodList<?> candidates = methodGraphCompiler.compile(targets.getOnly().getReturnType(), instrumentedType)
+                            .listNodes()
+                            .asMethodList()
+                            .filter(matcher);
+                    List<MethodDelegationBinder.Record> records = new ArrayList<MethodDelegationBinder.Record>(candidates.size());
+                    MethodDelegationBinder methodDelegationBinder = TargetMethodAnnotationDrivenBinder.of(parameterBinders);
+                    for (MethodDescription candidate : candidates) {
+                        records.add(methodDelegationBinder.compile(candidate));
+                    }
+                    return new Compiled.ForMethodReturn(targets.get(0), records);
+                }
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public InstrumentedType prepare(InstrumentedType instrumentedType) {
+                return instrumentedType;
+            }
+        }
+
+        /**
          * An implementation delegate for constructing an instance.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class ForConstruction implements ImplementationDelegate {
 
             /**
@@ -982,12 +1269,16 @@ public class MethodDelegation implements Implementation.Composable {
                 return new ForConstruction(typeDescription, records);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public InstrumentedType prepare(InstrumentedType instrumentedType) {
                 return instrumentedType;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Compiled compile(TypeDescription instrumentedType) {
                 return new Compiled.ForConstruction(typeDescription, records);
             }
@@ -997,7 +1288,7 @@ public class MethodDelegation implements Implementation.Composable {
     /**
      * The appender for implementing a {@link net.bytebuddy.implementation.MethodDelegation}.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     protected static class Appender implements ByteCodeAppender {
 
         /**
@@ -1046,7 +1337,9 @@ public class MethodDelegation implements Implementation.Composable {
             this.compiled = compiled;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Size apply(MethodVisitor methodVisitor, Context implementationContext, MethodDescription instrumentedMethod) {
             StackManipulation.Size stackSize = new StackManipulation.Compound(
                     compiled.prepare(instrumentedMethod),
@@ -1059,7 +1352,7 @@ public class MethodDelegation implements Implementation.Composable {
     /**
      * A {@link MethodDelegation} with custom configuration.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     public static class WithCustomProperties {
 
         /**
@@ -1173,6 +1466,7 @@ public class MethodDelegation implements Implementation.Composable {
          * @param matcher The matcher any delegation target needs to match in order to be considered a for delegation.
          * @return A new delegation configuration which only considers methods for delegation if they match the supplied matcher.
          */
+        @SuppressWarnings("unchecked")
         public WithCustomProperties filter(ElementMatcher<? super MethodDescription> matcher) {
             return new WithCustomProperties(ambiguityResolver,
                     parameterBinders,
@@ -1191,7 +1485,7 @@ public class MethodDelegation implements Implementation.Composable {
          * @return A method delegation that redirects method calls to a static method of the supplied type.
          */
         public MethodDelegation to(Class<?> type) {
-            return to(new TypeDescription.ForLoadedType(type));
+            return to(TypeDescription.ForLoadedType.of(type));
         }
 
         /**
@@ -1304,7 +1598,7 @@ public class MethodDelegation implements Implementation.Composable {
         public MethodDelegation to(Object target, Type type, MethodGraph.Compiler methodGraphCompiler) {
             return to(target,
                     type,
-                    ImplementationDelegate.FIELD_NAME_PREFIX + "$" + RandomString.hashOf(target.hashCode()),
+                    ImplementationDelegate.FIELD_NAME_PREFIX + "$" + RandomString.hashOf(target),
                     methodGraphCompiler);
         }
 
@@ -1338,16 +1632,82 @@ public class MethodDelegation implements Implementation.Composable {
          * @return A method delegation that redirects method calls to a static method of the supplied type.
          */
         public MethodDelegation to(Object target, Type type, String fieldName, MethodGraph.Compiler methodGraphCompiler) {
-            TypeDescription.Generic typeDescription = TypeDefinition.Sort.describe(type);
-            if (!typeDescription.asErasure().isInstance(target)) {
-                throw new IllegalArgumentException(target + " is not an instance of " + type);
+            return to(target, TypeDefinition.Sort.describe(type), fieldName, methodGraphCompiler);
+        }
+
+        /**
+         * Delegates any intercepted method to invoke a non-{@code static} method that is declared by the supplied type's instance or any
+         * of its super types. To be considered a valid delegation target, a method must be visible and accessible to the instrumented type.
+         * This is the case if the method's declaring type is either public or in the same package as the instrumented type and if the method
+         * is either public or non-private and in the same package as the instrumented type. Private methods can only be used as
+         * a delegation target if the delegation is targeting the instrumented type.
+         *
+         * @param target         The target instance for the delegation.
+         * @param typeDefinition The most specific type of which {@code target} should be considered. Must be a super type of the target's actual type.
+         * @return A method delegation that redirects method calls to a static method of the supplied type.
+         */
+        public MethodDelegation to(Object target, TypeDefinition typeDefinition) {
+            return to(target, typeDefinition, MethodGraph.Compiler.DEFAULT);
+        }
+
+        /**
+         * Delegates any intercepted method to invoke a non-{@code static} method that is declared by the supplied type's instance or any
+         * of its super types. To be considered a valid delegation target, a method must be visible and accessible to the instrumented type.
+         * This is the case if the method's declaring type is either public or in the same package as the instrumented type and if the method
+         * is either public or non-private and in the same package as the instrumented type. Private methods can only be used as
+         * a delegation target if the delegation is targeting the instrumented type.
+         *
+         * @param target              The target instance for the delegation.
+         * @param typeDefinition      The most specific type of which {@code target} should be considered. Must be a super type of the target's actual type.
+         * @param methodGraphCompiler The method graph compiler to use.
+         * @return A method delegation that redirects method calls to a static method of the supplied type.
+         */
+        public MethodDelegation to(Object target, TypeDefinition typeDefinition, MethodGraph.Compiler methodGraphCompiler) {
+            return to(target,
+                    typeDefinition,
+                    ImplementationDelegate.FIELD_NAME_PREFIX + "$" + RandomString.hashOf(target),
+                    methodGraphCompiler);
+        }
+
+        /**
+         * Delegates any intercepted method to invoke a non-{@code static} method that is declared by the supplied type's instance or any
+         * of its super types. To be considered a valid delegation target, a method must be visible and accessible to the instrumented type.
+         * This is the case if the method's declaring type is either public or in the same package as the instrumented type and if the method
+         * is either public or non-private and in the same package as the instrumented type. Private methods can only be used as
+         * a delegation target if the delegation is targeting the instrumented type.
+         *
+         * @param target         The target instance for the delegation.
+         * @param typeDefinition The most specific type of which {@code target} should be considered. Must be a super type of the target's actual type.
+         * @param fieldName      The name of the field that is holding the {@code target} instance.
+         * @return A method delegation that redirects method calls to a static method of the supplied type.
+         */
+        public MethodDelegation to(Object target, TypeDefinition typeDefinition, String fieldName) {
+            return to(target, typeDefinition, fieldName, MethodGraph.Compiler.DEFAULT);
+        }
+
+        /**
+         * Delegates any intercepted method to invoke a non-{@code static} method that is declared by the supplied type's instance or any
+         * of its super types. To be considered a valid delegation target, a method must be visible and accessible to the instrumented type.
+         * This is the case if the method's declaring type is either public or in the same package as the instrumented type and if the method
+         * is either public or non-private and in the same package as the instrumented type. Private methods can only be used as
+         * a delegation target if the delegation is targeting the instrumented type.
+         *
+         * @param target              The target instance for the delegation.
+         * @param typeDefinition      The most specific type of which {@code target} should be considered. Must be a super type of the target's actual type.
+         * @param fieldName           The name of the field that is holding the {@code target} instance.
+         * @param methodGraphCompiler The method graph compiler to use.
+         * @return A method delegation that redirects method calls to a static method of the supplied type.
+         */
+        public MethodDelegation to(Object target, TypeDefinition typeDefinition, String fieldName, MethodGraph.Compiler methodGraphCompiler) {
+            if (!typeDefinition.asErasure().isInstance(target)) {
+                throw new IllegalArgumentException(target + " is not an instance of " + typeDefinition);
             }
             return new MethodDelegation(new ImplementationDelegate.ForField.WithInstance(fieldName,
                     methodGraphCompiler,
                     parameterBinders,
                     matcher,
                     target,
-                    typeDescription), parameterBinders, ambiguityResolver, bindingResolver);
+                    typeDefinition.asGenericType()), parameterBinders, ambiguityResolver, bindingResolver);
         }
 
         /**
@@ -1361,7 +1721,7 @@ public class MethodDelegation implements Implementation.Composable {
          * @return A delegation that redirects method calls to a constructor of the supplied type.
          */
         public MethodDelegation toConstructor(Class<?> type) {
-            return toConstructor(new TypeDescription.ForLoadedType(type));
+            return toConstructor(TypeDescription.ForLoadedType.of(type));
         }
 
         /**
@@ -1442,6 +1802,38 @@ public class MethodDelegation implements Implementation.Composable {
                     parameterBinders,
                     matcher,
                     fieldLocatorFactory), parameterBinders, ambiguityResolver, bindingResolver);
+        }
+
+        /**
+         * Delegates any intercepted method to invoke a method on an instance that is returned by a parameterless method of the
+         * given name. To be considered a valid delegation target, a method must be visible and accessible to the instrumented type.
+         * This is the case if the method's declaring type is either public or in the same package as the instrumented type and if
+         * the method is either public or non-private and in the same package as the instrumented type. Private methods can only
+         * be used as a delegation target if the delegation is targeting the instrumented type.
+         *
+         * @param name The name of the method that returns the delegation target.
+         * @return A delegation that redirects invocations to the return value of a method that is declared by the instrumented type.
+         */
+        public MethodDelegation toMethodReturnOf(String name) {
+            return toMethodReturnOf(name, MethodGraph.Compiler.DEFAULT);
+        }
+
+        /**
+         * Delegates any intercepted method to invoke a method on an instance that is returned by a parameterless method of the
+         * given name. To be considered a valid delegation target, a method must be visible and accessible to the instrumented type.
+         * This is the case if the method's declaring type is either public or in the same package as the instrumented type and if
+         * the method is either public or non-private and in the same package as the instrumented type. Private methods can only
+         * be used as a delegation target if the delegation is targeting the instrumented type.
+         *
+         * @param name                The name of the method that returns the delegation target.
+         * @param methodGraphCompiler The method graph compiler to use.
+         * @return A delegation that redirects invocations to the return value of a method that is declared by the instrumented type.
+         */
+        public MethodDelegation toMethodReturnOf(String name, MethodGraph.Compiler methodGraphCompiler) {
+            return new MethodDelegation(new ImplementationDelegate.ForMethodReturn(name,
+                    methodGraphCompiler,
+                    parameterBinders,
+                    matcher), parameterBinders, ambiguityResolver, bindingResolver);
         }
     }
 }

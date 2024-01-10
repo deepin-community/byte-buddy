@@ -16,8 +16,8 @@ public abstract class AbstractTypeAttributeAppenderTest extends AbstractAttribut
     @Mock
     protected TypeDescription.Generic typeDescription;
 
-    @Override
     @Before
+    @Override
     public void setUp() throws Exception {
         super.setUp();
         when(instrumentedType.asGenericType()).thenReturn(typeDescription);

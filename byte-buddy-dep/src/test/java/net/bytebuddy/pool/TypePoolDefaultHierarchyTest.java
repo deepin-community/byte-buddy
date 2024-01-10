@@ -2,13 +2,12 @@ package net.bytebuddy.pool;
 
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.dynamic.ClassFileLocator;
-import net.bytebuddy.test.utility.ClassFileExtraction;
-import net.bytebuddy.test.utility.MockitoRule;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.mockito.Mock;
 import org.mockito.invocation.InvocationOnMock;
+import org.mockito.junit.MockitoJUnit;
 import org.mockito.stubbing.Answer;
 
 import static org.hamcrest.CoreMatchers.is;
@@ -20,7 +19,7 @@ public class TypePoolDefaultHierarchyTest {
     private static final String FOO = "foo";
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     @Mock
     private TypePool parentPool;
@@ -40,8 +39,8 @@ public class TypePoolDefaultHierarchyTest {
         when(parentPool.describe(FOO)).thenReturn(resolution);
         when(resolution.isResolved()).thenReturn(true);
         assertThat(typePool.describe(FOO), is(resolution));
-        verifyZeroInteractions(cacheProvider);
-        verifyZeroInteractions(classFileLocator);
+        verifyNoMoreInteractions(cacheProvider);
+        verifyNoMoreInteractions(classFileLocator);
         verify(parentPool).describe(FOO);
         verifyNoMoreInteractions(parentPool);
         verify(resolution).isResolved();
@@ -49,23 +48,23 @@ public class TypePoolDefaultHierarchyTest {
     }
 
     @Test
+    @SuppressWarnings("cast")
     public void testChildSecond() throws Exception {
         TypePool typePool = new TypePool.Default(cacheProvider, classFileLocator, TypePool.Default.ReaderMode.FAST, parentPool);
         when(parentPool.describe(FOO)).thenReturn(resolution);
         when(resolution.isResolved()).thenReturn(false);
-        when(classFileLocator.locate(FOO)).thenReturn(new ClassFileLocator.Resolution.Explicit(ClassFileExtraction.extract(Foo.class)));
+        when(classFileLocator.locate(FOO)).thenReturn(new ClassFileLocator.Resolution.Explicit(ClassFileLocator.ForClassLoader.read(Foo.class)));
         when(cacheProvider.register(eq(FOO), any(TypePool.Resolution.class))).then(new Answer<TypePool.Resolution>() {
-            @Override
             public TypePool.Resolution answer(InvocationOnMock invocationOnMock) throws Throwable {
                 return (TypePool.Resolution) invocationOnMock.getArguments()[1];
             }
         });
         TypePool.Resolution resolution = typePool.describe(FOO);
         assertThat(resolution.isResolved(), is(true));
-        assertThat(resolution.resolve(), is((TypeDescription) new TypeDescription.ForLoadedType(Foo.class)));
+        assertThat(resolution.resolve(), is((TypeDescription) TypeDescription.ForLoadedType.of(Foo.class)));
         verify(cacheProvider).find(FOO);
         verify(cacheProvider).register(FOO, resolution);
-        verifyZeroInteractions(cacheProvider);
+        verifyNoMoreInteractions(cacheProvider);
         verify(classFileLocator).locate(FOO);
         verifyNoMoreInteractions(classFileLocator);
         verify(parentPool).describe(FOO);

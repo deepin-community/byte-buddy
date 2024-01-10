@@ -1,12 +1,27 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.dynamic.scaffold.subclass;
 
-import lombok.EqualsAndHashCode;
 import net.bytebuddy.ClassFileVersion;
 import net.bytebuddy.asm.AsmVisitorWrapper;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.dynamic.DynamicType;
-import net.bytebuddy.dynamic.TypeResolutionStrategy;
+import net.bytebuddy.dynamic.VisibilityBridgeStrategy;
 import net.bytebuddy.dynamic.scaffold.*;
 import net.bytebuddy.implementation.Implementation;
 import net.bytebuddy.implementation.attribute.AnnotationRetention;
@@ -17,6 +32,9 @@ import net.bytebuddy.matcher.ElementMatcher;
 import net.bytebuddy.matcher.LatentMatcher;
 import net.bytebuddy.pool.TypePool;
 
+import java.util.Collections;
+import java.util.List;
+
 import static net.bytebuddy.matcher.ElementMatchers.*;
 
 /**
@@ -24,7 +42,7 @@ import static net.bytebuddy.matcher.ElementMatchers.*;
  *
  * @param <T> A loaded type that the dynamic type is guaranteed to be a subtype of.
  */
-@EqualsAndHashCode(callSuper = true)
+@HashCodeAndEqualsPlugin.Enhance
 public class SubclassDynamicTypeBuilder<T> extends DynamicType.Builder.AbstractBase.Adapter<T> {
 
     /**
@@ -43,6 +61,8 @@ public class SubclassDynamicTypeBuilder<T> extends DynamicType.Builder.AbstractB
      * @param implementationContextFactory The implementation context factory to use.
      * @param methodGraphCompiler          The method graph compiler to use.
      * @param typeValidation               Determines if a type should be explicitly validated.
+     * @param visibilityBridgeStrategy     The visibility bridge strategy to apply.
+     * @param classWriterStrategy          The class writer strategy to use.
      * @param ignoredMethods               A matcher for identifying methods that should be excluded from instrumentation.
      * @param constructorStrategy          The constructor strategy to apply onto the instrumented type.
      */
@@ -54,11 +74,14 @@ public class SubclassDynamicTypeBuilder<T> extends DynamicType.Builder.AbstractB
                                       Implementation.Context.Factory implementationContextFactory,
                                       MethodGraph.Compiler methodGraphCompiler,
                                       TypeValidation typeValidation,
+                                      VisibilityBridgeStrategy visibilityBridgeStrategy,
+                                      ClassWriterStrategy classWriterStrategy,
                                       LatentMatcher<? super MethodDescription> ignoredMethods,
                                       ConstructorStrategy constructorStrategy) {
         this(instrumentedType,
                 new FieldRegistry.Default(),
                 new MethodRegistry.Default(),
+                new RecordComponentRegistry.Default(),
                 TypeAttributeAppender.ForInstrumentedType.INSTANCE,
                 AsmVisitorWrapper.NoOp.INSTANCE,
                 classFileVersion,
@@ -68,7 +91,10 @@ public class SubclassDynamicTypeBuilder<T> extends DynamicType.Builder.AbstractB
                 implementationContextFactory,
                 methodGraphCompiler,
                 typeValidation,
+                visibilityBridgeStrategy,
+                classWriterStrategy,
                 ignoredMethods,
+                Collections.<DynamicType>emptyList(),
                 constructorStrategy);
     }
 
@@ -76,8 +102,9 @@ public class SubclassDynamicTypeBuilder<T> extends DynamicType.Builder.AbstractB
      * Creates a new type builder for creating a subclass.
      *
      * @param instrumentedType             An instrumented type representing the subclass.
-     * @param fieldRegistry                The field pool to use.
-     * @param methodRegistry               The method pool to use.
+     * @param fieldRegistry                The field registry to use.
+     * @param methodRegistry               The method registry to use.
+     * @param recordComponentRegistry      The record component registry to use.
      * @param typeAttributeAppender        The type attribute appender to apply onto the instrumented type.
      * @param asmVisitorWrapper            The ASM visitor wrapper to apply onto the class writer.
      * @param classFileVersion             The class file version to use for types that are not based on an existing class file.
@@ -87,12 +114,16 @@ public class SubclassDynamicTypeBuilder<T> extends DynamicType.Builder.AbstractB
      * @param implementationContextFactory The implementation context factory to use.
      * @param methodGraphCompiler          The method graph compiler to use.
      * @param typeValidation               Determines if a type should be explicitly validated.
+     * @param visibilityBridgeStrategy     The visibility bridge strategy to apply.
+     * @param classWriterStrategy          The class writer strategy to use.
      * @param ignoredMethods               A matcher for identifying methods that should be excluded from instrumentation.
      * @param constructorStrategy          The constructor strategy to apply onto the instrumented type.
+     * @param auxiliaryTypes               A list of explicitly required auxiliary types.
      */
     protected SubclassDynamicTypeBuilder(InstrumentedType.WithFlexibleName instrumentedType,
                                          FieldRegistry fieldRegistry,
                                          MethodRegistry methodRegistry,
+                                         RecordComponentRegistry recordComponentRegistry,
                                          TypeAttributeAppender typeAttributeAppender,
                                          AsmVisitorWrapper asmVisitorWrapper,
                                          ClassFileVersion classFileVersion,
@@ -102,11 +133,15 @@ public class SubclassDynamicTypeBuilder<T> extends DynamicType.Builder.AbstractB
                                          Implementation.Context.Factory implementationContextFactory,
                                          MethodGraph.Compiler methodGraphCompiler,
                                          TypeValidation typeValidation,
+                                         VisibilityBridgeStrategy visibilityBridgeStrategy,
+                                         ClassWriterStrategy classWriterStrategy,
                                          LatentMatcher<? super MethodDescription> ignoredMethods,
+                                         List<? extends DynamicType> auxiliaryTypes,
                                          ConstructorStrategy constructorStrategy) {
         super(instrumentedType,
                 fieldRegistry,
                 methodRegistry,
+                recordComponentRegistry,
                 typeAttributeAppender,
                 asmVisitorWrapper,
                 classFileVersion,
@@ -116,7 +151,10 @@ public class SubclassDynamicTypeBuilder<T> extends DynamicType.Builder.AbstractB
                 implementationContextFactory,
                 methodGraphCompiler,
                 typeValidation,
-                ignoredMethods);
+                visibilityBridgeStrategy,
+                classWriterStrategy,
+                ignoredMethods,
+                auxiliaryTypes);
         this.constructorStrategy = constructorStrategy;
     }
 
@@ -124,6 +162,7 @@ public class SubclassDynamicTypeBuilder<T> extends DynamicType.Builder.AbstractB
     protected DynamicType.Builder<T> materialize(InstrumentedType.WithFlexibleName instrumentedType,
                                                  FieldRegistry fieldRegistry,
                                                  MethodRegistry methodRegistry,
+                                                 RecordComponentRegistry recordComponentRegistry,
                                                  TypeAttributeAppender typeAttributeAppender,
                                                  AsmVisitorWrapper asmVisitorWrapper,
                                                  ClassFileVersion classFileVersion,
@@ -133,10 +172,14 @@ public class SubclassDynamicTypeBuilder<T> extends DynamicType.Builder.AbstractB
                                                  Implementation.Context.Factory implementationContextFactory,
                                                  MethodGraph.Compiler methodGraphCompiler,
                                                  TypeValidation typeValidation,
-                                                 LatentMatcher<? super MethodDescription> ignoredMethods) {
+                                                 VisibilityBridgeStrategy visibilityBridgeStrategy,
+                                                 ClassWriterStrategy classWriterStrategy,
+                                                 LatentMatcher<? super MethodDescription> ignoredMethods,
+                                                 List<? extends DynamicType> auxiliaryTypes) {
         return new SubclassDynamicTypeBuilder<T>(instrumentedType,
                 fieldRegistry,
                 methodRegistry,
+                recordComponentRegistry,
                 typeAttributeAppender,
                 asmVisitorWrapper,
                 classFileVersion,
@@ -146,23 +189,36 @@ public class SubclassDynamicTypeBuilder<T> extends DynamicType.Builder.AbstractB
                 implementationContextFactory,
                 methodGraphCompiler,
                 typeValidation,
+                visibilityBridgeStrategy,
+                classWriterStrategy,
                 ignoredMethods,
+                auxiliaryTypes,
                 constructorStrategy);
     }
 
-    @Override
-    public DynamicType.Unloaded<T> make(TypeResolutionStrategy typeResolutionStrategy) {
-        return make(typeResolutionStrategy, TypePool.ClassLoading.ofClassPath()); // Mimics the default behavior of ASM for least surprise.
+    /**
+     * {@inheritDoc}
+     */
+    protected TypeWriter<T> toTypeWriter() {
+        return toTypeWriter(TypePool.ClassLoading.ofSystemLoader()); // Mimics the default behavior of ASM for least surprise.
     }
 
-    @Override
-    public DynamicType.Unloaded<T> make(TypeResolutionStrategy typeResolutionStrategy, TypePool typePool) {
+    /**
+     * {@inheritDoc}
+     */
+    protected TypeWriter<T> toTypeWriter(TypePool typePool) {
         MethodRegistry.Compiled methodRegistry = constructorStrategy
                 .inject(instrumentedType, this.methodRegistry)
-                .prepare(applyConstructorStrategy(instrumentedType), methodGraphCompiler, typeValidation, new InstrumentableMatcher(ignoredMethods))
+                .prepare(applyConstructorStrategy(instrumentedType),
+                        methodGraphCompiler,
+                        typeValidation,
+                        visibilityBridgeStrategy,
+                        new InstrumentableMatcher(ignoredMethods))
                 .compile(SubclassImplementationTarget.Factory.SUPER_CLASS, classFileVersion);
         return TypeWriter.Default.<T>forCreation(methodRegistry,
+                auxiliaryTypes,
                 fieldRegistry.compile(methodRegistry.getInstrumentedType()),
+                recordComponentRegistry.compile(methodRegistry.getInstrumentedType()),
                 typeAttributeAppender,
                 asmVisitorWrapper,
                 classFileVersion,
@@ -171,7 +227,8 @@ public class SubclassDynamicTypeBuilder<T> extends DynamicType.Builder.AbstractB
                 auxiliaryTypeNamingStrategy,
                 implementationContextFactory,
                 typeValidation,
-                typePool).make(typeResolutionStrategy.resolve());
+                classWriterStrategy,
+                typePool);
     }
 
     /**
@@ -192,7 +249,7 @@ public class SubclassDynamicTypeBuilder<T> extends DynamicType.Builder.AbstractB
     /**
      * A matcher that locates all methods that are overridable and not ignored or that are directly defined on the instrumented type.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     protected static class InstrumentableMatcher implements LatentMatcher<MethodDescription> {
 
         /**
@@ -209,7 +266,9 @@ public class SubclassDynamicTypeBuilder<T> extends DynamicType.Builder.AbstractB
             this.ignoredMethods = ignoredMethods;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public ElementMatcher<? super MethodDescription> resolve(TypeDescription typeDescription) {
             // Casting is required by JDK 6.
             return (ElementMatcher<? super MethodDescription>) isVirtual().and(not(isFinal()))

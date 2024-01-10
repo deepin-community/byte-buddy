@@ -4,13 +4,12 @@ import net.bytebuddy.ClassFileVersion;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.implementation.Implementation;
 import net.bytebuddy.implementation.bytecode.StackManipulation;
-import net.bytebuddy.test.utility.MockitoRule;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
@@ -24,7 +23,7 @@ public class ClassConstantReferenceTest {
     private static final String FOO = "Lfoo;";
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     @Mock
     private TypeDescription typeDescription, instrumentedType;
@@ -56,7 +55,7 @@ public class ClassConstantReferenceTest {
         assertThat(size.getMaximalSize(), is(1));
         verify(typeDescription).getDescriptor();
         verify(typeDescription).isVisibleTo(instrumentedType);
-        verify(typeDescription, times(9)).represents(any(Class.class));
+        verify(typeDescription).isPrimitive();
         verifyNoMoreInteractions(typeDescription);
         verify(methodVisitor).visitLdcInsn(Type.getType(FOO));
         verifyNoMoreInteractions(methodVisitor);
@@ -67,14 +66,16 @@ public class ClassConstantReferenceTest {
         when(typeDescription.isVisibleTo(instrumentedType)).thenReturn(false);
         when(classFileVersion.isAtLeast(ClassFileVersion.JAVA_V5)).thenReturn(true);
         when(typeDescription.getName()).thenReturn(FOO);
+        when(typeDescription.isPrimitiveWrapper()).thenReturn(false);
         StackManipulation stackManipulation = ClassConstant.of(typeDescription);
         assertThat(stackManipulation.isValid(), is(true));
         StackManipulation.Size size = stackManipulation.apply(methodVisitor, implementationContext);
         assertThat(size.getSizeImpact(), is(1));
         assertThat(size.getMaximalSize(), is(1));
-        verify(typeDescription).getName();
+
+        verify(typeDescription).isPrimitive();
         verify(typeDescription).isVisibleTo(instrumentedType);
-        verify(typeDescription, times(9)).represents(any(Class.class));
+        verify(typeDescription).getName();
         verifyNoMoreInteractions(typeDescription);
         verify(methodVisitor).visitLdcInsn(FOO);
         verify(methodVisitor).visitMethodInsn(Opcodes.INVOKESTATIC,
@@ -96,7 +97,7 @@ public class ClassConstantReferenceTest {
         assertThat(size.getSizeImpact(), is(1));
         assertThat(size.getMaximalSize(), is(1));
         verify(typeDescription).getName();
-        verify(typeDescription, times(9)).represents(any(Class.class));
+        verify(typeDescription).isPrimitive();
         verifyNoMoreInteractions(typeDescription);
         verify(methodVisitor).visitLdcInsn(FOO);
         verify(methodVisitor).visitMethodInsn(Opcodes.INVOKESTATIC,
@@ -105,11 +106,5 @@ public class ClassConstantReferenceTest {
                 Type.getMethodDescriptor(Type.getType(Class.class), Type.getType(String.class)),
                 false);
         verifyNoMoreInteractions(methodVisitor);
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(ClassConstant.class).apply();
-        ObjectPropertyAssertion.of(ClassConstant.ForReferenceType.class).apply();
     }
 }

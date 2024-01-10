@@ -6,6 +6,7 @@ import net.bytebuddy.dynamic.loading.ClassLoadingStrategy;
 import net.bytebuddy.implementation.bind.annotation.RuntimeType;
 import net.bytebuddy.implementation.bind.annotation.SuperMethod;
 import net.bytebuddy.implementation.bind.annotation.This;
+import net.bytebuddy.test.utility.AccessControllerRule;
 import net.bytebuddy.test.utility.CallTraceable;
 import net.bytebuddy.test.utility.JavaVersionRule;
 import org.junit.Rule;
@@ -21,14 +22,17 @@ import static org.hamcrest.MatcherAssert.assertThat;
 
 public class MethodDelegationSuperMethodTest {
 
-    private static final String SINGLE_DEFAULT_METHOD = "net.bytebuddy.test.precompiled.SingleDefaultMethodInterface";
+    private static final String SINGLE_DEFAULT_METHOD = "net.bytebuddy.test.precompiled.v8.SingleDefaultMethodInterface";
 
-    private static final String CONFLICTING_INTERFACE = "net.bytebuddy.test.precompiled.SingleDefaultMethodConflictingInterface";
+    private static final String CONFLICTING_INTERFACE = "net.bytebuddy.test.precompiled.v8.SingleDefaultMethodConflictingInterface";
 
     private static final String FOO = "foo", BAR = "bar";
 
     @Rule
     public MethodRule javaVersionRule = new JavaVersionRule();
+
+    @Rule
+    public MethodRule accessControllerRule = new AccessControllerRule();
 
     @Test
     public void testRunnableSuperCall() throws Exception {
@@ -38,6 +42,41 @@ public class MethodDelegationSuperMethodTest {
                 .intercept(MethodDelegation.to(SampleClass.class))
                 .make()
                 .load(Foo.class.getClassLoader(), ClassLoadingStrategy.Default.WRAPPER);
+        assertThat(loaded.getAuxiliaryTypes().size(), is(0));
+        assertThat(loaded.getLoaded().getDeclaredFields().length, is(1));
+        Foo instance = loaded.getLoaded().getDeclaredConstructor().newInstance();
+        assertThat(instance.value, is(BAR));
+        instance.foo();
+        assertThat(instance.value, is(FOO));
+    }
+
+    @Test
+    public void testRunnableSuperCallNoCache() throws Exception {
+        DynamicType.Loaded<Foo> loaded = new ByteBuddy()
+                .subclass(Foo.class)
+                .method(isDeclaredBy(Foo.class))
+                .intercept(MethodDelegation.to(SampleClassNoCache.class))
+                .make()
+                .load(Foo.class.getClassLoader(), ClassLoadingStrategy.Default.WRAPPER);
+        assertThat(loaded.getAuxiliaryTypes().size(), is(0));
+        assertThat(loaded.getLoaded().getDeclaredFields().length, is(0));
+        Foo instance = loaded.getLoaded().getDeclaredConstructor().newInstance();
+        assertThat(instance.value, is(BAR));
+        instance.foo();
+        assertThat(instance.value, is(FOO));
+    }
+
+    @Test
+    @AccessControllerRule.Enforce
+    public void testRunnableSuperCallWithPrivilege() throws Exception {
+        DynamicType.Loaded<Foo> loaded = new ByteBuddy()
+                .subclass(Foo.class)
+                .method(isDeclaredBy(Foo.class))
+                .intercept(MethodDelegation.to(SampleClassWithPrivilege.class))
+                .make()
+                .load(Foo.class.getClassLoader(), ClassLoadingStrategy.Default.WRAPPER);
+        assertThat(loaded.getAuxiliaryTypes().size(), is(1));
+        assertThat(loaded.getLoaded().getDeclaredFields().length, is(1));
         Foo instance = loaded.getLoaded().getDeclaredConstructor().newInstance();
         assertThat(instance.value, is(BAR));
         instance.foo();
@@ -121,6 +160,20 @@ public class MethodDelegationSuperMethodTest {
     public static class SampleClass {
 
         public static void foo(@SuperMethod Method method, @This Object target) throws Exception {
+            method.invoke(target);
+        }
+    }
+
+    public static class SampleClassNoCache {
+
+        public static void foo(@SuperMethod(cached = false) Method method, @This Object target) throws Exception {
+            method.invoke(target);
+        }
+    }
+
+    public static class SampleClassWithPrivilege {
+
+        public static void foo(@SuperMethod(privileged = true) Method method, @This Object target) throws Exception {
             method.invoke(target);
         }
     }

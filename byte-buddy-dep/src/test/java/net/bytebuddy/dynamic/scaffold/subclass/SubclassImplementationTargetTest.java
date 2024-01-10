@@ -9,7 +9,6 @@ import net.bytebuddy.dynamic.scaffold.MethodGraph;
 import net.bytebuddy.implementation.AbstractImplementationTargetTest;
 import net.bytebuddy.implementation.Implementation;
 import net.bytebuddy.implementation.bytecode.StackManipulation;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.Mock;
@@ -40,8 +39,8 @@ public class SubclassImplementationTargetTest extends AbstractImplementationTarg
     @Mock
     private MethodDescription.SignatureToken superConstructorToken;
 
-    @Override
     @Before
+    @Override
     public void setUp() throws Exception {
         when(superGraph.locate(Mockito.any(MethodDescription.SignatureToken.class))).thenReturn(MethodGraph.Node.Unresolved.INSTANCE);
         when(superGraph.locate(invokableToken)).thenReturn(new MethodGraph.Node.Simple(invokableMethod));
@@ -54,7 +53,7 @@ public class SubclassImplementationTargetTest extends AbstractImplementationTarg
         when(superClass.getDeclaredMethods())
                 .thenReturn(new MethodList.Explicit<MethodDescription.InGenericShape>(superClassConstructor));
         when(superClassConstructor.asDefined()).thenReturn(definedSuperClassConstructor);
-        when(definedSuperClassConstructor.getReturnType()).thenReturn(TypeDescription.Generic.VOID);
+        when(definedSuperClassConstructor.getReturnType()).thenReturn(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(void.class));
         when(definedSuperClassConstructor.getDeclaringType()).thenReturn(rawSuperClass);
         when(definedSuperClassConstructor.isConstructor()).thenReturn(true);
         when(superClassConstructor.isVisibleTo(instrumentedType)).thenReturn(true);
@@ -63,14 +62,13 @@ public class SubclassImplementationTargetTest extends AbstractImplementationTarg
         when(definedSuperClassConstructor.getDescriptor()).thenReturn(BAZ);
         when(superClassConstructor.isConstructor()).thenReturn(true);
         when(superClassConstructor.getDeclaringType()).thenReturn(superClass);
-        when(superClassConstructor.getReturnType()).thenReturn(TypeDescription.Generic.VOID);
+        when(superClassConstructor.getReturnType()).thenReturn(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(void.class));
         when(superClassConstructor.getParameters()).thenReturn(new ParameterList.Empty<ParameterDescription.InGenericShape>());
         when(invokableToken.getName()).thenReturn(FOO);
         when(superConstructorToken.getName()).thenReturn(MethodDescription.CONSTRUCTOR_INTERNAL_NAME);
         super.setUp();
     }
 
-    @Override
     protected Implementation.Target makeImplementationTarget() {
         return new SubclassImplementationTarget(instrumentedType, methodGraph, defaultMethodInvocation, SubclassImplementationTarget.OriginTypeResolver.SUPER_CLASS);
     }
@@ -87,7 +85,7 @@ public class SubclassImplementationTargetTest extends AbstractImplementationTarg
         StackManipulation.Size size = specialMethodInvocation.apply(methodVisitor, implementationContext);
         verify(methodVisitor).visitMethodInsn(Opcodes.INVOKESPECIAL, BAR, FOO, QUX, false);
         verifyNoMoreInteractions(methodVisitor);
-        verifyZeroInteractions(implementationContext);
+        verifyNoMoreInteractions(implementationContext);
         assertThat(size.getSizeImpact(), is(0));
         assertThat(size.getMaximalSize(), is(0));
     }
@@ -112,14 +110,8 @@ public class SubclassImplementationTargetTest extends AbstractImplementationTarg
         StackManipulation.Size size = specialMethodInvocation.apply(methodVisitor, implementationContext);
         verify(methodVisitor).visitMethodInsn(Opcodes.INVOKESPECIAL, BAR, QUX, BAZ, false);
         verifyNoMoreInteractions(methodVisitor);
-        verifyZeroInteractions(implementationContext);
+        verifyNoMoreInteractions(implementationContext);
         assertThat(size.getSizeImpact(), is(0));
         assertThat(size.getMaximalSize(), is(0));
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(SubclassImplementationTarget.class).apply();
-        ObjectPropertyAssertion.of(SubclassImplementationTarget.OriginTypeResolver.class).apply();
     }
 }

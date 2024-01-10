@@ -1,3 +1,18 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.description;
 
 import net.bytebuddy.description.annotation.AnnotationSource;
@@ -12,27 +27,11 @@ import java.util.List;
 /**
  * Implementations describe an element represented in byte code, i.e. a type, a field or a method or a constructor.
  */
-public interface ByteCodeElement extends NamedElement.WithRuntimeName, ModifierReviewable, DeclaredByType, AnnotationSource {
-
-    /**
-     * The generic type signature of a non-generic byte code element.
-     */
-    String NON_GENERIC_SIGNATURE = null;
-
-    /**
-     * Returns the descriptor of this byte code element.
-     *
-     * @return The descriptor of this byte code element.
-     */
-    String getDescriptor();
-
-    /**
-     * Returns the generic signature of this byte code element. If this element does not reference generic types
-     * or references malformed generic types, {@code null} is returned as a signature.
-     *
-     * @return The generic signature or {@code null} if this element is not generic.
-     */
-    String getGenericSignature();
+public interface ByteCodeElement extends NamedElement.WithRuntimeName,
+        NamedElement.WithDescriptor,
+        ModifierReviewable,
+        DeclaredByType,
+        AnnotationSource {
 
     /**
      * <p>
@@ -168,12 +167,16 @@ public interface ByteCodeElement extends NamedElement.WithRuntimeName, ModifierR
                 return new TokenList<S>(values);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public S get(int index) {
                 return tokens.get(index);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public int size() {
                 return tokens.size();
             }

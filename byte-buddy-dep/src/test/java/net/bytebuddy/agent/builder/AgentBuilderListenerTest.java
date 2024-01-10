@@ -1,24 +1,28 @@
 package net.bytebuddy.agent.builder;
 
+import net.bytebuddy.description.type.PackageDescription;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.dynamic.DynamicType;
 import net.bytebuddy.matcher.ElementMatchers;
-import net.bytebuddy.test.utility.MockitoRule;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
+import net.bytebuddy.test.utility.JavaVersionRule;
 import net.bytebuddy.utility.JavaModule;
+import net.bytebuddy.utility.JavaType;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 
 import java.io.PrintStream;
 import java.lang.instrument.Instrumentation;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import static net.bytebuddy.matcher.ElementMatchers.none;
-import static org.hamcrest.CoreMatchers.is;
+import static net.bytebuddy.test.utility.FieldByFieldComparison.hasPrototype;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.mockito.Mockito.*;
 
@@ -29,7 +33,10 @@ public class AgentBuilderListenerTest {
     private static final boolean LOADED = true;
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
+
+    @Rule
+    public MethodRule javaVersionRule = new JavaVersionRule();
 
     @Mock
     private AgentBuilder.Listener first, second;
@@ -58,9 +65,9 @@ public class AgentBuilderListenerTest {
     public void testNoOp() throws Exception {
         AgentBuilder.Listener.NoOp.INSTANCE.onDiscovery(FOO, classLoader, module, LOADED);
         AgentBuilder.Listener.NoOp.INSTANCE.onTransformation(typeDescription, classLoader, module, LOADED, dynamicType);
-        verifyZeroInteractions(dynamicType);
+        verifyNoMoreInteractions(dynamicType);
         AgentBuilder.Listener.NoOp.INSTANCE.onError(FOO, classLoader, module, LOADED, throwable);
-        verifyZeroInteractions(throwable);
+        verifyNoMoreInteractions(throwable);
         AgentBuilder.Listener.NoOp.INSTANCE.onIgnored(typeDescription, classLoader, module, LOADED);
         AgentBuilder.Listener.NoOp.INSTANCE.onComplete(FOO, classLoader, module, LOADED);
     }
@@ -70,9 +77,9 @@ public class AgentBuilderListenerTest {
         AgentBuilder.Listener listener = new PseudoAdapter();
         listener.onDiscovery(FOO, classLoader, module, LOADED);
         listener.onTransformation(typeDescription, classLoader, module, LOADED, dynamicType);
-        verifyZeroInteractions(dynamicType);
+        verifyNoMoreInteractions(dynamicType);
         listener.onError(FOO, classLoader, module, LOADED, throwable);
-        verifyZeroInteractions(throwable);
+        verifyNoMoreInteractions(throwable);
         listener.onIgnored(typeDescription, classLoader, module, LOADED);
         listener.onComplete(FOO, classLoader, module, LOADED);
     }
@@ -127,7 +134,7 @@ public class AgentBuilderListenerTest {
         PrintStream printStream = mock(PrintStream.class);
         AgentBuilder.Listener listener = new AgentBuilder.Listener.StreamWriting(printStream);
         listener.onDiscovery(FOO, classLoader, module, LOADED);
-        verify(printStream).printf("[Byte Buddy] DISCOVERY %s [%s, %s, loaded=%b]%n", FOO, classLoader, module, LOADED);
+        verify(printStream).printf("[Byte Buddy] DISCOVERY %s [%s, %s, %s, loaded=%b]%n", FOO, classLoader, module, Thread.currentThread(), LOADED);
         verifyNoMoreInteractions(printStream);
     }
 
@@ -136,7 +143,7 @@ public class AgentBuilderListenerTest {
         PrintStream printStream = mock(PrintStream.class);
         AgentBuilder.Listener listener = new AgentBuilder.Listener.StreamWriting(printStream);
         listener.onTransformation(typeDescription, classLoader, module, LOADED, dynamicType);
-        verify(printStream).printf("[Byte Buddy] TRANSFORM %s [%s, %s, loaded=%b]%n", FOO, classLoader, module, LOADED);
+        verify(printStream).printf("[Byte Buddy] TRANSFORM %s [%s, %s, %s, loaded=%b]%n", FOO, classLoader, module, Thread.currentThread(), LOADED);
         verifyNoMoreInteractions(printStream);
     }
 
@@ -145,7 +152,7 @@ public class AgentBuilderListenerTest {
         PrintStream printStream = mock(PrintStream.class);
         AgentBuilder.Listener listener = new AgentBuilder.Listener.StreamWriting(printStream);
         listener.onError(FOO, classLoader, module, LOADED, throwable);
-        verify(printStream).printf("[Byte Buddy] ERROR %s [%s, %s, loaded=%b]%n", FOO, classLoader, module, LOADED);
+        verify(printStream).printf("[Byte Buddy] ERROR %s [%s, %s, %s, loaded=%b]%n", FOO, classLoader, module, Thread.currentThread(), LOADED);
         verifyNoMoreInteractions(printStream);
         verify(throwable).printStackTrace(printStream);
         verifyNoMoreInteractions(throwable);
@@ -156,7 +163,7 @@ public class AgentBuilderListenerTest {
         PrintStream printStream = mock(PrintStream.class);
         AgentBuilder.Listener listener = new AgentBuilder.Listener.StreamWriting(printStream);
         listener.onComplete(FOO, classLoader, module, LOADED);
-        verify(printStream).printf("[Byte Buddy] COMPLETE %s [%s, %s, loaded=%b]%n", FOO, classLoader, module, LOADED);
+        verify(printStream).printf("[Byte Buddy] COMPLETE %s [%s, %s, %s, loaded=%b]%n", FOO, classLoader, module, Thread.currentThread(), LOADED);
         verifyNoMoreInteractions(printStream);
     }
 
@@ -165,18 +172,59 @@ public class AgentBuilderListenerTest {
         PrintStream printStream = mock(PrintStream.class);
         AgentBuilder.Listener listener = new AgentBuilder.Listener.StreamWriting(printStream);
         listener.onIgnored(typeDescription, classLoader, module, LOADED);
-        verify(printStream).printf("[Byte Buddy] IGNORE %s [%s, %s, loaded=%b]%n", FOO, classLoader, module, LOADED);
+        verify(printStream).printf("[Byte Buddy] IGNORE %s [%s, %s, %s, loaded=%b]%n", FOO, classLoader, module, Thread.currentThread(), LOADED);
         verifyNoMoreInteractions(printStream);
     }
 
     @Test
     public void testStreamWritingStandardOutput() throws Exception {
-        assertThat(AgentBuilder.Listener.StreamWriting.toSystemOut(), is((AgentBuilder.Listener) new AgentBuilder.Listener.StreamWriting(System.out)));
+        assertThat(AgentBuilder.Listener.StreamWriting.toSystemOut(), hasPrototype((AgentBuilder.Listener) new AgentBuilder.Listener.StreamWriting(System.out)));
     }
 
     @Test
     public void testStreamWritingStandardError() throws Exception {
-        assertThat(AgentBuilder.Listener.StreamWriting.toSystemError(), is((AgentBuilder.Listener) new AgentBuilder.Listener.StreamWriting(System.err)));
+        assertThat(AgentBuilder.Listener.StreamWriting.toSystemError(), hasPrototype((AgentBuilder.Listener) new AgentBuilder.Listener.StreamWriting(System.err)));
+    }
+
+    @Test
+    public void testStreamWritingTransformationsOnly() throws Exception {
+        PrintStream target = mock(PrintStream.class);
+        assertThat(new AgentBuilder.Listener.StreamWriting(target).withTransformationsOnly(),
+                hasPrototype((AgentBuilder.Listener) new AgentBuilder.Listener.WithTransformationsOnly(new AgentBuilder.Listener.StreamWriting(target))));
+    }
+
+    @Test
+    public void testStreamWritingErrorOnly() throws Exception {
+        PrintStream target = mock(PrintStream.class);
+        assertThat(new AgentBuilder.Listener.StreamWriting(target).withErrorsOnly(),
+                hasPrototype((AgentBuilder.Listener) new AgentBuilder.Listener.WithErrorsOnly(new AgentBuilder.Listener.StreamWriting(target))));
+    }
+
+    @Test
+    public void testTransformationsOnly() {
+        AgentBuilder.Listener delegate = mock(AgentBuilder.Listener.class);
+        AgentBuilder.Listener listener = new AgentBuilder.Listener.WithTransformationsOnly(delegate);
+        listener.onDiscovery(FOO, classLoader, module, LOADED);
+        listener.onTransformation(typeDescription, classLoader, module, LOADED, dynamicType);
+        listener.onError(FOO, classLoader, module, LOADED, throwable);
+        listener.onIgnored(typeDescription, classLoader, module, LOADED);
+        listener.onComplete(FOO, classLoader, module, LOADED);
+        verify(delegate).onTransformation(typeDescription, classLoader, module, LOADED, dynamicType);
+        verify(delegate).onError(FOO, classLoader, module, LOADED, throwable);
+        verifyNoMoreInteractions(delegate);
+    }
+
+    @Test
+    public void testErrorsOnly() {
+        AgentBuilder.Listener delegate = mock(AgentBuilder.Listener.class);
+        AgentBuilder.Listener listener = new AgentBuilder.Listener.WithErrorsOnly(delegate);
+        listener.onDiscovery(FOO, classLoader, module, LOADED);
+        listener.onTransformation(typeDescription, classLoader, module, LOADED, dynamicType);
+        listener.onError(FOO, classLoader, module, LOADED, throwable);
+        listener.onIgnored(typeDescription, classLoader, module, LOADED);
+        listener.onComplete(FOO, classLoader, module, LOADED);
+        verify(delegate).onError(FOO, classLoader, module, LOADED, throwable);
+        verifyNoMoreInteractions(delegate);
     }
 
     @Test
@@ -188,7 +236,7 @@ public class AgentBuilderListenerTest {
         listener.onError(FOO, classLoader, module, LOADED, throwable);
         listener.onIgnored(typeDescription, classLoader, module, LOADED);
         listener.onComplete(FOO, classLoader, module, LOADED);
-        verifyZeroInteractions(delegate);
+        verifyNoMoreInteractions(delegate);
     }
 
     @Test
@@ -223,7 +271,7 @@ public class AgentBuilderListenerTest {
         listener.onTransformation(mock(TypeDescription.class), mock(ClassLoader.class), source, LOADED, mock(DynamicType.class));
         verify(source).isNamed();
         verifyNoMoreInteractions(source);
-        verifyZeroInteractions(target);
+        verifyNoMoreInteractions(target);
     }
 
     @Test
@@ -237,22 +285,38 @@ public class AgentBuilderListenerTest {
         verify(source).isNamed();
         verify(source).canRead(target);
         verifyNoMoreInteractions(source);
-        verifyZeroInteractions(target);
+        verifyNoMoreInteractions(target);
     }
 
     @Test
+    @JavaVersionRule.Enforce(9)
     public void testReadEdgeAddingListenerNamedCannotRead() throws Exception {
         Instrumentation instrumentation = mock(Instrumentation.class);
         JavaModule source = mock(JavaModule.class), target = mock(JavaModule.class);
         when(source.isNamed()).thenReturn(true);
         when(source.canRead(target)).thenReturn(false);
         AgentBuilder.Listener listener = new AgentBuilder.Listener.ModuleReadEdgeCompleting(instrumentation, false, Collections.singleton(target));
+        when(Instrumentation.class.getMethod("isModifiableModule", JavaType.MODULE.load()).invoke(instrumentation, (Object) null)).thenReturn(true);
         listener.onTransformation(mock(TypeDescription.class), mock(ClassLoader.class), source, LOADED, mock(DynamicType.class));
         verify(source).isNamed();
         verify(source).canRead(target);
-        verify(source).addReads(instrumentation, target);
+        Instrumentation.class.getMethod("redefineModule",
+                JavaType.MODULE.load(),
+                Set.class,
+                Map.class,
+                Map.class,
+                Set.class,
+                Map.class).invoke(verify(instrumentation),
+                null,
+                Collections.singleton(null),
+                Collections.<String, Set<JavaModule>>emptyMap(),
+                Collections.<String, Set<JavaModule>>emptyMap(),
+                Collections.<Class<?>>emptySet(),
+                Collections.<Class<?>, List<Class<?>>>emptyMap());
+        verify(source, times(2)).unwrap();
         verifyNoMoreInteractions(source);
-        verifyZeroInteractions(target);
+        verify(target).unwrap();
+        verifyNoMoreInteractions(target);
     }
 
     @Test
@@ -270,55 +334,61 @@ public class AgentBuilderListenerTest {
         listener.onTransformation(mock(TypeDescription.class), mock(ClassLoader.class), source, LOADED, mock(DynamicType.class));
         verify(source).isNamed();
         verifyNoMoreInteractions(source);
-        verifyZeroInteractions(target);
+        verifyNoMoreInteractions(target);
     }
 
     @Test
     public void testReadEdgeAddingListenerDuplexCanRead() throws Exception {
         Instrumentation instrumentation = mock(Instrumentation.class);
         JavaModule source = mock(JavaModule.class), target = mock(JavaModule.class);
+        TypeDescription typeDescription = mock(TypeDescription.class);
+        PackageDescription packageDescription = mock(PackageDescription.class);
+        when(typeDescription.getPackage()).thenReturn(packageDescription);
         when(source.isNamed()).thenReturn(true);
         when(source.canRead(target)).thenReturn(true);
+        when(source.isOpened(packageDescription, target)).thenReturn(true);
         when(target.canRead(source)).thenReturn(true);
         AgentBuilder.Listener listener = new AgentBuilder.Listener.ModuleReadEdgeCompleting(instrumentation, true, Collections.singleton(target));
-        listener.onTransformation(mock(TypeDescription.class), mock(ClassLoader.class), source, LOADED, mock(DynamicType.class));
+        listener.onTransformation(typeDescription, mock(ClassLoader.class), source, LOADED, mock(DynamicType.class));
         verify(source).isNamed();
         verify(source).canRead(target);
+        verify(source).isOpened(packageDescription, target);
         verifyNoMoreInteractions(source);
         verify(target).canRead(source);
         verifyNoMoreInteractions(target);
     }
 
     @Test
+    @JavaVersionRule.Enforce(9)
     public void testReadEdgeAddingListenerNamedDuplexCannotRead() throws Exception {
         Instrumentation instrumentation = mock(Instrumentation.class);
         JavaModule source = mock(JavaModule.class), target = mock(JavaModule.class);
         when(source.isNamed()).thenReturn(true);
         when(source.canRead(target)).thenReturn(false);
         when(target.canRead(source)).thenReturn(false);
+        when(Instrumentation.class.getMethod("isModifiableModule", JavaType.MODULE.load()).invoke(instrumentation, (Object) null)).thenReturn(true);
         AgentBuilder.Listener listener = new AgentBuilder.Listener.ModuleReadEdgeCompleting(instrumentation, true, Collections.singleton(target));
         listener.onTransformation(mock(TypeDescription.class), mock(ClassLoader.class), source, LOADED, mock(DynamicType.class));
+        Instrumentation.class.getMethod("redefineModule",
+                JavaType.MODULE.load(),
+                Set.class,
+                Map.class,
+                Map.class,
+                Set.class,
+                Map.class).invoke(verify(instrumentation, times(2)),
+                null,
+                Collections.singleton(null),
+                Collections.<String, Set<JavaModule>>emptyMap(),
+                Collections.<String, Set<JavaModule>>emptyMap(),
+                Collections.<Class<?>>emptySet(),
+                Collections.<Class<?>, List<Class<?>>>emptyMap());
         verify(source).isNamed();
         verify(source).canRead(target);
-        verify(source).addReads(instrumentation, target);
+        verify(source, times(3)).unwrap();
         verifyNoMoreInteractions(source);
         verify(target).canRead(source);
-        verify(target).addReads(instrumentation, source);
+        verify(target, times(3)).unwrap();
         verifyNoMoreInteractions(target);
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(AgentBuilder.Listener.NoOp.class).apply();
-        ObjectPropertyAssertion.of(AgentBuilder.Listener.StreamWriting.class).apply();
-        ObjectPropertyAssertion.of(AgentBuilder.Listener.Filtering.class).apply();
-        ObjectPropertyAssertion.of(AgentBuilder.Listener.Compound.class).create(new ObjectPropertyAssertion.Creator<List<?>>() {
-            @Override
-            public List<?> create() {
-                return Collections.singletonList(mock(AgentBuilder.Listener.class));
-            }
-        }).apply();
-        ObjectPropertyAssertion.of(AgentBuilder.Listener.ModuleReadEdgeCompleting.class).apply();
     }
 
     private static class PseudoAdapter extends AgentBuilder.Listener.Adapter {

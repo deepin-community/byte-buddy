@@ -1,7 +1,10 @@
 package net.bytebuddy.description.annotation;
 
 import net.bytebuddy.description.method.MethodDescription;
+import net.bytebuddy.test.utility.JavaVersionRule;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.MethodRule;
 
 import java.lang.annotation.Annotation;
 import java.lang.annotation.Retention;
@@ -15,7 +18,9 @@ public class AnnotationDescriptionForLoadedAnnotationTest extends AbstractAnnota
 
     private static final String FOO = "foo";
 
-    @Override
+    @Rule
+    public MethodRule javaVersionRule = new JavaVersionRule();
+
     protected AnnotationDescription describe(Annotation annotation, Class<?> declaringType) {
         return AnnotationDescription.ForLoadedAnnotation.of(annotation);
     }
@@ -49,12 +54,10 @@ public class AnnotationDescriptionForLoadedAnnotationTest extends AbstractAnnota
 
             INSTANCE;
 
-            @Override
             public String value() {
                 throw new RuntimeException();
             }
 
-            @Override
             public Class<? extends Annotation> annotationType() {
                 return PrivateAnnotation.class;
             }

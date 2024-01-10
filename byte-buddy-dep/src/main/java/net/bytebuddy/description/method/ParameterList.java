@@ -1,19 +1,31 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.description.method;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.AccessControllerPlugin;
 import net.bytebuddy.description.ByteCodeElement;
 import net.bytebuddy.description.type.TypeDefinition;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.description.type.TypeList;
 import net.bytebuddy.matcher.ElementMatcher;
 import net.bytebuddy.matcher.FilterableList;
+import net.bytebuddy.utility.dispatcher.JavaDispatcher;
 
-import java.lang.annotation.Annotation;
 import java.lang.reflect.Constructor;
-import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
-import java.security.AccessController;
 import java.security.PrivilegedAction;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -63,7 +75,9 @@ public interface ParameterList<T extends ParameterDescription> extends Filterabl
      */
     abstract class AbstractBase<S extends ParameterDescription> extends FilterableList.AbstractBase<S, ParameterList<S>> implements ParameterList<S> {
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public boolean hasExplicitMetaData() {
             for (ParameterDescription parameterDescription : this) {
                 if (!parameterDescription.isNamed() || !parameterDescription.hasModifiers()) {
@@ -73,7 +87,9 @@ public interface ParameterList<T extends ParameterDescription> extends Filterabl
             return true;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public ByteCodeElement.Token.TokenList<ParameterDescription.Token> asTokenList(ElementMatcher<? super TypeDescription> matcher) {
             List<ParameterDescription.Token> tokens = new ArrayList<ParameterDescription.Token>(size());
             for (ParameterDescription parameterDescription : this) {
@@ -82,7 +98,9 @@ public interface ParameterList<T extends ParameterDescription> extends Filterabl
             return new ByteCodeElement.Token.TokenList<ParameterDescription.Token>(tokens);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public TypeList.Generic asTypeList() {
             List<TypeDescription.Generic> types = new ArrayList<TypeDescription.Generic>(size());
             for (ParameterDescription parameterDescription : this) {
@@ -91,7 +109,9 @@ public interface ParameterList<T extends ParameterDescription> extends Filterabl
             return new TypeList.Generic.Explicit(types);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public ParameterList<ParameterDescription.InDefinedShape> asDefined() {
             List<ParameterDescription.InDefinedShape> declaredForms = new ArrayList<ParameterDescription.InDefinedShape>(size());
             for (ParameterDescription parameterDescription : this) {
@@ -116,7 +136,7 @@ public interface ParameterList<T extends ParameterDescription> extends Filterabl
         /**
          * The dispatcher used creating parameter list instances and for accessing {@code java.lang.reflect.Executable} instances.
          */
-        private static final Dispatcher DISPATCHER = AccessController.doPrivileged(Dispatcher.CreationAction.INSTANCE);
+        protected static final Executable EXECUTABLE = doPrivileged(JavaDispatcher.of(Executable.class));
 
         /**
          * The executable for which a parameter list is represented.
@@ -124,12 +144,31 @@ public interface ParameterList<T extends ParameterDescription> extends Filterabl
         protected final T executable;
 
         /**
+         * The parameter annotation source to query.
+         */
+        protected final ParameterDescription.ForLoadedParameter.ParameterAnnotationSource parameterAnnotationSource;
+
+        /**
          * Creates a new description for a loaded executable.
          *
-         * @param executable The executable for which a parameter list is represented.
+         * @param executable                The executable for which a parameter list is represented.
+         * @param parameterAnnotationSource The parameter annotation source to query.
          */
-        protected ForLoadedExecutable(T executable) {
+        protected ForLoadedExecutable(T executable, ParameterDescription.ForLoadedParameter.ParameterAnnotationSource parameterAnnotationSource) {
             this.executable = executable;
+            this.parameterAnnotationSource = parameterAnnotationSource;
+        }
+
+        /**
+         * A proxy for {@code java.security.AccessController#doPrivileged} that is activated if available.
+         *
+         * @param action The action to execute from a privileged context.
+         * @param <T>    The type of the action's resolved value.
+         * @return The action's resolved value.
+         */
+        @AccessControllerPlugin.Enhance
+        private static <T> T doPrivileged(PrivilegedAction<T> action) {
+            return action.run();
         }
 
         /**
@@ -139,7 +178,21 @@ public interface ParameterList<T extends ParameterDescription> extends Filterabl
          * @return A list describing the constructor's parameters.
          */
         public static ParameterList<ParameterDescription.InDefinedShape> of(Constructor<?> constructor) {
-            return DISPATCHER.describe(constructor);
+            return of(constructor, new ParameterDescription.ForLoadedParameter.ParameterAnnotationSource.ForLoadedConstructor(constructor));
+        }
+
+        /**
+         * Creates a new list that describes the parameters of the given {@link Constructor}.
+         *
+         * @param constructor               The constructor for which the parameters should be described.
+         * @param parameterAnnotationSource The parameter annotation source to query.
+         * @return A list describing the constructor's parameters.
+         */
+        public static ParameterList<ParameterDescription.InDefinedShape> of(Constructor<?> constructor,
+                                                                            ParameterDescription.ForLoadedParameter.ParameterAnnotationSource parameterAnnotationSource) {
+            return EXECUTABLE.isInstance(constructor)
+                    ? new OfConstructor(constructor, parameterAnnotationSource)
+                    : new OfLegacyVmConstructor(constructor, parameterAnnotationSource);
         }
 
         /**
@@ -149,18 +202,44 @@ public interface ParameterList<T extends ParameterDescription> extends Filterabl
          * @return A list describing the method's parameters.
          */
         public static ParameterList<ParameterDescription.InDefinedShape> of(Method method) {
-            return DISPATCHER.describe(method);
+            return of(method, new ParameterDescription.ForLoadedParameter.ParameterAnnotationSource.ForLoadedMethod(method));
         }
 
-        @Override
+        /**
+         * Creates a new list that describes the parameters of the given {@link Method}.
+         *
+         * @param method                    The method for which the parameters should be described.
+         * @param parameterAnnotationSource The parameter annotation source to query.
+         * @return A list describing the method's parameters.
+         */
+        public static ParameterList<ParameterDescription.InDefinedShape> of(Method method,
+                                                                            ParameterDescription.ForLoadedParameter.ParameterAnnotationSource parameterAnnotationSource) {
+            return EXECUTABLE.isInstance(method)
+                    ? new OfMethod(method, parameterAnnotationSource)
+                    : new OfLegacyVmMethod(method, parameterAnnotationSource);
+        }
+
+        /**
+         * {@inheritDoc}
+         */
         public int size() {
-            return DISPATCHER.getParameterCount(executable);
+            return EXECUTABLE.getParameterCount(executable);
         }
 
         /**
          * A dispatcher for creating descriptions of parameter lists and for evaluating the size of an {@code java.lang.reflect.Executable}'s parameters.
          */
-        protected interface Dispatcher {
+        @JavaDispatcher.Proxied("java.lang.reflect.Executable")
+        protected interface Executable {
+
+            /**
+             * Checks if the supplied instance is a {@code java.lang.reflect.Executable}.
+             *
+             * @param value The value to check for being a {@code java.lang.reflect.Executable}.
+             * @return {@code true} if the supplied instance is a {@code java.lang.reflect.Executable}.
+             */
+            @JavaDispatcher.Instance
+            boolean isInstance(Object value);
 
             /**
              * Returns the amount of parameters of a given executable..
@@ -171,109 +250,12 @@ public interface ParameterList<T extends ParameterDescription> extends Filterabl
             int getParameterCount(Object executable);
 
             /**
-             * Describes a {@link Constructor}'s parameters of the given VM.
+             * Returns the parameters of an executable.
              *
-             * @param constructor The constructor for which the parameters should be described.
-             * @return A list describing the constructor's parameters.
+             * @param value The executable to introspect.
+             * @return An array of the parameters of the supplied executable.
              */
-            ParameterList<ParameterDescription.InDefinedShape> describe(Constructor<?> constructor);
-
-            /**
-             * Describes a {@link Method}'s parameters of the given VM.
-             *
-             * @param method The method for which the parameters should be described.
-             * @return A list describing the method's parameters.
-             */
-            ParameterList<ParameterDescription.InDefinedShape> describe(Method method);
-
-            /**
-             * A creation action for a dispatcher.
-             */
-            enum CreationAction implements PrivilegedAction<Dispatcher> {
-
-                /**
-                 * The singleton instance.
-                 */
-                INSTANCE;
-
-                @Override
-                @SuppressFBWarnings(value = "REC_CATCH_EXCEPTION", justification = "Exception should not be rethrown but trigger a fallback")
-                public Dispatcher run() {
-                    try {
-                        return new Dispatcher.ForJava8CapableVm(Class.forName("java.lang.reflect.Executable").getMethod("getParameterCount"));
-                    } catch (Exception ignored) {
-                        return Dispatcher.ForLegacyVm.INSTANCE;
-                    }
-                }
-            }
-
-            /**
-             * A dispatcher for a legacy VM that does not support the {@code java.lang.reflect.Parameter} type.
-             */
-            enum ForLegacyVm implements Dispatcher {
-
-                /**
-                 * The singleton instance.
-                 */
-                INSTANCE;
-
-                @Override
-                public int getParameterCount(Object executable) {
-                    throw new IllegalStateException("Cannot dispatch method for java.lang.reflect.Executable");
-                }
-
-                @Override
-                public ParameterList<ParameterDescription.InDefinedShape> describe(Constructor<?> constructor) {
-                    return new OfLegacyVmConstructor(constructor);
-                }
-
-                @Override
-                public ParameterList<ParameterDescription.InDefinedShape> describe(Method method) {
-                    return new OfLegacyVmMethod(method);
-                }
-            }
-
-            /**
-             * A dispatcher for a legacy VM that does support the {@code java.lang.reflect.Parameter} type.
-             */
-            @EqualsAndHashCode
-            class ForJava8CapableVm implements Dispatcher {
-
-                /**
-                 * The {@code java.lang.reflect.Executable#getParameterCount()} method.
-                 */
-                private final Method getParameterCount;
-
-                /**
-                 * Creates a new dispatcher for a modern VM.
-                 *
-                 * @param getParameterCount The {@code java.lang.reflect.Executable#getParameterCount()} method.
-                 */
-                protected ForJava8CapableVm(Method getParameterCount) {
-                    this.getParameterCount = getParameterCount;
-                }
-
-                @Override
-                public int getParameterCount(Object executable) {
-                    try {
-                        return (Integer) getParameterCount.invoke(executable);
-                    } catch (IllegalAccessException exception) {
-                        throw new IllegalStateException("Cannot access java.lang.reflect.Parameter#getModifiers", exception);
-                    } catch (InvocationTargetException exception) {
-                        throw new IllegalStateException("Error invoking java.lang.reflect.Parameter#getModifiers", exception.getCause());
-                    }
-                }
-
-                @Override
-                public ParameterList<ParameterDescription.InDefinedShape> describe(Constructor<?> constructor) {
-                    return new OfConstructor(constructor);
-                }
-
-                @Override
-                public ParameterList<ParameterDescription.InDefinedShape> describe(Method method) {
-                    return new OfMethod(method);
-                }
-            }
+            Object[] getParameters(Object value);
         }
 
         /**
@@ -284,15 +266,18 @@ public interface ParameterList<T extends ParameterDescription> extends Filterabl
             /**
              * Creates a new description of the parameters of a constructor.
              *
-             * @param constructor The constructor that is represented by this instance.
+             * @param constructor               The constructor that is represented by this instance.
+             * @param parameterAnnotationSource The parameter annotation source to query.
              */
-            protected OfConstructor(Constructor<?> constructor) {
-                super(constructor);
+            protected OfConstructor(Constructor<?> constructor, ParameterDescription.ForLoadedParameter.ParameterAnnotationSource parameterAnnotationSource) {
+                super(constructor, parameterAnnotationSource);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public ParameterDescription.InDefinedShape get(int index) {
-                return new ParameterDescription.ForLoadedParameter.OfConstructor(executable, index);
+                return new ParameterDescription.ForLoadedParameter.OfConstructor(executable, index, parameterAnnotationSource);
             }
         }
 
@@ -304,15 +289,18 @@ public interface ParameterList<T extends ParameterDescription> extends Filterabl
             /**
              * Creates a new description of the parameters of a method.
              *
-             * @param method The method that is represented by this instance.
+             * @param method                    The method that is represented by this instance.
+             * @param parameterAnnotationSource The parameter annotation source to query.
              */
-            protected OfMethod(Method method) {
-                super(method);
+            protected OfMethod(Method method, ParameterDescription.ForLoadedParameter.ParameterAnnotationSource parameterAnnotationSource) {
+                super(method, parameterAnnotationSource);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public ParameterDescription.InDefinedShape get(int index) {
-                return new ParameterDescription.ForLoadedParameter.OfMethod(executable, index);
+                return new ParameterDescription.ForLoadedParameter.OfMethod(executable, index, parameterAnnotationSource);
             }
         }
 
@@ -333,27 +321,32 @@ public interface ParameterList<T extends ParameterDescription> extends Filterabl
             private final Class<?>[] parameterType;
 
             /**
-             * An array of all parameter annotations of the represented method.
+             * The parameter annotation source to query.
              */
-            private final Annotation[][] parameterAnnotation;
+            private final ParameterDescription.ForLoadedParameter.ParameterAnnotationSource parameterAnnotationSource;
 
             /**
              * Creates a legacy representation of a constructor's parameters.
              *
-             * @param constructor The constructor to represent.
+             * @param constructor               The constructor to represent.
+             * @param parameterAnnotationSource The parameter annotation source to query.
              */
-            public OfLegacyVmConstructor(Constructor<?> constructor) {
+            protected OfLegacyVmConstructor(Constructor<?> constructor, ParameterDescription.ForLoadedParameter.ParameterAnnotationSource parameterAnnotationSource) {
                 this.constructor = constructor;
                 this.parameterType = constructor.getParameterTypes();
-                this.parameterAnnotation = constructor.getParameterAnnotations();
+                this.parameterAnnotationSource = parameterAnnotationSource;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public ParameterDescription.InDefinedShape get(int index) {
-                return new ParameterDescription.ForLoadedParameter.OfLegacyVmConstructor(constructor, index, parameterType, parameterAnnotation);
+                return new ParameterDescription.ForLoadedParameter.OfLegacyVmConstructor(constructor, index, parameterType, parameterAnnotationSource);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public int size() {
                 return parameterType.length;
             }
@@ -376,27 +369,32 @@ public interface ParameterList<T extends ParameterDescription> extends Filterabl
             private final Class<?>[] parameterType;
 
             /**
-             * An array of all parameter annotations of the represented method.
+             * The parameter annotation source to query.
              */
-            private final Annotation[][] parameterAnnotation;
+            private final ParameterDescription.ForLoadedParameter.ParameterAnnotationSource parameterAnnotationSource;
 
             /**
              * Creates a legacy representation of a method's parameters.
              *
-             * @param method The method to represent.
+             * @param method                    The method to represent.
+             * @param parameterAnnotationSource The parameter annotation source to query.
              */
-            protected OfLegacyVmMethod(Method method) {
+            protected OfLegacyVmMethod(Method method, ParameterDescription.ForLoadedParameter.ParameterAnnotationSource parameterAnnotationSource) {
                 this.method = method;
                 this.parameterType = method.getParameterTypes();
-                this.parameterAnnotation = method.getParameterAnnotations();
+                this.parameterAnnotationSource = parameterAnnotationSource;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public ParameterDescription.InDefinedShape get(int index) {
-                return new ParameterDescription.ForLoadedParameter.OfLegacyVmMethod(method, index, parameterType, parameterAnnotation);
+                return new ParameterDescription.ForLoadedParameter.OfLegacyVmMethod(method, index, parameterType, parameterAnnotationSource);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public int size() {
                 return parameterType.length;
             }
@@ -434,12 +432,16 @@ public interface ParameterList<T extends ParameterDescription> extends Filterabl
             this.parameterDescriptions = parameterDescriptions;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public S get(int index) {
             return parameterDescriptions.get(index);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public int size() {
             return parameterDescriptions.size();
         }
@@ -480,16 +482,20 @@ public interface ParameterList<T extends ParameterDescription> extends Filterabl
                 this.typeDefinitions = typeDefinitions;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public ParameterDescription.InDefinedShape get(int index) {
                 int offset = methodDescription.isStatic() ? 0 : 1;
-                for (TypeDefinition typeDefinition : typeDefinitions.subList(0, index)) {
-                    offset += typeDefinition.getStackSize().getSize();
+                for (int previous = 0; previous < index; previous++) {
+                    offset += typeDefinitions.get(previous).getStackSize().getSize();
                 }
                 return new ParameterDescription.Latent(methodDescription, typeDefinitions.get(index).asGenericType(), index, offset);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public int size() {
                 return typeDefinitions.size();
             }
@@ -522,7 +528,9 @@ public interface ParameterList<T extends ParameterDescription> extends Filterabl
             this.tokens = tokens;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public ParameterDescription.InDefinedShape get(int index) {
             int offset = declaringMethod.isStatic() ? 0 : 1;
             for (ParameterDescription.Token token : tokens.subList(0, index)) {
@@ -531,7 +539,9 @@ public interface ParameterList<T extends ParameterDescription> extends Filterabl
             return new ParameterDescription.Latent(declaringMethod, tokens.get(index), index, offset);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public int size() {
             return tokens.size();
         }
@@ -572,12 +582,16 @@ public interface ParameterList<T extends ParameterDescription> extends Filterabl
             this.visitor = visitor;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public ParameterDescription.InGenericShape get(int index) {
             return new ParameterDescription.TypeSubstituting(declaringMethod, parameterDescriptions.get(index), visitor);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public int size() {
             return parameterDescriptions.size();
         }
@@ -590,22 +604,30 @@ public interface ParameterList<T extends ParameterDescription> extends Filterabl
      */
     class Empty<S extends ParameterDescription> extends FilterableList.Empty<S, ParameterList<S>> implements ParameterList<S> {
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public boolean hasExplicitMetaData() {
             return true;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public TypeList.Generic asTypeList() {
             return new TypeList.Generic.Empty();
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public ByteCodeElement.Token.TokenList<ParameterDescription.Token> asTokenList(ElementMatcher<? super TypeDescription> matcher) {
             return new ByteCodeElement.Token.TokenList<ParameterDescription.Token>();
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         @SuppressWarnings("unchecked")
         public ParameterList<ParameterDescription.InDefinedShape> asDefined() {
             return (ParameterList<ParameterDescription.InDefinedShape>) this;

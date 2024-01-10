@@ -1,6 +1,22 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation.bytecode.member;
 
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.CachedReturnPlugin;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.method.ParameterDescription;
 import net.bytebuddy.description.type.TypeDefinition;
@@ -112,6 +128,7 @@ public enum MethodVariableAccess {
      *
      * @return A stack manipulation loading the {@code this} reference.
      */
+    @CachedReturnPlugin.Enhance("loadThis")
     public static StackManipulation loadThis() {
         return MethodVariableAccess.REFERENCE.loadFrom(0);
     }
@@ -184,8 +201,8 @@ public enum MethodVariableAccess {
     /**
      * A stack manipulation that loads all parameters of a given method onto the operand stack.
      */
-    @EqualsAndHashCode
-    public static class MethodLoading implements StackManipulation {
+    @HashCodeAndEqualsPlugin.Enhance
+    public static class MethodLoading extends StackManipulation.AbstractBase {
 
         /**
          * The method for which all parameters are loaded onto the operand stack.
@@ -208,12 +225,9 @@ public enum MethodVariableAccess {
             this.typeCastingHandler = typeCastingHandler;
         }
 
-        @Override
-        public boolean isValid() {
-            return true;
-        }
-
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext) {
             List<StackManipulation> stackManipulations = new ArrayList<StackManipulation>();
             for (ParameterDescription parameterDescription : methodDescription.getParameters()) {
@@ -271,7 +285,9 @@ public enum MethodVariableAccess {
                  */
                 INSTANCE;
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public StackManipulation ofIndex(TypeDescription parameterType, int index) {
                     return Trivial.INSTANCE;
                 }
@@ -281,7 +297,7 @@ public enum MethodVariableAccess {
              * A type casting handler that casts all parameters of a method to the parameter types of a compatible method
              * with covariant parameter types. This allows a convenient implementation of bridge methods.
              */
-            @EqualsAndHashCode
+            @HashCodeAndEqualsPlugin.Enhance
             class ForBridgeTarget implements TypeCastingHandler {
 
                 /**
@@ -298,7 +314,9 @@ public enum MethodVariableAccess {
                     this.bridgeTarget = bridgeTarget;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public StackManipulation ofIndex(TypeDescription parameterType, int index) {
                     TypeDescription targetType = bridgeTarget.getParameters().get(index).getType().asErasure();
                     return parameterType.equals(targetType)
@@ -312,7 +330,8 @@ public enum MethodVariableAccess {
     /**
      * A stack manipulation for loading a variable of a method's local variable array onto the operand stack.
      */
-    protected class OffsetLoading implements StackManipulation {
+    @HashCodeAndEqualsPlugin.Enhance(includeSyntheticFields = true)
+    protected class OffsetLoading extends StackManipulation.AbstractBase {
 
         /**
          * The offset of the local variable array from which the variable should be loaded.
@@ -328,43 +347,20 @@ public enum MethodVariableAccess {
             this.offset = offset;
         }
 
-        @Override
-        public boolean isValid() {
-            return true;
-        }
-
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext) {
             methodVisitor.visitVarInsn(loadOpcode, offset);
             return size.toIncreasingSize();
-        }
-
-        /**
-         * Returns the outer instance.
-         *
-         * @return The outer instance.
-         */
-        private MethodVariableAccess getMethodVariableAccess() {
-            return MethodVariableAccess.this;
-        }
-
-        @Override // HE: Remove when Lombok support for getOuter is added.
-        public boolean equals(Object other) {
-            return this == other || !(other == null || getClass() != other.getClass())
-                    && MethodVariableAccess.this == ((OffsetLoading) other).getMethodVariableAccess()
-                    && offset == ((OffsetLoading) other).offset;
-        }
-
-        @Override // HE: Remove when Lombok support for getOuter is added.
-        public int hashCode() {
-            return MethodVariableAccess.this.hashCode() + 31 * offset;
         }
     }
 
     /**
      * A stack manipulation for storing a variable into a method's local variable array.
      */
-    protected class OffsetWriting implements StackManipulation {
+    @HashCodeAndEqualsPlugin.Enhance(includeSyntheticFields = true)
+    protected class OffsetWriting extends StackManipulation.AbstractBase {
 
         /**
          * The offset of the local variable array to which the value should be written.
@@ -380,44 +376,20 @@ public enum MethodVariableAccess {
             this.offset = offset;
         }
 
-        @Override
-        public boolean isValid() {
-            return true;
-        }
-
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext) {
             methodVisitor.visitVarInsn(storeOpcode, offset);
             return size.toDecreasingSize();
-        }
-
-        /**
-         * Returns the outer instance.
-         *
-         * @return The outer instance.
-         */
-        private MethodVariableAccess getMethodVariableAccess() {
-            return MethodVariableAccess.this;
-        }
-
-        @Override
-        public boolean equals(Object other) {
-            return this == other || !(other == null || getClass() != other.getClass())
-                    && MethodVariableAccess.this == ((OffsetWriting) other).getMethodVariableAccess()
-                    && offset == ((OffsetWriting) other).offset;
-        }
-
-        @Override
-        public int hashCode() {
-            return MethodVariableAccess.this.hashCode() + 31 * offset;
         }
     }
 
     /**
      * A stack manipulation that increments an integer variable.
      */
-    @EqualsAndHashCode
-    protected static class OffsetIncrementing implements StackManipulation {
+    @HashCodeAndEqualsPlugin.Enhance
+    protected static class OffsetIncrementing extends StackManipulation.AbstractBase {
 
         /**
          * The index of the local variable array from which the variable should be loaded.
@@ -440,15 +412,12 @@ public enum MethodVariableAccess {
             this.value = value;
         }
 
-        @Override
-        public boolean isValid() {
-            return true;
-        }
-
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext) {
             methodVisitor.visitIincInsn(offset, value);
-            return new Size(0, 0);
+            return Size.ZERO;
         }
     }
 }

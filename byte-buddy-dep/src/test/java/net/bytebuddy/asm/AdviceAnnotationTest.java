@@ -17,18 +17,27 @@ public class AdviceAnnotationTest {
     @Parameterized.Parameters
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
-                {Advice.Argument.class, ElementType.PARAMETER},
                 {Advice.AllArguments.class, ElementType.PARAMETER},
+                {Advice.Argument.class, ElementType.PARAMETER},
+                {Advice.AssignReturned.AsScalar.class, ElementType.METHOD},
+                {Advice.AssignReturned.ToAllArguments.class, ElementType.METHOD},
+                {Advice.AssignReturned.ToArguments.class, ElementType.METHOD},
+                {Advice.AssignReturned.ToFields.class, ElementType.METHOD},
+                {Advice.AssignReturned.ToReturned.class, ElementType.METHOD},
+                {Advice.AssignReturned.ToThis.class, ElementType.METHOD},
+                {Advice.AssignReturned.ToThrown.class, ElementType.METHOD},
                 {Advice.FieldValue.class, ElementType.PARAMETER},
                 {Advice.Enter.class, ElementType.PARAMETER},
-                {Advice.Unused.class, ElementType.PARAMETER},
+                {Advice.Exit.class, ElementType.PARAMETER},
+                {Advice.Local.class, ElementType.PARAMETER},
                 {Advice.Origin.class, ElementType.PARAMETER},
                 {Advice.Return.class, ElementType.PARAMETER},
                 {Advice.This.class, ElementType.PARAMETER},
                 {Advice.Thrown.class, ElementType.PARAMETER},
+                {Advice.Unused.class, ElementType.PARAMETER},
                 {Advice.StubValue.class, ElementType.PARAMETER},
                 {Advice.OnMethodEnter.class, ElementType.METHOD},
-                {Advice.OnMethodExit.class, ElementType.METHOD}
+                {Advice.OnMethodExit.class, ElementType.METHOD},
         });
     }
 

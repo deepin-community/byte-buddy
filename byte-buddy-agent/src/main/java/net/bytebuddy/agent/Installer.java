@@ -1,6 +1,25 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.agent;
 
+import net.bytebuddy.agent.utility.nullability.MaybeNull;
+
 import java.lang.instrument.Instrumentation;
+import java.lang.reflect.InvocationTargetException;
+import java.security.Permission;
 
 /**
  * An installer class which defined the hook-in methods that are required by the Java agent specification.
@@ -14,14 +33,14 @@ public class Installer {
      * of the Byte Buddy agent as this class might be loaded by a different class loader than the system class
      * loader.
      */
-    @SuppressWarnings("unused")
+    @MaybeNull
     private static volatile Instrumentation instrumentation;
 
     /**
      * The installer provides only {@code static} hook-in methods and should not be instantiated.
      */
     private Installer() {
-        throw new UnsupportedOperationException();
+        throw new UnsupportedOperationException("This class is a utility class and not supposed to be instantiated");
     }
 
     /**
@@ -37,9 +56,26 @@ public class Installer {
      * @return The instrumentation instance of the Byte Buddy agent.
      */
     public static Instrumentation getInstrumentation() {
-        SecurityManager securityManager = System.getSecurityManager();
-        if (securityManager != null) {
-            securityManager.checkPermission(new RuntimePermission("getInstrumentation"));
+        try {
+            Object securityManager = System.class.getMethod("getSecurityManager").invoke(null);
+            if (securityManager != null) {
+                Class.forName("java.lang.SecurityManager")
+                        .getMethod("checkPermission", Permission.class)
+                        .invoke(securityManager, new RuntimePermission("net.bytebuddy.agent.getInstrumentation"));
+            }
+        } catch (NoSuchMethodException ignored) {
+            /* security manager not available on current VM */
+        } catch (ClassNotFoundException ignored) {
+            /* security manager not available on current VM */
+        } catch (InvocationTargetException exception) {
+            Throwable cause = exception.getTargetException();
+            if (cause instanceof RuntimeException) {
+                throw (RuntimeException) cause;
+            } else {
+                throw new IllegalStateException("Failed to assert access rights using security manager", cause);
+            }
+        } catch (IllegalAccessException exception) {
+            throw new IllegalStateException("Failed to access security manager", exception);
         }
         Instrumentation instrumentation = Installer.instrumentation;
         if (instrumentation == null) {
@@ -51,21 +87,20 @@ public class Installer {
     /**
      * Allows the installation of this agent via a command line argument.
      *
-     * @param agentArguments  The unused agent arguments.
+     * @param arguments       The unused agent arguments.
      * @param instrumentation The instrumentation instance.
      */
-    public static void premain(String agentArguments, Instrumentation instrumentation) {
+    public static void premain(String arguments, Instrumentation instrumentation) {
         Installer.instrumentation = instrumentation;
     }
 
     /**
-     * Allows the installation of this agent via the Attach API.
+     * Allows the installation of this agent via the attach API.
      *
-     * @param agentArguments  The unused agent arguments.
+     * @param arguments       The unused agent arguments.
      * @param instrumentation The instrumentation instance.
      */
-    @SuppressWarnings("unused")
-    public static void agentmain(String agentArguments, Instrumentation instrumentation) {
+    public static void agentmain(String arguments, Instrumentation instrumentation) {
         Installer.instrumentation = instrumentation;
     }
 }

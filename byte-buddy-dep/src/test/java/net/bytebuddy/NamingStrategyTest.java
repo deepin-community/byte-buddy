@@ -1,14 +1,14 @@
 package net.bytebuddy;
 
 import net.bytebuddy.description.type.TypeDescription;
-import net.bytebuddy.test.utility.MockitoRule;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 
+import static org.hamcrest.CoreMatchers.equalTo;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.core.StringStartsWith.startsWith;
@@ -19,10 +19,10 @@ public class NamingStrategyTest {
     private static final String FOO = "foo", BAR = "bar", JAVA_QUX = "java.qux";
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     @Mock
-    private NamingStrategy.SuffixingRandom.BaseNameResolver baseNameResolver;
+    private NamingStrategy.Suffixing.BaseNameResolver baseNameResolver;
 
     @Mock
     private TypeDescription.Generic typeDescription;
@@ -33,6 +33,59 @@ public class NamingStrategyTest {
     @Before
     public void setUp() throws Exception {
         when(typeDescription.asErasure()).thenReturn(rawTypeDescription);
+    }
+
+    @Test
+    public void testSuffixingSubclassNonConflictingPackage() throws Exception {
+        when(rawTypeDescription.getName()).thenReturn(FOO);
+        NamingStrategy namingStrategy = new NamingStrategy.Suffixing(BAR);
+        assertThat(namingStrategy.subclass(typeDescription), equalTo(FOO + "$" + BAR));
+        verify(typeDescription, atLeast(1)).asErasure();
+        verifyNoMoreInteractions(typeDescription);
+        verify(rawTypeDescription).getName();
+        verifyNoMoreInteractions(rawTypeDescription);
+    }
+
+    @Test
+    public void testSuffixingSubclassConflictingPackage() throws Exception {
+        when(baseNameResolver.resolve(rawTypeDescription)).thenReturn(JAVA_QUX);
+        NamingStrategy namingStrategy = new NamingStrategy.Suffixing(FOO, baseNameResolver, BAR);
+        assertThat(namingStrategy.subclass(typeDescription), equalTo(BAR + "." + JAVA_QUX + "$" + FOO));
+        verify(typeDescription).asErasure();
+        verifyNoMoreInteractions(typeDescription);
+        verifyNoMoreInteractions(rawTypeDescription);
+        verify(baseNameResolver).resolve(rawTypeDescription);
+        verifyNoMoreInteractions(baseNameResolver);
+    }
+
+    @Test
+    public void testSuffixingSubclassConflictingPackageDisabled() throws Exception {
+        when(baseNameResolver.resolve(rawTypeDescription)).thenReturn(JAVA_QUX);
+        NamingStrategy namingStrategy = new NamingStrategy.Suffixing(FOO, baseNameResolver, NamingStrategy.NO_PREFIX);
+        assertThat(namingStrategy.subclass(typeDescription), equalTo(JAVA_QUX + "$" + FOO));
+        verify(typeDescription).asErasure();
+        verifyNoMoreInteractions(typeDescription);
+        verifyNoMoreInteractions(rawTypeDescription);
+        verify(baseNameResolver).resolve(rawTypeDescription);
+        verifyNoMoreInteractions(baseNameResolver);
+    }
+
+    @Test
+    public void testSuffixingRebase() throws Exception {
+        when(rawTypeDescription.getName()).thenReturn(FOO);
+        NamingStrategy namingStrategy = new NamingStrategy.Suffixing(BAR);
+        assertThat(namingStrategy.rebase(rawTypeDescription), is(FOO));
+        verify(rawTypeDescription).getName();
+        verifyNoMoreInteractions(rawTypeDescription);
+    }
+
+    @Test
+    public void testSuffixingRedefine() throws Exception {
+        when(rawTypeDescription.getName()).thenReturn(FOO);
+        NamingStrategy namingStrategy = new NamingStrategy.Suffixing(BAR);
+        assertThat(namingStrategy.redefine(rawTypeDescription), is(FOO));
+        verify(rawTypeDescription).getName();
+        verifyNoMoreInteractions(rawTypeDescription);
     }
 
     @Test
@@ -53,7 +106,7 @@ public class NamingStrategyTest {
         assertThat(namingStrategy.subclass(typeDescription), startsWith(BAR + "." + JAVA_QUX + "$" + FOO + "$"));
         verify(typeDescription).asErasure();
         verifyNoMoreInteractions(typeDescription);
-        verifyZeroInteractions(rawTypeDescription);
+        verifyNoMoreInteractions(rawTypeDescription);
         verify(baseNameResolver).resolve(rawTypeDescription);
         verifyNoMoreInteractions(baseNameResolver);
     }
@@ -61,11 +114,11 @@ public class NamingStrategyTest {
     @Test
     public void testSuffixingRandomSubclassConflictingPackageDisabled() throws Exception {
         when(baseNameResolver.resolve(rawTypeDescription)).thenReturn(JAVA_QUX);
-        NamingStrategy namingStrategy = new NamingStrategy.SuffixingRandom(FOO, baseNameResolver, NamingStrategy.SuffixingRandom.NO_PREFIX);
+        NamingStrategy namingStrategy = new NamingStrategy.SuffixingRandom(FOO, baseNameResolver, NamingStrategy.NO_PREFIX);
         assertThat(namingStrategy.subclass(typeDescription), startsWith(JAVA_QUX + "$" + FOO + "$"));
         verify(typeDescription).asErasure();
         verifyNoMoreInteractions(typeDescription);
-        verifyZeroInteractions(rawTypeDescription);
+        verifyNoMoreInteractions(rawTypeDescription);
         verify(baseNameResolver).resolve(rawTypeDescription);
         verifyNoMoreInteractions(baseNameResolver);
     }
@@ -90,18 +143,10 @@ public class NamingStrategyTest {
 
     @Test
     public void testBaseNameResolvers() throws Exception {
-        assertThat(new NamingStrategy.SuffixingRandom.BaseNameResolver.ForFixedValue(FOO).resolve(rawTypeDescription), is(FOO));
+        assertThat(new NamingStrategy.Suffixing.BaseNameResolver.ForFixedValue(FOO).resolve(rawTypeDescription), is(FOO));
         when(rawTypeDescription.getName()).thenReturn(FOO);
-        assertThat(new NamingStrategy.SuffixingRandom.BaseNameResolver.ForGivenType(rawTypeDescription).resolve(rawTypeDescription), is(FOO));
-        assertThat(NamingStrategy.SuffixingRandom.BaseNameResolver.ForUnnamedType.INSTANCE.resolve(rawTypeDescription), is(FOO));
-    }
-
-    @Test
-    public void testSuffixingRandomObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(NamingStrategy.SuffixingRandom.class).apply();
-        ObjectPropertyAssertion.of(NamingStrategy.SuffixingRandom.BaseNameResolver.ForGivenType.class).apply();
-        ObjectPropertyAssertion.of(NamingStrategy.SuffixingRandom.BaseNameResolver.ForUnnamedType.class).apply();
-        ObjectPropertyAssertion.of(NamingStrategy.SuffixingRandom.BaseNameResolver.ForFixedValue.class).apply();
+        assertThat(new NamingStrategy.Suffixing.BaseNameResolver.ForGivenType(rawTypeDescription).resolve(rawTypeDescription), is(FOO));
+        assertThat(NamingStrategy.Suffixing.BaseNameResolver.ForUnnamedType.INSTANCE.resolve(rawTypeDescription), is(FOO));
     }
 
     @Test
@@ -133,8 +178,9 @@ public class NamingStrategyTest {
         verifyNoMoreInteractions(rawTypeDescription);
     }
 
-    @Test
-    public void testPrefixingRandomEqualsHashCode() throws Exception {
-        ObjectPropertyAssertion.of(NamingStrategy.PrefixingRandom.class).apply();
+    @Test(expected = IllegalStateException.class)
+    public void testCallerSen() {
+        new NamingStrategy.Suffixing.BaseNameResolver.WithCallerSuffix(mock(NamingStrategy.Suffixing.BaseNameResolver.class))
+                .resolve(mock(TypeDescription.class));
     }
 }

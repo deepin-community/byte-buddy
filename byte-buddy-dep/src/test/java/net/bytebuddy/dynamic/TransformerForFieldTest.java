@@ -6,21 +6,22 @@ import net.bytebuddy.description.field.FieldDescription;
 import net.bytebuddy.description.modifier.ModifierContributor;
 import net.bytebuddy.description.type.TypeDefinition;
 import net.bytebuddy.description.type.TypeDescription;
-import net.bytebuddy.test.utility.MockitoRule;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 
 import java.util.Collections;
 
 import static net.bytebuddy.matcher.ElementMatchers.named;
 import static net.bytebuddy.matcher.ElementMatchers.none;
+import static net.bytebuddy.test.utility.FieldByFieldComparison.matchesPrototype;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.when;
 
 public class TransformerForFieldTest {
 
@@ -29,10 +30,10 @@ public class TransformerForFieldTest {
     private static final int MODIFIERS = 42, RANGE = 3, MASK = 1;
 
     @Rule
-    public TestRule mocktioRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     @Mock
-    private TypeDescription instrumentedType, rawDeclaringType, rawReturnType, rawParameterType;
+    private TypeDescription instrumentedType;
 
     @Mock
     private Transformer<FieldDescription.Token> tokenTransformer;
@@ -59,7 +60,7 @@ public class TransformerForFieldTest {
     @SuppressWarnings("unchecked")
     public void setUp() throws Exception {
         when(fieldType.accept(any(TypeDescription.Generic.Visitor.class))).thenReturn(fieldType);
-        when(fieldDescription.asToken(none())).thenReturn(fieldToken);
+        when(fieldDescription.asToken(matchesPrototype(none()))).thenReturn(fieldToken);
         when(fieldDescription.getDeclaringType()).thenReturn(declaringType);
         when(fieldDescription.asDefined()).thenReturn(definedField);
         when(fieldToken.getName()).thenReturn(FOO);
@@ -93,7 +94,7 @@ public class TransformerForFieldTest {
 
     @Test
     public void testNoChangesUnlessSpecified() throws Exception {
-        TypeDescription typeDescription = new TypeDescription.ForLoadedType(Bar.class);
+        TypeDescription typeDescription = TypeDescription.ForLoadedType.of(Bar.class);
         FieldDescription fieldDescription = typeDescription.getSuperClass().getDeclaredFields().filter(named(FOO)).getOnly();
         FieldDescription transformed = Transformer.ForField.withModifiers().transform(typeDescription, fieldDescription);
         assertThat(transformed, is(fieldDescription));
@@ -102,7 +103,7 @@ public class TransformerForFieldTest {
 
     @Test
     public void testRetainsInstrumentedType() throws Exception {
-        TypeDescription typeDescription = new TypeDescription.ForLoadedType(Bar.class);
+        TypeDescription typeDescription = TypeDescription.ForLoadedType.of(Bar.class);
         FieldDescription fieldDescription = typeDescription.getSuperClass().getDeclaredFields().filter(named(BAR)).getOnly();
         FieldDescription transformed = Transformer.ForField.withModifiers().transform(typeDescription, fieldDescription);
         assertThat(transformed, is(fieldDescription));
@@ -111,12 +112,6 @@ public class TransformerForFieldTest {
         assertThat(transformed.getType().getSort(), is(TypeDefinition.Sort.PARAMETERIZED));
         assertThat(transformed.getType().getTypeArguments().size(), is(1));
         assertThat(transformed.getType().getTypeArguments().getOnly(), is(typeDescription.getSuperClass().getDeclaredFields().filter(named(FOO)).getOnly().getType()));
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(Transformer.ForField.class).apply();
-        ObjectPropertyAssertion.of(Transformer.ForField.FieldModifierTransformer.class).apply();
     }
 
     private static class Foo<T> {

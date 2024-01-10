@@ -3,23 +3,33 @@ package net.bytebuddy.implementation;
 import net.bytebuddy.ByteBuddy;
 import net.bytebuddy.description.modifier.FieldManifestation;
 import net.bytebuddy.description.modifier.Visibility;
+import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.dynamic.DynamicType;
 import net.bytebuddy.dynamic.loading.ClassLoadingStrategy;
 import net.bytebuddy.dynamic.scaffold.subclass.ConstructorStrategy;
 import net.bytebuddy.test.utility.CallTraceable;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
+import net.bytebuddy.test.utility.JavaVersionRule;
+import net.bytebuddy.utility.JavaConstant;
+import net.bytebuddy.utility.JavaType;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.MethodRule;
 
 import java.lang.reflect.Field;
+import java.util.concurrent.Callable;
 
 import static net.bytebuddy.matcher.ElementMatchers.isDeclaredBy;
 import static net.bytebuddy.matcher.ElementMatchers.named;
+import static org.hamcrest.CoreMatchers.instanceOf;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
 
 public class FieldAccessorOtherTest {
 
     private static final String FOO = "foo", BAR = "bar", QUX = "qux", BAZ = "baz";
+
+    @Rule
+    public MethodRule javaVersionRule = new JavaVersionRule();
 
     @Test
     public void testArgumentSetter() throws Exception {
@@ -120,6 +130,49 @@ public class FieldAccessorOtherTest {
         sampleGetter.assertZeroCalls();
     }
 
+    @Test
+    public void testClassConstant() throws Exception {
+        DynamicType.Loaded<SampleNoArgumentSetter> loaded = new ByteBuddy()
+                .subclass(SampleNoArgumentSetter.class)
+                .method(named(FOO))
+                .intercept(FieldAccessor.ofField(FOO).setsValue(TypeDescription.ForLoadedType.of(Object.class)))
+                .make()
+                .load(SampleNoArgumentSetter.class.getClassLoader(), ClassLoadingStrategy.Default.WRAPPER);
+        assertThat(loaded.getLoaded().getDeclaredFields().length, is(0));
+        SampleNoArgumentSetter instance = loaded.getLoaded().getDeclaredConstructor().newInstance();
+        instance.foo();
+        assertThat(instance.foo, is((Object) Object.class));
+    }
+
+    @Test
+    @JavaVersionRule.Enforce(7)
+    public void testJavaConstant() throws Exception {
+        DynamicType.Loaded<SampleNoArgumentSetter> loaded = new ByteBuddy()
+                .subclass(SampleNoArgumentSetter.class)
+                .method(named(FOO))
+                .intercept(FieldAccessor.ofField(FOO).setsValue(JavaConstant.MethodType.ofConstant(Object.class)))
+                .make()
+                .load(SampleNoArgumentSetter.class.getClassLoader(), ClassLoadingStrategy.Default.WRAPPER);
+        assertThat(loaded.getLoaded().getDeclaredFields().length, is(0));
+        SampleNoArgumentSetter instance = loaded.getLoaded().getDeclaredConstructor().newInstance();
+        instance.foo();
+        assertThat(instance.foo, instanceOf(JavaType.METHOD_TYPE.load()));
+    }
+
+    @Test
+    @SuppressWarnings("rawtypes")
+    public void testStaticFieldOfOtherClass() throws Exception {
+        DynamicType.Loaded<Callable> loaded = new ByteBuddy()
+                .subclass(Callable.class)
+                .method(named("call"))
+                .intercept(FieldAccessor.of(StaticFieldHolder.class.getField(FOO.toUpperCase())))
+                .make()
+                .load(StaticFieldHolder.class.getClassLoader(), ClassLoadingStrategy.Default.WRAPPER);
+        assertThat(loaded.getLoaded().getDeclaredFields().length, is(0));
+        Callable<?> instance = loaded.getLoaded().getDeclaredConstructor().newInstance();
+        assertThat(instance.call(), is((Object) FOO));
+    }
+
     @Test(expected = IllegalStateException.class)
     public void testNotAssignable() throws Exception {
         new ByteBuddy()
@@ -129,7 +182,7 @@ public class FieldAccessorOtherTest {
                 .make();
     }
 
-    @Test(expected = IllegalArgumentException.class)
+    @Test(expected = IllegalStateException.class)
     public void testFinalFieldSetter() throws Exception {
         new ByteBuddy()
                 .subclass(Foo.class)
@@ -174,16 +227,22 @@ public class FieldAccessorOtherTest {
                 .make();
     }
 
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(FieldAccessor.ForImplicitProperty.class).apply();
-        ObjectPropertyAssertion.of(FieldAccessor.ForImplicitProperty.Appender.class).apply();
-        ObjectPropertyAssertion.of(FieldAccessor.ForParameterSetter.class).apply();
-        ObjectPropertyAssertion.of(FieldAccessor.ForParameterSetter.TerminationHandler.class).apply();
-        ObjectPropertyAssertion.of(FieldAccessor.ForParameterSetter.Appender.class).apply();
-        ObjectPropertyAssertion.of(FieldAccessor.FieldLocation.Absolute.class).apply();
-        ObjectPropertyAssertion.of(FieldAccessor.FieldLocation.Relative.class).apply();
-        ObjectPropertyAssertion.of(FieldAccessor.FieldLocation.Relative.Prepared.class).apply();
+    @Test(expected = IllegalStateException.class)
+    public void testSetterInaccessibleSource() throws Exception {
+        new ByteBuddy()
+                .subclass(SampleNoArgumentSetter.class)
+                .method(named(FOO))
+                .intercept(FieldAccessor.of(Bar.class.getDeclaredField(BAR)).setsDefaultValue())
+                .make();
+    }
+
+    @Test(expected = IllegalStateException.class)
+    public void testSetterInaccessibleTarget() throws Exception {
+        new ByteBuddy()
+                .subclass(SampleNoArgumentSetter.class)
+                .method(named(FOO))
+                .intercept(FieldAccessor.ofField(FOO).setsFieldValueOf(Bar.class.getDeclaredField(BAR)))
+                .make();
     }
 
     @SuppressWarnings("unused")
@@ -204,10 +263,6 @@ public class FieldAccessorOtherTest {
         public void setBar(Object o) {
             /* empty */
         }
-    }
-
-    public static class BarSub extends Bar {
-        /* empty */
     }
 
     @SuppressWarnings("unused")
@@ -243,6 +298,19 @@ public class FieldAccessorOtherTest {
         }
     }
 
+    public static class SampleNoArgumentSetter {
+
+        public Object foo;
+
+        public void foo() {
+            throw new AssertionError();
+        }
+
+        public Object bar() {
+            throw new AssertionError();
+        }
+    }
+
     public static class SampleGetter extends CallTraceable {
 
         protected Object foo = BAZ;
@@ -260,5 +328,10 @@ public class FieldAccessorOtherTest {
         public void bar(Object foo) {
             register(FOO, foo);
         }
+    }
+
+    public static class StaticFieldHolder {
+
+        public static final String FOO = "foo";
     }
 }

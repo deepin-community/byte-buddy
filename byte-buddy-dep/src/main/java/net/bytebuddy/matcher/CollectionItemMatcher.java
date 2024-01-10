@@ -1,6 +1,21 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.matcher;
 
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 
 /**
  * A list item matcher matches any element of a collection to a given matcher and assures that at least one
@@ -8,8 +23,8 @@ import lombok.EqualsAndHashCode;
  *
  * @param <T> The type of the matched entity.
  */
-@EqualsAndHashCode(callSuper = false)
-public class CollectionItemMatcher<T> extends ElementMatcher.Junction.AbstractBase<Iterable<? extends T>> {
+@HashCodeAndEqualsPlugin.Enhance
+public class CollectionItemMatcher<T> extends ElementMatcher.Junction.ForNonNullValues<Iterable<? extends T>> {
 
     /**
      * The element matcher to apply to each element of a collection.
@@ -25,8 +40,10 @@ public class CollectionItemMatcher<T> extends ElementMatcher.Junction.AbstractBa
         this.matcher = matcher;
     }
 
-    @Override
-    public boolean matches(Iterable<? extends T> target) {
+    /**
+     * {@inheritDoc}
+     */
+    protected boolean doMatch(Iterable<? extends T> target) {
         for (T value : target) {
             if (matcher.matches(value)) {
                 return true;

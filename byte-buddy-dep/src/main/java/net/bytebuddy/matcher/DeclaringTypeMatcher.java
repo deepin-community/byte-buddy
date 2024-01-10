@@ -1,6 +1,21 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.matcher;
 
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.DeclaredByType;
 import net.bytebuddy.description.type.TypeDefinition;
 import net.bytebuddy.description.type.TypeDescription;
@@ -11,8 +26,8 @@ import net.bytebuddy.description.type.TypeDescription;
  *
  * @param <T> The exact type of the element being matched.
  */
-@EqualsAndHashCode(callSuper = false)
-public class DeclaringTypeMatcher<T extends DeclaredByType> extends ElementMatcher.Junction.AbstractBase<T> {
+@HashCodeAndEqualsPlugin.Enhance
+public class DeclaringTypeMatcher<T extends DeclaredByType> extends ElementMatcher.Junction.ForNonNullValues<T> {
 
     /**
      * The type matcher to be applied if the target element is declared in a type.
@@ -28,8 +43,10 @@ public class DeclaringTypeMatcher<T extends DeclaredByType> extends ElementMatch
         this.matcher = matcher;
     }
 
-    @Override
-    public boolean matches(T target) {
+    /**
+     * {@inheritDoc}
+     */
+    protected boolean doMatch(T target) {
         TypeDefinition declaringType = target.getDeclaringType();
         return declaringType != null && matcher.matches(declaringType.asGenericType());
     }

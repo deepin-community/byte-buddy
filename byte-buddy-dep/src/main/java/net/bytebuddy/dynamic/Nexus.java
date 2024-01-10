@@ -1,4 +1,22 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.dynamic;
+
+import net.bytebuddy.utility.nullability.AlwaysNull;
+import net.bytebuddy.utility.nullability.MaybeNull;
 
 import java.lang.ref.Reference;
 import java.lang.ref.ReferenceQueue;
@@ -35,7 +53,8 @@ public class Nexus extends WeakReference<ClassLoader> {
     /**
      * An type-safe constant for a non-operational reference queue.
      */
-    protected static final ReferenceQueue<ClassLoader> NO_QUEUE = null;
+    @AlwaysNull
+    private static final ReferenceQueue<ClassLoader> NO_QUEUE = null;
 
     /**
      * A map of keys identifying a loaded type by its name and class loader mapping their
@@ -78,7 +97,7 @@ public class Nexus extends WeakReference<ClassLoader> {
      * @param referenceQueue The reference queue to notify upon the class loader's collection or {@code null} if no queue should be notified.
      * @param identification An identification for the initializer to run.
      */
-    private Nexus(String name, ClassLoader classLoader, ReferenceQueue<? super ClassLoader> referenceQueue, int identification) {
+    private Nexus(String name, @MaybeNull ClassLoader classLoader, @MaybeNull ReferenceQueue<? super ClassLoader> referenceQueue, int identification) {
         super(classLoader, classLoader == null
                 ? null
                 : referenceQueue);
@@ -119,7 +138,9 @@ public class Nexus extends WeakReference<ClassLoader> {
     public static void initialize(Class<?> type, int identification) throws Exception {
         Object typeInitializer = TYPE_INITIALIZERS.remove(new Nexus(type, identification));
         if (typeInitializer != null) {
-            typeInitializer.getClass().getMethod("onLoad", Class.class).invoke(typeInitializer, type);
+            Class.forName("net.bytebuddy.implementation.LoadedTypeInitializer",
+                    true,
+                    typeInitializer.getClass().getClassLoader()).getMethod("onLoad", Class.class).invoke(typeInitializer, type);
         }
     }
 
@@ -143,7 +164,7 @@ public class Nexus extends WeakReference<ClassLoader> {
      *                        of {@link net.bytebuddy.implementation.LoadedTypeInitializer} where
      *                        it does however not matter which class loader loaded this latter type.
      */
-    public static void register(String name, ClassLoader classLoader, ReferenceQueue<? super ClassLoader> referenceQueue, int identification, Object typeInitializer) {
+    public static void register(String name, @MaybeNull ClassLoader classLoader, @MaybeNull ReferenceQueue<? super ClassLoader> referenceQueue, int identification, Object typeInitializer) {
         TYPE_INITIALIZERS.put(new Nexus(name, classLoader, referenceQueue, identification), typeInitializer);
     }
 
@@ -165,22 +186,25 @@ public class Nexus extends WeakReference<ClassLoader> {
     }
 
     @Override
-    public boolean equals(Object object) {
-        if (this == object) return true;
-        if (object == null || getClass() != object.getClass()) return false;
-        Nexus nexus = (Nexus) object;
-        return classLoaderHashCode == nexus.classLoaderHashCode
-                && identification == nexus.identification
-                && name.equals(nexus.name)
-                && get() == nexus.get();
-    }
-
-    @Override
     public int hashCode() {
         int result = name.hashCode();
         result = 31 * result + classLoaderHashCode;
         result = 31 * result + identification;
         return result;
+    }
+
+    @Override
+    public boolean equals(@MaybeNull Object other) {
+        if (this == other) {
+            return true;
+        } else if (other == null || getClass() != other.getClass()) {
+            return false;
+        }
+        Nexus nexus = (Nexus) other;
+        return classLoaderHashCode == nexus.classLoaderHashCode
+                && identification == nexus.identification
+                && name.equals(nexus.name)
+                && get() == nexus.get();
     }
 
     @Override

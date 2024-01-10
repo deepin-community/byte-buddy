@@ -1,10 +1,9 @@
 package net.bytebuddy.agent.builder;
 
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Test;
 
 import static org.hamcrest.CoreMatchers.is;
-import static org.junit.Assert.assertThat;
+import static org.hamcrest.MatcherAssert.assertThat;
 
 public class AgentBuilderFallbackStrategySimpleTest {
 
@@ -16,10 +15,5 @@ public class AgentBuilderFallbackStrategySimpleTest {
     @Test
     public void testDisabled() throws Exception {
         assertThat(AgentBuilder.FallbackStrategy.Simple.DISABLED.isFallback(Object.class, new Throwable()), is(false));
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(AgentBuilder.FallbackStrategy.Simple.class).apply();
     }
 }

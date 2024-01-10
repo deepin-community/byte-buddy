@@ -1,6 +1,21 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation;
 
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.field.FieldDescription;
 import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.method.ParameterDescription;
@@ -28,7 +43,7 @@ import static net.bytebuddy.matcher.ElementMatchers.named;
  *
  * @see FieldAccessor
  */
-@EqualsAndHashCode
+@HashCodeAndEqualsPlugin.Enhance
 public abstract class FixedValue implements Implementation {
 
     /**
@@ -55,9 +70,9 @@ public abstract class FixedValue implements Implementation {
     /**
      * <p>
      * Returns a fixed value from any intercepted method. The fixed value is stored in the constant pool if this is possible.
-     * Java is capable of storing any primitive value, {@link String} values and {@link Class} references in the constant pool.
-     * Since Java 7, {@code MethodHandle} as well as {@code MethodType} references are also supported. Alternatively, the fixed
-     * value is stored in a static field.
+     * Specifically, an argument that is a {@link JavaConstant}, {@link TypeDescription}, primitive, {@link String} or
+     * {@link Class} value is stored in the constant pool.  Since Java 7, {@code MethodHandle} as well as {@code MethodType}
+     * references are also supported. Alternatively, the fixed value is stored in a static field.
      * </p>
      * <p>
      * When a value is stored in the class's constant pool, its identity is lost. If an object's identity is important, the
@@ -68,37 +83,46 @@ public abstract class FixedValue implements Implementation {
      * type or an {@link IllegalAccessException} will be thrown at runtime.
      * </p>
      *
-     * @param fixedValue The fixed value to return from the method.
+     * @param value The fixed value to return from the method.
      * @return An implementation for the given {@code value}.
+     * @see #value(JavaConstant)
+     * @see #value(TypeDescription)
+     * @see #nullValue()
      */
-    public static AssignerConfigurable value(Object fixedValue) {
-        Class<?> type = fixedValue.getClass();
-        if (type == String.class) {
-            return new ForPoolValue(new TextConstant((String) fixedValue), TypeDescription.STRING);
-        } else if (type == Class.class) {
-            return new ForPoolValue(ClassConstant.of(new TypeDescription.ForLoadedType((Class<?>) fixedValue)), TypeDescription.CLASS);
-        } else if (type == Boolean.class) {
-            return new ForPoolValue(IntegerConstant.forValue((Boolean) fixedValue), boolean.class);
-        } else if (type == Byte.class) {
-            return new ForPoolValue(IntegerConstant.forValue((Byte) fixedValue), byte.class);
-        } else if (type == Short.class) {
-            return new ForPoolValue(IntegerConstant.forValue((Short) fixedValue), short.class);
-        } else if (type == Character.class) {
-            return new ForPoolValue(IntegerConstant.forValue((Character) fixedValue), char.class);
-        } else if (type == Integer.class) {
-            return new ForPoolValue(IntegerConstant.forValue((Integer) fixedValue), int.class);
-        } else if (type == Long.class) {
-            return new ForPoolValue(LongConstant.forValue((Long) fixedValue), long.class);
-        } else if (type == Float.class) {
-            return new ForPoolValue(FloatConstant.forValue((Float) fixedValue), float.class);
-        } else if (type == Double.class) {
-            return new ForPoolValue(DoubleConstant.forValue((Double) fixedValue), double.class);
-        } else if (JavaType.METHOD_HANDLE.getTypeStub().isAssignableFrom(type)) {
-            return new ForPoolValue(new JavaConstantValue(JavaConstant.MethodHandle.ofLoaded(fixedValue)), type);
-        } else if (JavaType.METHOD_TYPE.getTypeStub().represents(type)) {
-            return new ForPoolValue(new JavaConstantValue(JavaConstant.MethodType.ofLoaded(fixedValue)), type);
+    public static AssignerConfigurable value(Object value) {
+        if (value instanceof JavaConstant) {
+            return value((JavaConstant) value);
+        } else if (value instanceof TypeDescription) {
+            return value((TypeDescription) value);
         } else {
-            return reference(fixedValue);
+            Class<?> type = value.getClass();
+            if (type == String.class) {
+                return new ForPoolValue(new TextConstant((String) value), TypeDescription.ForLoadedType.of(String.class));
+            } else if (type == Class.class) {
+                return new ForPoolValue(ClassConstant.of(TypeDescription.ForLoadedType.of((Class<?>) value)), TypeDescription.ForLoadedType.of(Class.class));
+            } else if (type == Boolean.class) {
+                return new ForPoolValue(IntegerConstant.forValue((Boolean) value), boolean.class);
+            } else if (type == Byte.class) {
+                return new ForPoolValue(IntegerConstant.forValue((Byte) value), byte.class);
+            } else if (type == Short.class) {
+                return new ForPoolValue(IntegerConstant.forValue((Short) value), short.class);
+            } else if (type == Character.class) {
+                return new ForPoolValue(IntegerConstant.forValue((Character) value), char.class);
+            } else if (type == Integer.class) {
+                return new ForPoolValue(IntegerConstant.forValue((Integer) value), int.class);
+            } else if (type == Long.class) {
+                return new ForPoolValue(LongConstant.forValue((Long) value), long.class);
+            } else if (type == Float.class) {
+                return new ForPoolValue(FloatConstant.forValue((Float) value), float.class);
+            } else if (type == Double.class) {
+                return new ForPoolValue(DoubleConstant.forValue((Double) value), double.class);
+            } else if (JavaType.METHOD_HANDLE.getTypeStub().isAssignableFrom(type)) {
+                return new ForPoolValue(new JavaConstantValue(JavaConstant.MethodHandle.ofLoaded(value)), type);
+            } else if (JavaType.METHOD_TYPE.getTypeStub().represents(type)) {
+                return new ForPoolValue(new JavaConstantValue(JavaConstant.MethodType.ofLoaded(value)), type);
+            } else {
+                return reference(value);
+            }
         }
     }
 
@@ -109,11 +133,11 @@ public abstract class FixedValue implements Implementation {
      * instrumented methods. The field name can be explicitly determined. The field name is generated from the fixed value's
      * hash code.
      *
-     * @param fixedValue The fixed value to be returned by methods that are instrumented by this implementation.
+     * @param value The fixed value to be returned by methods that are instrumented by this implementation.
      * @return An implementation for the given {@code value}.
      */
-    public static AssignerConfigurable reference(Object fixedValue) {
-        return new ForValue(fixedValue);
+    public static AssignerConfigurable reference(Object value) {
+        return reference(value, ForValue.PREFIX + "$" + RandomString.hashOf(value));
     }
 
     /**
@@ -122,32 +146,32 @@ public abstract class FixedValue implements Implementation {
      * object identity will be preserved between the given {@code value} and the value that is returned by
      * instrumented methods. The field name can be explicitly determined.
      *
-     * @param fixedValue The fixed value to be returned by methods that are instrumented by this implementation.
-     * @param fieldName  The name of the field for storing the fixed value.
+     * @param value The fixed value to be returned by methods that are instrumented by this implementation.
+     * @param name  The name of the field for storing the fixed value.
      * @return An implementation for the given {@code value}.
      */
-    public static AssignerConfigurable reference(Object fixedValue, String fieldName) {
-        return new ForValue(fieldName, fixedValue);
+    public static AssignerConfigurable reference(Object value, String name) {
+        return new ForValue(value, name);
     }
 
     /**
      * Returns the given type in form of a loaded type. The value is loaded from the written class's constant pool.
      *
-     * @param fixedValue The type to return from the method.
+     * @param type The type to return from the method.
      * @return An implementation for the given {@code value}.
      */
-    public static AssignerConfigurable value(TypeDescription fixedValue) {
-        return new ForPoolValue(ClassConstant.of(fixedValue), TypeDescription.CLASS);
+    public static AssignerConfigurable value(TypeDescription type) {
+        return new ForPoolValue(ClassConstant.of(type), TypeDescription.ForLoadedType.of(Class.class));
     }
 
     /**
      * Returns the loaded version of the given {@link JavaConstant}. The value is loaded from the written class's constant pool.
      *
-     * @param fixedValue The type to return from the method.
+     * @param constant The type to return from the method.
      * @return An implementation for the given {@code value}.
      */
-    public static AssignerConfigurable value(JavaConstant fixedValue) {
-        return new ForPoolValue(fixedValue.asStackManipulation(), fixedValue.getType());
+    public static AssignerConfigurable value(JavaConstant constant) {
+        return new ForPoolValue(new JavaConstantValue(constant), constant.getTypeDescription());
     }
 
     /**
@@ -193,26 +217,26 @@ public abstract class FixedValue implements Implementation {
     /**
      * Blueprint method that for applying the actual implementation.
      *
-     * @param methodVisitor           The method visitor to which the implementation is applied to.
-     * @param implementationContext   The implementation context for the given implementation.
-     * @param instrumentedMethod      The instrumented method that is target of the implementation.
-     * @param fixedValueType          A description of the type of the fixed value that is loaded by the
-     *                                {@code valueLoadingInstruction}.
-     * @param valueLoadingInstruction A stack manipulation that represents the loading of the fixed value onto the
-     *                                operand stack.
+     * @param methodVisitor         The method visitor to which the implementation is applied to.
+     * @param implementationContext The implementation context for the given implementation.
+     * @param instrumentedMethod    The instrumented method that is target of the implementation.
+     * @param typeDescription       A description of the type of the fixed value that is loaded by the
+     *                              {@code valueLoadingInstruction}.
+     * @param stackManipulation     A stack manipulation that represents the loading of the fixed value onto the
+     *                              operand stack.
      * @return A representation of the stack and variable array sized that are required for this implementation.
      */
     protected ByteCodeAppender.Size apply(MethodVisitor methodVisitor,
                                           Context implementationContext,
                                           MethodDescription instrumentedMethod,
-                                          TypeDescription.Generic fixedValueType,
-                                          StackManipulation valueLoadingInstruction) {
-        StackManipulation assignment = assigner.assign(fixedValueType, instrumentedMethod.getReturnType(), typing);
+                                          TypeDescription.Generic typeDescription,
+                                          StackManipulation stackManipulation) {
+        StackManipulation assignment = assigner.assign(typeDescription, instrumentedMethod.getReturnType(), typing);
         if (!assignment.isValid()) {
-            throw new IllegalArgumentException("Cannot return value of type " + fixedValueType + " for " + instrumentedMethod);
+            throw new IllegalArgumentException("Cannot return value of type " + typeDescription + " for " + instrumentedMethod);
         }
         StackManipulation.Size stackSize = new StackManipulation.Compound(
-                valueLoadingInstruction,
+                stackManipulation,
                 assignment,
                 MethodReturn.of(instrumentedMethod.getReturnType())
         ).apply(methodVisitor, implementationContext);
@@ -246,17 +270,23 @@ public abstract class FixedValue implements Implementation {
          */
         INSTANCE;
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public ByteCodeAppender appender(Target implementationTarget) {
             return this;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public InstrumentedType prepare(InstrumentedType instrumentedType) {
             return instrumentedType;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Size apply(MethodVisitor methodVisitor, Context implementationContext, MethodDescription instrumentedMethod) {
             if (instrumentedMethod.getReturnType().isPrimitive()) {
                 throw new IllegalStateException("Cannot return null from " + instrumentedMethod);
@@ -290,17 +320,23 @@ public abstract class FixedValue implements Implementation {
             super(assigner, typing);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Implementation withAssigner(Assigner assigner, Assigner.Typing typing) {
             return new ForOriginType(assigner, typing);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public ByteCodeAppender appender(Target implementationTarget) {
             return new Appender(implementationTarget.getOriginType().asErasure());
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public InstrumentedType prepare(InstrumentedType instrumentedType) {
             return instrumentedType;
         }
@@ -308,6 +344,7 @@ public abstract class FixedValue implements Implementation {
         /**
          * An appender for writing the origin type.
          */
+        @HashCodeAndEqualsPlugin.Enhance(includeSyntheticFields = true)
         protected class Appender implements ByteCodeAppender {
 
             /**
@@ -324,36 +361,15 @@ public abstract class FixedValue implements Implementation {
                 this.originType = originType;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext, MethodDescription instrumentedMethod) {
                 return ForOriginType.this.apply(methodVisitor,
                         implementationContext,
                         instrumentedMethod,
-                        TypeDescription.CLASS.asGenericType(),
+                        TypeDescription.ForLoadedType.of(Class.class).asGenericType(),
                         ClassConstant.of(originType));
-            }
-
-            /**
-             * Returns the outer instance.
-             *
-             * @return The outer instance.
-             */
-            private ForOriginType getOuter() {
-                return ForOriginType.this;
-            }
-
-            @Override // HE: Remove when Lombok support for getOuter is added.
-            public boolean equals(Object o) {
-                if (this == o) return true;
-                if (o == null || getClass() != o.getClass()) return false;
-                Appender appender = (Appender) o;
-                return originType.equals(appender.originType)
-                        && getOuter().equals(appender.getOuter());
-            }
-
-            @Override // HE: Remove when Lombok support for getOuter is added.
-            public int hashCode() {
-                return 31 * getOuter().hashCode() + originType.hashCode();
             }
         }
     }
@@ -380,17 +396,23 @@ public abstract class FixedValue implements Implementation {
             super(assigner, typing);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public ByteCodeAppender appender(Target implementationTarget) {
             return new Appender(implementationTarget.getInstrumentedType());
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public InstrumentedType prepare(InstrumentedType instrumentedType) {
             return instrumentedType;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Implementation withAssigner(Assigner assigner, Assigner.Typing typing) {
             return new ForThisValue(assigner, typing);
         }
@@ -398,7 +420,7 @@ public abstract class FixedValue implements Implementation {
         /**
          * A byte code appender for returning {@code this}.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         protected static class Appender implements ByteCodeAppender {
 
             /**
@@ -415,7 +437,9 @@ public abstract class FixedValue implements Implementation {
                 this.instrumentedType = instrumentedType;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext, MethodDescription instrumentedMethod) {
                 if (instrumentedMethod.isStatic() || !instrumentedType.isAssignableTo(instrumentedMethod.getReturnType().asErasure())) {
                     throw new IllegalStateException("Cannot return 'this' from " + instrumentedMethod);
@@ -431,7 +455,7 @@ public abstract class FixedValue implements Implementation {
     /**
      * A fixed value implementation that returns a method's argument.
      */
-    @EqualsAndHashCode(callSuper = true)
+    @HashCodeAndEqualsPlugin.Enhance
     protected static class ForArgument extends FixedValue implements AssignerConfigurable, ByteCodeAppender {
 
         /**
@@ -461,7 +485,9 @@ public abstract class FixedValue implements Implementation {
             this.index = index;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Size apply(MethodVisitor methodVisitor, Context implementationContext, MethodDescription instrumentedMethod) {
             if (instrumentedMethod.getParameters().size() <= index) {
                 throw new IllegalStateException(instrumentedMethod + " does not define a parameter with index " + index);
@@ -478,17 +504,23 @@ public abstract class FixedValue implements Implementation {
             return new Size(stackManipulation.apply(methodVisitor, implementationContext).getMaximalSize(), instrumentedMethod.getStackSize());
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public ByteCodeAppender appender(Target implementationTarget) {
             return this;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public InstrumentedType prepare(InstrumentedType instrumentedType) {
             return instrumentedType;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Implementation withAssigner(Assigner assigner, Assigner.Typing typing) {
             return new ForArgument(assigner, typing, index);
         }
@@ -498,7 +530,7 @@ public abstract class FixedValue implements Implementation {
      * A fixed value implementation that represents its fixed value as a value that is written to the instrumented
      * class's constant pool.
      */
-    @EqualsAndHashCode(callSuper = true)
+    @HashCodeAndEqualsPlugin.Enhance
     protected static class ForPoolValue extends FixedValue implements AssignerConfigurable, ByteCodeAppender {
 
         /**
@@ -519,7 +551,7 @@ public abstract class FixedValue implements Implementation {
          * @param loadedType           A type description representing the loaded type.
          */
         protected ForPoolValue(StackManipulation valueLoadInstruction, Class<?> loadedType) {
-            this(valueLoadInstruction, new TypeDescription.ForLoadedType(loadedType));
+            this(valueLoadInstruction, TypeDescription.ForLoadedType.of(loadedType));
         }
 
         /**
@@ -549,22 +581,30 @@ public abstract class FixedValue implements Implementation {
             this.loadedType = loadedType;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Implementation withAssigner(Assigner assigner, Assigner.Typing typing) {
             return new ForPoolValue(assigner, typing, valueLoadInstruction, loadedType);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public InstrumentedType prepare(InstrumentedType instrumentedType) {
             return instrumentedType;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public ByteCodeAppender appender(Target implementationTarget) {
             return this;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Size apply(MethodVisitor methodVisitor, Context implementationContext, MethodDescription instrumentedMethod) {
             return apply(methodVisitor, implementationContext, instrumentedMethod, loadedType.asGenericType(), valueLoadInstruction);
         }
@@ -573,7 +613,7 @@ public abstract class FixedValue implements Implementation {
     /**
      * A fixed value implementation that represents its fixed value as a static field of the instrumented class.
      */
-    @EqualsAndHashCode(callSuper = true, exclude = "fieldType")
+    @HashCodeAndEqualsPlugin.Enhance
     protected static class ForValue extends FixedValue implements AssignerConfigurable {
 
         /**
@@ -584,7 +624,7 @@ public abstract class FixedValue implements Implementation {
         /**
          * The name of the field in which the fixed value is stored.
          */
-        private final String fieldName;
+        private final String name;
 
         /**
          * The value that is to be stored in the static field.
@@ -592,61 +632,49 @@ public abstract class FixedValue implements Implementation {
         private final Object value;
 
         /**
-         * The type if the field for storing the fixed value.
-         */
-        private final TypeDescription.Generic fieldType;
-
-        /**
-         * Creates a new static field fixed value implementation with a random name for the field containing the fixed
-         * value.
+         * Creates a new static field fixed value implementation.
          *
          * @param value The fixed value to be returned.
+         * @param name  The name of the field for storing the fixed value.
          */
-        protected ForValue(Object value) {
-            this(PREFIX + "$" + RandomString.hashOf(value.hashCode()), value);
+        protected ForValue(Object value, String name) {
+            this(Assigner.DEFAULT, Assigner.Typing.STATIC, value, name);
         }
 
         /**
          * Creates a new static field fixed value implementation.
          *
-         * @param fieldName The name of the field for storing the fixed value.
-         * @param value     The fixed value to be returned.
+         * @param value    The fixed value to be returned.
+         * @param name     The name of the field for storing the fixed value.
+         * @param assigner The assigner to use for assigning the fixed value to the return type of the
+         *                 instrumented value.
+         * @param typing   Indicates if dynamic type castings should be attempted for incompatible assignments.
          */
-        protected ForValue(String fieldName, Object value) {
-            this(Assigner.DEFAULT, Assigner.Typing.STATIC, fieldName, value);
-        }
-
-        /**
-         * Creates a new static field fixed value implementation.
-         *
-         * @param fieldName The name of the field for storing the fixed value.
-         * @param value     The fixed value to be returned.
-         * @param assigner  The assigner to use for assigning the fixed value to the return type of the
-         *                  instrumented value.
-         * @param typing    Indicates if dynamic type castings should be attempted for incompatible assignments.
-         */
-        private ForValue(Assigner assigner, Assigner.Typing typing, String fieldName, Object value) {
+        private ForValue(Assigner assigner, Assigner.Typing typing, Object value, String name) {
             super(assigner, typing);
-            this.fieldName = fieldName;
+            this.name = name;
             this.value = value;
-            fieldType = new TypeDescription.Generic.OfNonGenericType.ForLoadedType(value.getClass());
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Implementation withAssigner(Assigner assigner, Assigner.Typing typing) {
-            return new ForValue(assigner, typing, fieldName, value);
+            return new ForValue(assigner, typing, value, name);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public InstrumentedType prepare(InstrumentedType instrumentedType) {
-            return instrumentedType
-                    .withField(new FieldDescription.Token(fieldName,
-                            Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC | Opcodes.ACC_VOLATILE | Opcodes.ACC_SYNTHETIC,
-                            fieldType))
-                    .withInitializer(new LoadedTypeInitializer.ForStaticField(fieldName, value));
+            return instrumentedType.withAuxiliaryField(new FieldDescription.Token(name,
+                    Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC | Opcodes.ACC_VOLATILE | Opcodes.ACC_SYNTHETIC,
+                    TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(value.getClass())), value);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public ByteCodeAppender appender(Target implementationTarget) {
             return new StaticFieldByteCodeAppender(implementationTarget.getInstrumentedType());
         }
@@ -654,7 +682,7 @@ public abstract class FixedValue implements Implementation {
         /**
          * A byte code appender for returning the fixed value that was stored in a static field.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         private class StaticFieldByteCodeAppender implements ByteCodeAppender {
 
             /**
@@ -668,12 +696,18 @@ public abstract class FixedValue implements Implementation {
              * @param instrumentedType The instrumented type that is subject of the instrumentation.
              */
             private StaticFieldByteCodeAppender(TypeDescription instrumentedType) {
-                fieldGetAccess = FieldAccess.forField(instrumentedType.getDeclaredFields().filter((named(fieldName))).getOnly()).read();
+                fieldGetAccess = FieldAccess.forField(instrumentedType.getDeclaredFields().filter((named(name))).getOnly()).read();
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext, MethodDescription instrumentedMethod) {
-                return ForValue.this.apply(methodVisitor, implementationContext, instrumentedMethod, fieldType, fieldGetAccess);
+                return ForValue.this.apply(methodVisitor,
+                        implementationContext,
+                        instrumentedMethod,
+                        TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(value.getClass()),
+                        fieldGetAccess);
             }
         }
     }

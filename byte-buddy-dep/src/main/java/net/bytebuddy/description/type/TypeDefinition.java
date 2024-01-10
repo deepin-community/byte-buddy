@@ -1,12 +1,32 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.description.type;
 
+import net.bytebuddy.build.AccessControllerPlugin;
 import net.bytebuddy.description.ModifierReviewable;
 import net.bytebuddy.description.NamedElement;
 import net.bytebuddy.description.field.FieldList;
 import net.bytebuddy.description.method.MethodList;
 import net.bytebuddy.implementation.bytecode.StackSize;
+import net.bytebuddy.utility.dispatcher.JavaDispatcher;
+import net.bytebuddy.utility.nullability.MaybeNull;
+import net.bytebuddy.utility.nullability.UnknownNull;
 
 import java.lang.reflect.*;
+import java.security.PrivilegedAction;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 
@@ -56,6 +76,7 @@ public interface TypeDefinition extends NamedElement, ModifierReviewable.ForType
      *
      * @return The super class of this type or {@code null} if no super class exists for this type.
      */
+    @MaybeNull
     TypeDescription.Generic getSuperClass();
 
     /**
@@ -96,7 +117,16 @@ public interface TypeDefinition extends NamedElement, ModifierReviewable.ForType
      *
      * @return The component type of this type or {@code null} if this type does not represent an array type.
      */
+    @MaybeNull
     TypeDefinition getComponentType();
+
+    /**
+     * Returns the list of record components that are declared by this type. If this type is not
+     * a record, the returned list is empty.
+     *
+     * @return A list of record components that this type declares.
+     */
+    RecordComponentList<?> getRecordComponents();
 
     /**
      * Returns the sort of the generic type this instance represents.
@@ -128,6 +158,13 @@ public interface TypeDefinition extends NamedElement, ModifierReviewable.ForType
      * @return {@code true} if this type description represents an array.
      */
     boolean isArray();
+
+    /**
+     * Checks if this type is a Java record.
+     *
+     * @return {@code true} if this type is a Java record.
+     */
+    boolean isRecord();
 
     /**
      * Checks if the type described by this entity is a primitive type.
@@ -181,6 +218,23 @@ public interface TypeDefinition extends NamedElement, ModifierReviewable.ForType
         VARIABLE_SYMBOLIC;
 
         /**
+         * A dispatcher for interacting with {@code java.lang.reflect.AnnotatedType}.
+         */
+        private static final AnnotatedType ANNOTATED_TYPE = doPrivileged(JavaDispatcher.of(AnnotatedType.class));
+
+        /**
+         * A proxy for {@code java.security.AccessController#doPrivileged} that is activated if available.
+         *
+         * @param action The action to execute from a privileged context.
+         * @param <T>    The type of the action's resolved value.
+         * @return The action's resolved value.
+         */
+        @AccessControllerPlugin.Enhance
+        private static <T> T doPrivileged(PrivilegedAction<T> action) {
+            return action.run();
+        }
+
+        /**
          * Describes a loaded generic type as a {@link TypeDescription.Generic}.
          *
          * @param type The type to describe.
@@ -188,6 +242,19 @@ public interface TypeDefinition extends NamedElement, ModifierReviewable.ForType
          */
         public static TypeDescription.Generic describe(Type type) {
             return describe(type, TypeDescription.Generic.AnnotationReader.NoOp.INSTANCE);
+        }
+
+        /**
+         * Describes a loaded {@code java.lang.reflect.AnnotatedType} as a {@link TypeDescription.Generic}.
+         *
+         * @param annotatedType The {@code java.lang.reflect.AnnotatedType} to describe.
+         * @return A description of the provided generic type.
+         */
+        public static TypeDescription.Generic describeAnnotated(AnnotatedElement annotatedType) {
+            if (!ANNOTATED_TYPE.isInstance(annotatedType)) {
+                throw new IllegalArgumentException("Not an instance of AnnotatedType: " + annotatedType);
+            }
+            return describe(ANNOTATED_TYPE.getType(annotatedType), new TypeDescription.Generic.AnnotationReader.Delegator.Simple(annotatedType));
         }
 
         /**
@@ -258,6 +325,30 @@ public interface TypeDefinition extends NamedElement, ModifierReviewable.ForType
         public boolean isTypeVariable() {
             return this == VARIABLE || this == VARIABLE_SYMBOLIC;
         }
+
+        /**
+         * A proxy for interacting with {@code java.lang.reflect.AnnotatedType}.
+         */
+        @JavaDispatcher.Proxied("java.lang.reflect.AnnotatedType")
+        protected interface AnnotatedType {
+
+            /**
+             * Returns {@code true} if the supplied value is an instance of {@code java.lang.reflect.AnnotatedType}.
+             *
+             * @param value The instance to consider.
+             * @return {@code true} if the supplied instance is of type {@code java.lang.reflect.AnnotatedType}.
+             */
+            @JavaDispatcher.Instance
+            boolean isInstance(AnnotatedElement value);
+
+            /**
+             * Resolves the supplied {@code java.lang.reflect.AnnotatedType}'s type.
+             *
+             * @param value The {@code java.lang.reflect.AnnotatedType} to resolve.
+             * @return The annotated type's type.
+             */
+            Type getType(AnnotatedElement value);
+        }
     }
 
     /**
@@ -268,6 +359,7 @@ public interface TypeDefinition extends NamedElement, ModifierReviewable.ForType
         /**
          * The next class to represent.
          */
+        @UnknownNull
         private TypeDefinition nextClass;
 
         /**
@@ -279,12 +371,16 @@ public interface TypeDefinition extends NamedElement, ModifierReviewable.ForType
             nextClass = initialType;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public boolean hasNext() {
             return nextClass != null;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public TypeDefinition next() {
             if (!hasNext()) {
                 throw new NoSuchElementException("End of type hierarchy");
@@ -296,7 +392,9 @@ public interface TypeDefinition extends NamedElement, ModifierReviewable.ForType
             }
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public void remove() {
             throw new UnsupportedOperationException("remove");
         }

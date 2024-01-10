@@ -5,8 +5,6 @@ import net.bytebuddy.description.annotation.AnnotationList;
 import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.method.ParameterDescription;
 import net.bytebuddy.description.method.ParameterList;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
-import net.bytebuddy.utility.RandomString;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.Mock;
@@ -16,6 +14,7 @@ import java.lang.annotation.Annotation;
 
 import static org.hamcrest.CoreMatchers.sameInstance;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.*;
 
 public class MethodAttributeAppenderExplicitTest extends AbstractMethodAttributeAppenderTest {
@@ -29,6 +28,7 @@ public class MethodAttributeAppenderExplicitTest extends AbstractMethodAttribute
     private ParameterDescription parameterDescription;
 
     @Before
+    @Override
     @SuppressWarnings("unchecked")
     public void setUp() throws Exception {
         super.setUp();
@@ -40,8 +40,8 @@ public class MethodAttributeAppenderExplicitTest extends AbstractMethodAttribute
     public void testAnnotationAppenderNoRetention() throws Exception {
         new MethodAttributeAppender.Explicit(new AnnotationList.ForLoadedAnnotations(new Qux.Instance()))
                 .apply(methodVisitor, methodDescription, annotationValueFilter);
-        verifyZeroInteractions(methodVisitor);
-        verifyZeroInteractions(methodDescription);
+        verifyNoMoreInteractions(methodVisitor);
+        verifyNoMoreInteractions(methodDescription);
     }
 
     @Test
@@ -50,7 +50,7 @@ public class MethodAttributeAppenderExplicitTest extends AbstractMethodAttribute
                 .apply(methodVisitor, methodDescription, annotationValueFilter);
         verify(methodVisitor).visitAnnotation(Type.getDescriptor(Baz.class), true);
         verifyNoMoreInteractions(methodVisitor);
-        verifyZeroInteractions(methodDescription);
+        verifyNoMoreInteractions(methodDescription);
     }
 
     @Test
@@ -59,14 +59,14 @@ public class MethodAttributeAppenderExplicitTest extends AbstractMethodAttribute
                 .apply(methodVisitor, methodDescription, annotationValueFilter);
         verify(methodVisitor).visitAnnotation(Type.getDescriptor(QuxBaz.class), false);
         verifyNoMoreInteractions(methodVisitor);
-        verifyZeroInteractions(methodDescription);
+        verifyNoMoreInteractions(methodDescription);
     }
 
     @Test
     public void testAnnotationAppenderForParameterNoRetention() throws Exception {
         new MethodAttributeAppender.Explicit(PARAMETER_INDEX, new AnnotationList.ForLoadedAnnotations(new Qux.Instance()))
                 .apply(methodVisitor, methodDescription, annotationValueFilter);
-        verifyZeroInteractions(methodVisitor);
+        verifyNoMoreInteractions(methodVisitor);
         verify(methodDescription).getParameters();
         verifyNoMoreInteractions(methodDescription);
     }
@@ -101,7 +101,7 @@ public class MethodAttributeAppenderExplicitTest extends AbstractMethodAttribute
     public void testFactory() throws Exception {
         MethodAttributeAppender.Explicit methodAttributeAppender = new MethodAttributeAppender.Explicit(new AnnotationList.ForLoadedAnnotations(new Qux.Instance()));
         assertThat(methodAttributeAppender.make(instrumentedType), sameInstance((MethodAttributeAppender) methodAttributeAppender));
-        verifyZeroInteractions(instrumentedType);
+        verifyNoMoreInteractions(instrumentedType);
     }
 
     @Test
@@ -119,19 +119,41 @@ public class MethodAttributeAppenderExplicitTest extends AbstractMethodAttribute
         verify(parameterDescription).getIndex();
         verify(parameterDescription).getDeclaredAnnotations();
         verifyNoMoreInteractions(parameterDescription);
-        verifyZeroInteractions(instrumentedType);
+        verifyNoMoreInteractions(instrumentedType);
     }
 
     @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(MethodAttributeAppender.Explicit.class).create(new ObjectPropertyAssertion.Creator<Annotation>() {
-            @Override
-            public Annotation create() {
-                return new SimpleAnnotation.Instance(RandomString.make());
-            }
-        }).apply();
-        ObjectPropertyAssertion.of(MethodAttributeAppender.Explicit.Target.OnMethod.class).apply();
-        ObjectPropertyAssertion.of(MethodAttributeAppender.Explicit.Target.OnMethodParameter.class).apply();
+    public void testOfMethodAnnotations() throws Exception {
+        when(methodDescription.getDeclaredAnnotations()).thenReturn(new AnnotationList.ForLoadedAnnotations(new Baz.Instance()));
+        when(parameterDescription.getDeclaredAnnotations()).thenReturn(new AnnotationList.ForLoadedAnnotations(new Baz.Instance()));
+        MethodAttributeAppender methodAttributeAppender = MethodAttributeAppender.Explicit.ofMethodAnnotations(methodDescription).make(instrumentedType);
+        methodAttributeAppender.apply(methodVisitor, methodDescription, annotationValueFilter);
+        verify(methodVisitor).visitAnnotation(Type.getDescriptor(Baz.class), true);
+        verify(methodVisitor, times(0)).visitParameterAnnotation(anyInt(), anyString(), anyBoolean());
+        verifyNoMoreInteractions(methodVisitor);
+        verify(methodDescription, times(0)).getParameters();
+        verify(methodDescription).getDeclaredAnnotations();
+        verifyNoMoreInteractions(methodDescription);
+        verifyNoMoreInteractions(parameterDescription);
+        verifyNoMoreInteractions(instrumentedType);
+    }
+
+    @Test
+    public void testOfParameterAnnotations() throws Exception {
+        when(methodDescription.getDeclaredAnnotations()).thenReturn(new AnnotationList.ForLoadedAnnotations(new Baz.Instance()));
+        when(parameterDescription.getDeclaredAnnotations()).thenReturn(new AnnotationList.ForLoadedAnnotations(new Baz.Instance()));
+        MethodAttributeAppender methodAttributeAppender = MethodAttributeAppender.Explicit.ofParameterAnnotations(methodDescription).make(instrumentedType);
+        methodAttributeAppender.apply(methodVisitor, methodDescription, annotationValueFilter);
+        verify(methodVisitor, times(0)).visitAnnotation(anyString(), anyBoolean());
+        verify(methodVisitor).visitParameterAnnotation(PARAMETER_INDEX, Type.getDescriptor(Baz.class), true);
+        verifyNoMoreInteractions(methodVisitor);
+        verify(methodDescription, times(2)).getParameters();
+        verify(methodDescription, times(0)).getDeclaredAnnotations();
+        verifyNoMoreInteractions(methodDescription);
+        verify(parameterDescription).getIndex();
+        verify(parameterDescription).getDeclaredAnnotations();
+        verifyNoMoreInteractions(parameterDescription);
+        verifyNoMoreInteractions(instrumentedType);
     }
 
     public @interface SimpleAnnotation {
@@ -146,12 +168,10 @@ public class MethodAttributeAppenderExplicitTest extends AbstractMethodAttribute
                 this.value = value;
             }
 
-            @Override
             public String value() {
                 return value;
             }
 
-            @Override
             public Class<? extends Annotation> annotationType() {
                 return SimpleAnnotation.class;
             }

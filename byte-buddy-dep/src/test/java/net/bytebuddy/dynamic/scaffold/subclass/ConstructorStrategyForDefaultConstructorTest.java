@@ -1,7 +1,6 @@
 package net.bytebuddy.dynamic.scaffold.subclass;
 
 import net.bytebuddy.description.ByteCodeElement;
-import net.bytebuddy.description.annotation.AnnotationDescription;
 import net.bytebuddy.description.annotation.AnnotationList;
 import net.bytebuddy.description.annotation.AnnotationValue;
 import net.bytebuddy.description.method.MethodDescription;
@@ -17,13 +16,12 @@ import net.bytebuddy.dynamic.scaffold.MethodRegistry;
 import net.bytebuddy.implementation.attribute.MethodAttributeAppender;
 import net.bytebuddy.matcher.ElementMatchers;
 import net.bytebuddy.matcher.LatentMatcher;
-import net.bytebuddy.test.utility.MockitoRule;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 import org.objectweb.asm.Opcodes;
 
 import java.util.Collections;
@@ -39,7 +37,7 @@ public class ConstructorStrategyForDefaultConstructorTest {
     private static final int MODIFIERS = 42;
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     @Mock
     private MethodRegistry methodRegistry;
@@ -59,10 +57,8 @@ public class ConstructorStrategyForDefaultConstructorTest {
     @Mock
     private AnnotationValue<?, ?> defaultValue;
 
-    private MethodDescription.Token stripped;
-
     @Before
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings({"unchecked", "cast"})
     public void setUp() throws Exception {
         when(methodRegistry.append(any(LatentMatcher.class),
                 any(MethodRegistry.Handler.class),
@@ -82,19 +78,10 @@ public class ConstructorStrategyForDefaultConstructorTest {
         when(token.getAnnotations()).thenReturn(new AnnotationList.Empty());
         when(token.getDefaultValue()).thenReturn((AnnotationValue) defaultValue);
         when(token.getReceiverType()).thenReturn(typeDescription);
-        stripped = new MethodDescription.Token(FOO,
-                MODIFIERS,
-                Collections.<TypeVariableToken>emptyList(),
-                typeDescription,
-                Collections.<ParameterDescription.Token>emptyList(),
-                Collections.<TypeDescription.Generic>emptyList(),
-                Collections.<AnnotationDescription>emptyList(),
-                defaultValue,
-                TypeDescription.Generic.UNDEFINED);
     }
 
     @Test
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings({"unchecked", "rawtypes"})
     public void testSingleConstructorsStrategy() throws Exception {
         assertThat(new ConstructorStrategy.ForDefaultConstructor().extractConstructors(instrumentedType),
                 is(Collections.singletonList(new MethodDescription.Token(Opcodes.ACC_PUBLIC))));
@@ -103,38 +90,33 @@ public class ConstructorStrategyForDefaultConstructorTest {
     }
 
     @Test(expected = IllegalStateException.class)
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings({"unchecked", "rawtypes"})
     public void testSingleConstructorsStrategyNoSuperConstuctorExtract() throws Exception {
-        TypeDescription noConstuctor = mock(TypeDescription.class);
-        TypeDescription.Generic noConstuctorSuper = mock(TypeDescription.Generic.class);
-        when(noConstuctor.getSuperClass()).thenReturn(noConstuctorSuper);
-        when(noConstuctorSuper.getDeclaredMethods()).thenReturn(new MethodList.Empty());
-        new ConstructorStrategy.ForDefaultConstructor().extractConstructors(noConstuctor);
+        TypeDescription noConstructor = mock(TypeDescription.class);
+        TypeDescription.Generic noConstructorSuper = mock(TypeDescription.Generic.class);
+        when(noConstructor.getSuperClass()).thenReturn(noConstructorSuper);
+        when(noConstructorSuper.getDeclaredMethods()).thenReturn(new MethodList.Empty());
+        new ConstructorStrategy.ForDefaultConstructor().extractConstructors(noConstructor);
     }
 
     @Test(expected = IllegalStateException.class)
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings({"unchecked", "rawtypes"})
     public void testSingleConstructorsStrategyNoSuperConstuctorInject() throws Exception {
-        TypeDescription noConstuctor = mock(TypeDescription.class);
-        TypeDescription.Generic noConstuctorSuper = mock(TypeDescription.Generic.class);
-        when(noConstuctor.getSuperClass()).thenReturn(noConstuctorSuper);
-        when(noConstuctorSuper.getDeclaredMethods()).thenReturn(new MethodList.Empty());
-        new ConstructorStrategy.ForDefaultConstructor().inject(noConstuctor, methodRegistry);
+        TypeDescription noConstructor = mock(TypeDescription.class);
+        TypeDescription.Generic noConstructorSuper = mock(TypeDescription.Generic.class);
+        when(noConstructor.getSuperClass()).thenReturn(noConstructorSuper);
+        when(noConstructorSuper.getDeclaredMethods()).thenReturn(new MethodList.Empty());
+        new ConstructorStrategy.ForDefaultConstructor().inject(noConstructor, methodRegistry);
     }
 
     @Test(expected = IllegalStateException.class)
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings({"unchecked", "rawtypes"})
     public void testSingleConstructorsStrategyMultipleSuperConstuctorInject() throws Exception {
-        TypeDescription noConstuctor = mock(TypeDescription.class);
-        TypeDescription.Generic noConstuctorSuper = mock(TypeDescription.Generic.class);
-        when(noConstuctor.getSuperClass()).thenReturn(noConstuctorSuper);
-        when(noConstuctorSuper.getDeclaredMethods()).thenReturn(new MethodList.Explicit(methodDescription, methodDescription));
+        TypeDescription noConstructor = mock(TypeDescription.class);
+        TypeDescription.Generic noConstructorSuper = mock(TypeDescription.Generic.class);
+        when(noConstructor.getSuperClass()).thenReturn(noConstructorSuper);
+        when(noConstructorSuper.getDeclaredMethods()).thenReturn(new MethodList.Explicit(methodDescription, methodDescription));
         when(methodDescription.getParameters()).thenReturn(new ParameterList.Empty());
-        new ConstructorStrategy.ForDefaultConstructor().inject(noConstuctor, methodRegistry);
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(ConstructorStrategy.ForDefaultConstructor.class).apply();
+        new ConstructorStrategy.ForDefaultConstructor().inject(noConstructor, methodRegistry);
     }
 }

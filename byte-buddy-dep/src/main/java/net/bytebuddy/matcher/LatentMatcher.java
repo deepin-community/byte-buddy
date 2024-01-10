@@ -1,8 +1,24 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.matcher;
 
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.field.FieldDescription;
 import net.bytebuddy.description.method.MethodDescription;
+import net.bytebuddy.description.type.RecordComponentDescription;
 import net.bytebuddy.description.type.TypeDescription;
 
 import java.util.Arrays;
@@ -54,7 +70,9 @@ public interface LatentMatcher<T> {
             this.inverted = inverted;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         @SuppressWarnings("unchecked")
         public ElementMatcher<? super MethodDescription> resolve(TypeDescription typeDescription) {
             // Casting is required by some Java 6 compilers.
@@ -69,7 +87,7 @@ public interface LatentMatcher<T> {
      *
      * @param <S> The type of the matched element.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class Resolved<S> implements LatentMatcher<S> {
 
         /**
@@ -86,7 +104,9 @@ public interface LatentMatcher<T> {
             this.matcher = matcher;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public ElementMatcher<? super S> resolve(TypeDescription typeDescription) {
             return matcher;
         }
@@ -95,7 +115,7 @@ public interface LatentMatcher<T> {
     /**
      * A latent matcher where the field token is being attached to the supplied type description before matching.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class ForFieldToken implements LatentMatcher<FieldDescription> {
 
         /**
@@ -112,7 +132,9 @@ public interface LatentMatcher<T> {
             this.token = token;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public ElementMatcher<? super FieldDescription> resolve(TypeDescription typeDescription) {
             return new ResolvedMatcher(token.asSignatureToken(typeDescription));
         }
@@ -120,8 +142,8 @@ public interface LatentMatcher<T> {
         /**
          * A resolved matcher of a latent field matcher for a field token.
          */
-        @EqualsAndHashCode
-        protected static class ResolvedMatcher implements ElementMatcher<FieldDescription> {
+        @HashCodeAndEqualsPlugin.Enhance
+        protected static class ResolvedMatcher extends ElementMatcher.Junction.ForNonNullValues<FieldDescription> {
 
             /**
              * The signature token representing the matched field.
@@ -137,8 +159,10 @@ public interface LatentMatcher<T> {
                 this.signatureToken = signatureToken;
             }
 
-            @Override
-            public boolean matches(FieldDescription target) {
+            /**
+             * {@inheritDoc}
+             */
+            protected boolean doMatch(FieldDescription target) {
                 return target.asSignatureToken().equals(signatureToken);
             }
         }
@@ -147,7 +171,7 @@ public interface LatentMatcher<T> {
     /**
      * A latent matcher where the method token is being attached to the supplied type description before matching.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class ForMethodToken implements LatentMatcher<MethodDescription> {
 
         /**
@@ -164,7 +188,9 @@ public interface LatentMatcher<T> {
             this.token = token;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public ElementMatcher<? super MethodDescription> resolve(TypeDescription typeDescription) {
             return new ResolvedMatcher(token.asSignatureToken(typeDescription));
         }
@@ -172,8 +198,8 @@ public interface LatentMatcher<T> {
         /**
          * A resolved matcher of a latent method matcher for a method token.
          */
-        @EqualsAndHashCode
-        protected static class ResolvedMatcher implements ElementMatcher<MethodDescription> {
+        @HashCodeAndEqualsPlugin.Enhance
+        protected static class ResolvedMatcher extends ElementMatcher.Junction.ForNonNullValues<MethodDescription> {
 
             /**
              * The signature token representing the matched field.
@@ -189,10 +215,40 @@ public interface LatentMatcher<T> {
                 this.signatureToken = signatureToken;
             }
 
-            @Override
-            public boolean matches(MethodDescription target) {
+            /**
+             * {@inheritDoc}
+             */
+            public boolean doMatch(MethodDescription target) {
                 return target.asSignatureToken().equals(signatureToken);
             }
+        }
+    }
+
+    /**
+     * A latent matcher for a record component token.
+     */
+    @HashCodeAndEqualsPlugin.Enhance
+    class ForRecordComponentToken implements LatentMatcher<RecordComponentDescription> {
+
+        /**
+         * The token being matched.
+         */
+        private final RecordComponentDescription.Token token;
+
+        /**
+         * Creates a latent matcher for a record component token.
+         *
+         * @param token The token being matched.
+         */
+        public ForRecordComponentToken(RecordComponentDescription.Token token) {
+            this.token = token;
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public ElementMatcher<? super RecordComponentDescription> resolve(TypeDescription typeDescription) {
+            return ElementMatchers.<RecordComponentDescription>named(token.getName());
         }
     }
 
@@ -201,7 +257,7 @@ public interface LatentMatcher<T> {
      *
      * @param <S> The type of the matched element.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class Conjunction<S> implements LatentMatcher<S> {
 
         /**
@@ -214,7 +270,7 @@ public interface LatentMatcher<T> {
          *
          * @param matcher The matchers this conjunction represents.
          */
-        @SuppressWarnings("unchecked") // In absence of @SafeVarargs for Java 6
+        @SuppressWarnings("unchecked") // In absence of @SafeVarargs
         public Conjunction(LatentMatcher<? super S>... matcher) {
             this(Arrays.asList(matcher));
         }
@@ -228,7 +284,9 @@ public interface LatentMatcher<T> {
             this.matchers = matchers;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public ElementMatcher<? super S> resolve(TypeDescription typeDescription) {
             ElementMatcher.Junction<S> matcher = any();
             for (LatentMatcher<? super S> latentMatcher : matchers) {
@@ -243,7 +301,7 @@ public interface LatentMatcher<T> {
      *
      * @param <S> The type of the matched element.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class Disjunction<S> implements LatentMatcher<S> {
 
         /**
@@ -256,7 +314,7 @@ public interface LatentMatcher<T> {
          *
          * @param matcher The matchers this disjunction represents.
          */
-        @SuppressWarnings("unchecked") // In absence of @SafeVarargs for Java 6
+        @SuppressWarnings("unchecked") // In absence of @SafeVarargs
         public Disjunction(LatentMatcher<? super S>... matcher) {
             this(Arrays.asList(matcher));
         }
@@ -270,7 +328,9 @@ public interface LatentMatcher<T> {
             this.matchers = matchers;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public ElementMatcher<? super S> resolve(TypeDescription typeDescription) {
             ElementMatcher.Junction<S> matcher = none();
             for (LatentMatcher<? super S> latentMatcher : matchers) {

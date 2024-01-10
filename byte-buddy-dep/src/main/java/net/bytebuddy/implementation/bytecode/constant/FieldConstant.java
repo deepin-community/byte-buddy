@@ -1,6 +1,20 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation.bytecode.constant;
 
-import lombok.EqualsAndHashCode;
 import net.bytebuddy.description.field.FieldDescription;
 import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.type.TypeDescription;
@@ -8,6 +22,7 @@ import net.bytebuddy.implementation.Implementation;
 import net.bytebuddy.implementation.bytecode.StackManipulation;
 import net.bytebuddy.implementation.bytecode.member.FieldAccess;
 import net.bytebuddy.implementation.bytecode.member.MethodInvocation;
+import net.bytebuddy.utility.nullability.MaybeNull;
 import org.objectweb.asm.MethodVisitor;
 
 import java.lang.reflect.Field;
@@ -15,8 +30,7 @@ import java.lang.reflect.Field;
 /**
  * Represents a {@link Field} constant for a given type.
  */
-@EqualsAndHashCode
-public class FieldConstant implements StackManipulation {
+public class FieldConstant extends StackManipulation.AbstractBase {
 
     /**
      * The field to be represent as a {@link Field}.
@@ -41,12 +55,9 @@ public class FieldConstant implements StackManipulation {
         return new Cached(this);
     }
 
-    @Override
-    public boolean isValid() {
-        return true;
-    }
-
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext) {
         try {
             return new Compound(
@@ -59,10 +70,25 @@ public class FieldConstant implements StackManipulation {
         }
     }
 
+    @Override
+    public int hashCode() {
+        return fieldDescription.hashCode();
+    }
+
+    @Override
+    public boolean equals(@MaybeNull Object other) {
+        if (this == other) {
+            return true;
+        } else if (other == null || getClass() != other.getClass()) {
+            return false;
+        }
+        FieldConstant fieldConstant = (FieldConstant) other;
+        return fieldDescription.equals(fieldConstant.fieldDescription);
+    }
+
     /**
      * A cached version of a {@link FieldConstant}.
      */
-    @EqualsAndHashCode
     protected static class Cached implements StackManipulation {
 
         /**
@@ -79,16 +105,36 @@ public class FieldConstant implements StackManipulation {
             this.fieldConstant = fieldConstant;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public boolean isValid() {
             return fieldConstant.isValid();
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext) {
-            return FieldAccess.forField(implementationContext.cache(fieldConstant, new TypeDescription.ForLoadedType(Field.class)))
+            return FieldAccess.forField(implementationContext.cache(fieldConstant, TypeDescription.ForLoadedType.of(Field.class)))
                     .read()
                     .apply(methodVisitor, implementationContext);
+        }
+
+        @Override
+        public int hashCode() {
+            return fieldConstant.hashCode();
+        }
+
+        @Override
+        public boolean equals(@MaybeNull Object other) {
+            if (this == other) {
+                return true;
+            } else if (other == null || getClass() != other.getClass()) {
+                return false;
+            }
+            Cached cached = (Cached) other;
+            return fieldConstant.equals(cached.fieldConstant);
         }
     }
 }

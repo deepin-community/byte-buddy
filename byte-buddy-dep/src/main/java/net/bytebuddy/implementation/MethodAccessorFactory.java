@@ -1,3 +1,18 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation;
 
 import net.bytebuddy.description.field.FieldDescription;
@@ -96,17 +111,23 @@ public interface MethodAccessorFactory {
          */
         INSTANCE;
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public MethodDescription.InDefinedShape registerAccessorFor(Implementation.SpecialMethodInvocation specialMethodInvocation, AccessType accessType) {
             throw new IllegalStateException("It is illegal to register an accessor for this type");
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public MethodDescription.InDefinedShape registerGetterFor(FieldDescription fieldDescription, AccessType accessType) {
             throw new IllegalStateException("It is illegal to register a field getter for this type");
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public MethodDescription.InDefinedShape registerSetterFor(FieldDescription fieldDescription, AccessType accessType) {
             throw new IllegalStateException("It is illegal to register a field setter for this type");
         }

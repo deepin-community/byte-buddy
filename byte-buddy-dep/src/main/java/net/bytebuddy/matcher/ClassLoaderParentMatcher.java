@@ -1,18 +1,36 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.matcher;
 
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
+import net.bytebuddy.utility.nullability.MaybeNull;
 
 /**
  * An element matcher that matches a class loader for being a parent of the given class loader.
  *
  * @param <T> The exact type of the class loader that is matched.
  */
-@EqualsAndHashCode(callSuper = false)
+@HashCodeAndEqualsPlugin.Enhance
 public class ClassLoaderParentMatcher<T extends ClassLoader> extends ElementMatcher.Junction.AbstractBase<T> {
 
     /**
      * The class loader that is matched for being a child of the matched class loader.
      */
+    @MaybeNull
+    @HashCodeAndEqualsPlugin.ValueHandling(HashCodeAndEqualsPlugin.ValueHandling.Sort.REVERSE_NULLABILITY)
     private final ClassLoader classLoader;
 
     /**
@@ -20,12 +38,14 @@ public class ClassLoaderParentMatcher<T extends ClassLoader> extends ElementMatc
      *
      * @param classLoader The class loader that is matched for being a child of the matched class loader.
      */
-    public ClassLoaderParentMatcher(ClassLoader classLoader) {
+    public ClassLoaderParentMatcher(@MaybeNull ClassLoader classLoader) {
         this.classLoader = classLoader;
     }
 
-    @Override
-    public boolean matches(T target) {
+    /**
+     * {@inheritDoc}
+     */
+    public boolean matches(@MaybeNull T target) {
         ClassLoader current = classLoader;
         while (current != null) {
             if (current == target) {

@@ -1,6 +1,21 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation.attribute;
 
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.annotation.AnnotationDescription;
 import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.method.ParameterDescription;
@@ -40,12 +55,16 @@ public interface MethodAttributeAppender {
          */
         INSTANCE;
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public MethodAttributeAppender make(TypeDescription typeDescription) {
             return this;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public void apply(MethodVisitor methodVisitor, MethodDescription methodDescription, AnnotationValueFilter annotationValueFilter) {
             /* do nothing */
         }
@@ -68,7 +87,7 @@ public interface MethodAttributeAppender {
          * A method attribute appender factory that combines several method attribute appender factories to be
          * represented as a single factory.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class Compound implements Factory {
 
             /**
@@ -101,7 +120,9 @@ public interface MethodAttributeAppender {
                 }
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public MethodAttributeAppender make(TypeDescription typeDescription) {
                 List<MethodAttributeAppender> methodAttributeAppenders = new ArrayList<MethodAttributeAppender>(factories.size());
                 for (Factory factory : factories) {
@@ -160,12 +181,16 @@ public interface MethodAttributeAppender {
             }
         };
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public MethodAttributeAppender make(TypeDescription typeDescription) {
             return this;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public void apply(MethodVisitor methodVisitor, MethodDescription methodDescription, AnnotationValueFilter annotationValueFilter) {
             AnnotationAppender annotationAppender = new AnnotationAppender.Default(new AnnotationAppender.Target.OnMethod(methodVisitor));
             annotationAppender = methodDescription.getReturnType().accept(AnnotationAppender.ForTypeAnnotations.ofMethodReturnType(annotationAppender,
@@ -213,7 +238,7 @@ public interface MethodAttributeAppender {
      * Appends an annotation to a method or method parameter. The visibility of the annotation is determined by the
      * annotation type's {@link java.lang.annotation.RetentionPolicy} annotation.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class Explicit implements MethodAttributeAppender, Factory {
 
         /**
@@ -264,21 +289,45 @@ public interface MethodAttributeAppender {
          * @return A method attribute appender factory for an appender that writes all annotations of the supplied method.
          */
         public static Factory of(MethodDescription methodDescription) {
-            ParameterList<?> parameters = methodDescription.getParameters();
-            List<MethodAttributeAppender.Factory> methodAttributeAppenders = new ArrayList<MethodAttributeAppender.Factory>(parameters.size() + 1);
-            methodAttributeAppenders.add(new Explicit(methodDescription.getDeclaredAnnotations()));
-            for (ParameterDescription parameter : parameters) {
-                methodAttributeAppenders.add(new Explicit(parameter.getIndex(), parameter.getDeclaredAnnotations()));
-            }
-            return new Factory.Compound(methodAttributeAppenders);
+            return new Factory.Compound(ofMethodAnnotations(methodDescription), ofParameterAnnotations(methodDescription));
         }
 
-        @Override
+        /**
+         * Creates a method attribute appender factory that writes all method annotations that are defined on the given method.
+         *
+         * @param methodDescription The method from which to extract the method annotations.
+         * @return A method attribute appender factory for an appender that writes all method annotations of the supplied method.
+         */
+        public static Factory ofMethodAnnotations(MethodDescription methodDescription) {
+            return new Explicit(methodDescription.getDeclaredAnnotations());
+        }
+
+        /**
+         * Creates a method attribute appender factory that writes all annotations that are defined for every parameter
+         * of the given method.
+         *
+         * @param methodDescription The method from which to extract the parameter annotations.
+         * @return A method attribute appender factory for an appender that writes all parameter annotations of the supplied method.
+         */
+        public static Factory ofParameterAnnotations(MethodDescription methodDescription) {
+            ParameterList<?> parameters = methodDescription.getParameters();
+            List<MethodAttributeAppender.Factory> factories = new ArrayList<MethodAttributeAppender.Factory>(parameters.size());
+            for (ParameterDescription parameter : parameters) {
+                factories.add(new Explicit(parameter.getIndex(), parameter.getDeclaredAnnotations()));
+            }
+            return new Factory.Compound(factories);
+        }
+
+        /**
+         * {@inheritDoc}
+         */
         public MethodAttributeAppender make(TypeDescription typeDescription) {
             return this;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public void apply(MethodVisitor methodVisitor, MethodDescription methodDescription, AnnotationValueFilter annotationValueFilter) {
             AnnotationAppender appender = new AnnotationAppender.Default(target.make(methodVisitor, methodDescription));
             for (AnnotationDescription annotation : annotations) {
@@ -312,7 +361,9 @@ public interface MethodAttributeAppender {
                  */
                 INSTANCE;
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public AnnotationAppender.Target make(MethodVisitor methodVisitor, MethodDescription methodDescription) {
                     return new AnnotationAppender.Target.OnMethod(methodVisitor);
                 }
@@ -321,7 +372,7 @@ public interface MethodAttributeAppender {
             /**
              * A method attribute appender target for writing annotations onto a given method parameter.
              */
-            @EqualsAndHashCode
+            @HashCodeAndEqualsPlugin.Enhance
             class OnMethodParameter implements Target {
 
                 /**
@@ -338,7 +389,9 @@ public interface MethodAttributeAppender {
                     this.parameterIndex = parameterIndex;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public AnnotationAppender.Target make(MethodVisitor methodVisitor, MethodDescription methodDescription) {
                     if (parameterIndex >= methodDescription.getParameters().size()) {
                         throw new IllegalArgumentException("Method " + methodDescription + " has less then " + parameterIndex + " parameters");
@@ -352,7 +405,7 @@ public interface MethodAttributeAppender {
     /**
      * A method attribute appender that writes a receiver type.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class ForReceiverType implements MethodAttributeAppender, Factory {
 
         /**
@@ -369,12 +422,16 @@ public interface MethodAttributeAppender {
             this.receiverType = receiverType;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public MethodAttributeAppender make(TypeDescription typeDescription) {
             return this;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public void apply(MethodVisitor methodVisitor, MethodDescription methodDescription, AnnotationValueFilter annotationValueFilter) {
             receiverType.accept(AnnotationAppender.ForTypeAnnotations.ofReceiverType(new AnnotationAppender.Default(new AnnotationAppender.Target.OnMethod(methodVisitor)), annotationValueFilter));
         }
@@ -384,7 +441,7 @@ public interface MethodAttributeAppender {
      * A method attribute appender that combines several method attribute appenders to be represented as a single
      * method attribute appender.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class Compound implements MethodAttributeAppender {
 
         /**
@@ -419,7 +476,9 @@ public interface MethodAttributeAppender {
             }
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public void apply(MethodVisitor methodVisitor, MethodDescription methodDescription, AnnotationValueFilter annotationValueFilter) {
             for (MethodAttributeAppender methodAttributeAppender : methodAttributeAppenders) {
                 methodAttributeAppender.apply(methodVisitor, methodDescription, annotationValueFilter);

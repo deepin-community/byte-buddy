@@ -1,3 +1,18 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.matcher;
 
 import net.bytebuddy.description.ByteCodeElement;
@@ -15,17 +30,17 @@ import net.bytebuddy.description.method.ParameterList;
 import net.bytebuddy.description.type.TypeDefinition;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.description.type.TypeList;
+import net.bytebuddy.dynamic.loading.ClassLoadingStrategy;
 import net.bytebuddy.utility.JavaModule;
+import net.bytebuddy.utility.nullability.MaybeNull;
 
 import java.lang.annotation.Annotation;
+import java.lang.annotation.ElementType;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Type;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
@@ -35,15 +50,10 @@ import java.util.concurrent.ConcurrentMap;
 public final class ElementMatchers {
 
     /**
-     * A readable reference to the bootstrap class loader which is represented by {@code null}.
-     */
-    private static final ClassLoader BOOTSTRAP_CLASSLOADER = null;
-
-    /**
      * A private constructor that must not be invoked.
      */
     private ElementMatchers() {
-        throw new UnsupportedOperationException();
+        throw new UnsupportedOperationException("This class is a utility class and not supposed to be instantiated");
     }
 
     /**
@@ -108,9 +118,9 @@ public final class ElementMatchers {
      * @param <T>   The type of the matched object.
      * @return A matcher that matches an exact value.
      */
-    public static <T> ElementMatcher.Junction<T> is(Object value) {
+    public static <T> ElementMatcher.Junction<T> is(@MaybeNull Object value) {
         return value == null
-                ? new NullMatcher<T>()
+                ? NullMatcher.<T>make()
                 : new EqualityMatcher<T>(value);
     }
 
@@ -242,7 +252,7 @@ public final class ElementMatchers {
      * @return A matcher for a {@code mandated} parameter.
      */
     public static <T extends ParameterDescription> ElementMatcher.Junction<T> isMandated() {
-        return new ModifierMatcher<T>(ModifierMatcher.Mode.MANDATED);
+        return ModifierMatcher.of(ModifierMatcher.Mode.MANDATED);
     }
 
     /**
@@ -285,7 +295,7 @@ public final class ElementMatchers {
      * @return A matcher that matches anything.
      */
     public static <T> ElementMatcher.Junction<T> any() {
-        return new BooleanMatcher<T>(true);
+        return BooleanMatcher.of(true);
     }
 
     /**
@@ -295,7 +305,7 @@ public final class ElementMatchers {
      * @return A matcher that matches nothing.
      */
     public static <T> ElementMatcher.Junction<T> none() {
-        return new BooleanMatcher<T>(false);
+        return BooleanMatcher.of(false);
     }
 
     /**
@@ -304,7 +314,7 @@ public final class ElementMatchers {
      * None of the values must be {@code null}.
      * </p>
      * <p>
-     * <b>Important</b>: This method cannot be used interchangably with any of its overloaded versions which also apply a type
+     * <b>Important</b>: This method cannot be used interchangeably with any of its overloaded versions which also apply a type
      * conversion.
      * </p>
      *
@@ -322,7 +332,7 @@ public final class ElementMatchers {
      * None of the values must be {@code null}.
      * </p>
      * <p>
-     * <b>Important</b>: This method cannot be used interchangably with any of the overloaded versions of {@link ElementMatchers#anyOf(Object...)}
+     * <b>Important</b>: This method cannot be used interchangeably with any of the overloaded versions of {@link ElementMatchers#anyOf(Object...)}
      * which also apply a type conversion.
      * </p>
      *
@@ -331,11 +341,15 @@ public final class ElementMatchers {
      * @return A matcher that checks for the equality with any of the given objects.
      */
     public static <T> ElementMatcher.Junction<T> anyOf(Iterable<?> values) {
-        ElementMatcher.Junction<T> matcher = none();
+        ElementMatcher.Junction<T> matcher = null;
         for (Object value : values) {
-            matcher = matcher.or(is(value));
+            matcher = matcher == null
+                    ? ElementMatchers.<T>is(value)
+                    : matcher.or(is(value));
         }
-        return matcher;
+        return matcher == null
+                ? ElementMatchers.<T>none()
+                : matcher;
     }
 
     /**
@@ -419,11 +433,15 @@ public final class ElementMatchers {
      * @return A matcher that checks for the equality with none of the given objects.
      */
     public static <T> ElementMatcher.Junction<T> noneOf(Iterable<?> values) {
-        ElementMatcher.Junction<T> matcher = any();
+        ElementMatcher.Junction<T> matcher = null;
         for (Object value : values) {
-            matcher = matcher.and(not(is(value)));
+            matcher = matcher == null
+                    ? ElementMatchers.<T>not(is(value))
+                    : matcher.and(not(is(value)));
         }
-        return matcher;
+        return matcher == null
+                ? ElementMatchers.<T>any()
+                : matcher;
     }
 
     /**
@@ -633,6 +651,17 @@ public final class ElementMatchers {
     }
 
     /**
+     * Matches a {@link NamedElement} for its membership of a set.
+     *
+     * @param names The set of expected names.
+     * @param <T>   The type of the matched object.
+     * @return An element matcher which matches if the element's name is found in the set.
+     */
+    public static <T extends NamedElement> ElementMatcher.Junction<T> namedOneOf(String... names) {
+        return new NameMatcher<T>(new StringSetMatcher(new HashSet<String>(Arrays.asList(names))));
+    }
+
+    /**
      * Matches a {@link NamedElement} for its name. The name's
      * capitalization is ignored.
      *
@@ -735,13 +764,13 @@ public final class ElementMatchers {
     }
 
     /**
-     * Matches a {@link ByteCodeElement}'s descriptor against a given value.
+     * Matches a {@link NamedElement.WithDescriptor}'s descriptor against a given value.
      *
      * @param descriptor The expected descriptor.
      * @param <T>        The type of the matched object.
      * @return A matcher for the given {@code descriptor}.
      */
-    public static <T extends ByteCodeElement> ElementMatcher.Junction<T> hasDescriptor(String descriptor) {
+    public static <T extends NamedElement.WithDescriptor> ElementMatcher.Junction<T> hasDescriptor(String descriptor) {
         return new DescriptorMatcher<T>(new StringMatcher(descriptor, StringMatcher.Mode.EQUALS_FULLY));
     }
 
@@ -754,7 +783,7 @@ public final class ElementMatchers {
      * @return A matcher for byte code elements being declared by the given {@code type}.
      */
     public static <T extends ByteCodeElement> ElementMatcher.Junction<T> isDeclaredBy(Class<?> type) {
-        return isDeclaredBy(new TypeDescription.ForLoadedType(type));
+        return isDeclaredBy(TypeDescription.ForLoadedType.of(type));
     }
 
     /**
@@ -823,7 +852,7 @@ public final class ElementMatchers {
      * @return A matcher for a byte code element to be visible to a given {@code type}.
      */
     public static <T extends ByteCodeElement> ElementMatcher.Junction<T> isVisibleTo(Class<?> type) {
-        return isVisibleTo(new TypeDescription.ForLoadedType(type));
+        return isVisibleTo(TypeDescription.ForLoadedType.of(type));
     }
 
     /**
@@ -837,7 +866,6 @@ public final class ElementMatchers {
         return new VisibilityMatcher<T>(type);
     }
 
-
     /**
      * Matches a {@link ByteCodeElement} that is accessible to a given {@link java.lang.Class}.
      *
@@ -846,7 +874,7 @@ public final class ElementMatchers {
      * @return A matcher for a byte code element to be accessible to a given {@code type}.
      */
     public static <T extends ByteCodeElement> ElementMatcher.Junction<T> isAccessibleTo(Class<?> type) {
-        return isAccessibleTo(new TypeDescription.ForLoadedType(type));
+        return isAccessibleTo(TypeDescription.ForLoadedType.of(type));
     }
 
     /**
@@ -867,7 +895,7 @@ public final class ElementMatchers {
      * @return A matcher for a {@code abstract} modifier reviewable.
      */
     public static <T extends ModifierReviewable.OfAbstraction> ElementMatcher.Junction<T> isAbstract() {
-        return new ModifierMatcher<T>(ModifierMatcher.Mode.ABSTRACT);
+        return ModifierMatcher.of(ModifierMatcher.Mode.ABSTRACT);
     }
 
     /**
@@ -877,7 +905,7 @@ public final class ElementMatchers {
      * @return A matcher for an enum.
      */
     public static <T extends ModifierReviewable.OfEnumeration> ElementMatcher.Junction<T> isEnum() {
-        return new ModifierMatcher<T>(ModifierMatcher.Mode.ENUMERATION);
+        return ModifierMatcher.of(ModifierMatcher.Mode.ENUMERATION);
     }
 
     /**
@@ -890,7 +918,7 @@ public final class ElementMatchers {
      * @return A matcher that validates that an annotated element is annotated with an annotation of {@code type}.
      */
     public static <T extends AnnotationSource> ElementMatcher.Junction<T> isAnnotatedWith(Class<? extends Annotation> type) {
-        return isAnnotatedWith(new TypeDescription.ForLoadedType(type));
+        return isAnnotatedWith(TypeDescription.ForLoadedType.of(type));
     }
 
     /**
@@ -944,7 +972,7 @@ public final class ElementMatchers {
      * @return A matcher for a {@code public} modifier reviewable.
      */
     public static <T extends ModifierReviewable.OfByteCodeElement> ElementMatcher.Junction<T> isPublic() {
-        return new ModifierMatcher<T>(ModifierMatcher.Mode.PUBLIC);
+        return ModifierMatcher.of(ModifierMatcher.Mode.PUBLIC);
     }
 
     /**
@@ -954,7 +982,7 @@ public final class ElementMatchers {
      * @return A matcher for a {@code protected} modifier reviewable.
      */
     public static <T extends ModifierReviewable.OfByteCodeElement> ElementMatcher.Junction<T> isProtected() {
-        return new ModifierMatcher<T>(ModifierMatcher.Mode.PROTECTED);
+        return ModifierMatcher.of(ModifierMatcher.Mode.PROTECTED);
     }
 
     /**
@@ -974,7 +1002,7 @@ public final class ElementMatchers {
      * @return A matcher for a {@code private} modifier reviewable.
      */
     public static <T extends ModifierReviewable.OfByteCodeElement> ElementMatcher.Junction<T> isPrivate() {
-        return new ModifierMatcher<T>(ModifierMatcher.Mode.PRIVATE);
+        return ModifierMatcher.of(ModifierMatcher.Mode.PRIVATE);
     }
 
     /**
@@ -984,7 +1012,7 @@ public final class ElementMatchers {
      * @return A matcher for a {@code static} modifier reviewable.
      */
     public static <T extends ModifierReviewable.OfByteCodeElement> ElementMatcher.Junction<T> isStatic() {
-        return new ModifierMatcher<T>(ModifierMatcher.Mode.STATIC);
+        return ModifierMatcher.of(ModifierMatcher.Mode.STATIC);
     }
 
     /**
@@ -994,7 +1022,7 @@ public final class ElementMatchers {
      * @return A matcher for a {@code final} modifier reviewable.
      */
     public static <T extends ModifierReviewable> ElementMatcher.Junction<T> isFinal() {
-        return new ModifierMatcher<T>(ModifierMatcher.Mode.FINAL);
+        return ModifierMatcher.of(ModifierMatcher.Mode.FINAL);
     }
 
     /**
@@ -1004,7 +1032,7 @@ public final class ElementMatchers {
      * @return A matcher for a synthetic modifier reviewable.
      */
     public static <T extends ModifierReviewable> ElementMatcher.Junction<T> isSynthetic() {
-        return new ModifierMatcher<T>(ModifierMatcher.Mode.SYNTHETIC);
+        return ModifierMatcher.of(ModifierMatcher.Mode.SYNTHETIC);
     }
 
     /**
@@ -1014,7 +1042,7 @@ public final class ElementMatchers {
      * @return A matcher for a {@code synchronized} method description.
      */
     public static <T extends ModifierReviewable.ForMethodDescription> ElementMatcher.Junction<T> isSynchronized() {
-        return new ModifierMatcher<T>(ModifierMatcher.Mode.SYNCHRONIZED);
+        return ModifierMatcher.of(ModifierMatcher.Mode.SYNCHRONIZED);
     }
 
     /**
@@ -1024,7 +1052,7 @@ public final class ElementMatchers {
      * @return A matcher for a {@code native} method description.
      */
     public static <T extends ModifierReviewable.ForMethodDescription> ElementMatcher.Junction<T> isNative() {
-        return new ModifierMatcher<T>(ModifierMatcher.Mode.NATIVE);
+        return ModifierMatcher.of(ModifierMatcher.Mode.NATIVE);
     }
 
     /**
@@ -1034,7 +1062,7 @@ public final class ElementMatchers {
      * @return A matcher for a {@code strictfp} method description.
      */
     public static <T extends ModifierReviewable.ForMethodDescription> ElementMatcher.Junction<T> isStrict() {
-        return new ModifierMatcher<T>(ModifierMatcher.Mode.STRICT);
+        return ModifierMatcher.of(ModifierMatcher.Mode.STRICT);
     }
 
     /**
@@ -1044,7 +1072,7 @@ public final class ElementMatchers {
      * @return A matcher for a var-args method description.
      */
     public static <T extends ModifierReviewable.ForMethodDescription> ElementMatcher.Junction<T> isVarArgs() {
-        return new ModifierMatcher<T>(ModifierMatcher.Mode.VAR_ARGS);
+        return ModifierMatcher.of(ModifierMatcher.Mode.VAR_ARGS);
     }
 
     /**
@@ -1054,7 +1082,7 @@ public final class ElementMatchers {
      * @return A matcher for a bridge method.
      */
     public static <T extends ModifierReviewable.ForMethodDescription> ElementMatcher.Junction<T> isBridge() {
-        return new ModifierMatcher<T>(ModifierMatcher.Mode.BRIDGE);
+        return ModifierMatcher.of(ModifierMatcher.Mode.BRIDGE);
     }
 
     /**
@@ -1217,7 +1245,7 @@ public final class ElementMatchers {
      * @return An element matcher that matches a given argument type for a method description.
      */
     public static <T extends MethodDescription> ElementMatcher.Junction<T> takesArgument(int index, Class<?> type) {
-        return takesArgument(index, new TypeDescription.ForLoadedType(type));
+        return takesArgument(index, TypeDescription.ForLoadedType.of(type));
     }
 
     /**
@@ -1304,6 +1332,16 @@ public final class ElementMatchers {
     }
 
     /**
+     * Matches a {@link MethodDescription} with no parameters.
+     *
+     * @param <T> The type of the matched object.
+     * @return A matcher that matches a method description by the number of its parameters.
+     */
+    public static <T extends MethodDescription> ElementMatcher.Junction<T> takesNoArguments() {
+        return takesArguments(0);
+    }
+
+    /**
      * Matches a {@link MethodDescription} by validating that its parameters
      * fulfill a given constraint.
      *
@@ -1325,7 +1363,7 @@ public final class ElementMatchers {
      * @return A matcher that matches a method description by its declaration of throwing a checked exception.
      */
     public static <T extends MethodDescription> ElementMatcher.Junction<T> canThrow(Class<? extends Throwable> exceptionType) {
-        return canThrow(new TypeDescription.ForLoadedType(exceptionType));
+        return canThrow(TypeDescription.ForLoadedType.of(exceptionType));
     }
 
     /**
@@ -1338,7 +1376,7 @@ public final class ElementMatchers {
      */
     public static <T extends MethodDescription> ElementMatcher.Junction<T> canThrow(TypeDescription exceptionType) {
         return exceptionType.isAssignableTo(RuntimeException.class) || exceptionType.isAssignableTo(Error.class)
-                ? new BooleanMatcher<T>(true)
+                ? BooleanMatcher.<T>of(true)
                 : ElementMatchers.<T>declaresGenericException(new CollectionItemMatcher<TypeDescription.Generic>(erasure(isSuperTypeOf(exceptionType))));
     }
 
@@ -1367,7 +1405,7 @@ public final class ElementMatchers {
     public static <T extends MethodDescription> ElementMatcher.Junction<T> declaresGenericException(TypeDescription.Generic exceptionType) {
         return !exceptionType.getSort().isWildcard() && exceptionType.asErasure().isAssignableTo(Throwable.class)
                 ? ElementMatchers.<T>declaresGenericException(new CollectionItemMatcher<TypeDescription.Generic>(is(exceptionType)))
-                : new BooleanMatcher<T>(false);
+                : BooleanMatcher.<T>of(false);
     }
 
     /**
@@ -1378,7 +1416,7 @@ public final class ElementMatchers {
      * @return A matcher that matches any method that exactly matches the provided exception.
      */
     public static <T extends MethodDescription> ElementMatcher.Junction<T> declaresException(Class<? extends Throwable> exceptionType) {
-        return declaresException(new TypeDescription.ForLoadedType(exceptionType));
+        return declaresException(TypeDescription.ForLoadedType.of(exceptionType));
     }
 
     /**
@@ -1391,7 +1429,7 @@ public final class ElementMatchers {
     public static <T extends MethodDescription> ElementMatcher.Junction<T> declaresException(TypeDescription exceptionType) {
         return exceptionType.isAssignableTo(Throwable.class)
                 ? ElementMatchers.<T>declaresGenericException(new CollectionItemMatcher<TypeDescription.Generic>(erasure(exceptionType)))
-                : new BooleanMatcher<T>(false);
+                : BooleanMatcher.<T>of(false);
     }
 
     /**
@@ -1414,7 +1452,7 @@ public final class ElementMatchers {
      * @return A matcher that checks a method's signature equality for any method declared by the declaring type.
      */
     public static <T extends MethodDescription> ElementMatcher.Junction<T> isOverriddenFrom(Class<?> type) {
-        return isOverriddenFrom(new TypeDescription.ForLoadedType(type));
+        return isOverriddenFrom(TypeDescription.ForLoadedType.of(type));
     }
 
     /**
@@ -1482,7 +1520,7 @@ public final class ElementMatchers {
      * @see ElementMatchers#isAnnotation()
      */
     public static <T extends TypeDescription> ElementMatcher.Junction<T> isInterface() {
-        return new ModifierMatcher<T>(ModifierMatcher.Mode.INTERFACE);
+        return ModifierMatcher.of(ModifierMatcher.Mode.INTERFACE);
     }
 
     /**
@@ -1492,7 +1530,7 @@ public final class ElementMatchers {
      * @return A matcher for an annotation type.
      */
     public static <T extends TypeDescription> ElementMatcher.Junction<T> isAnnotation() {
-        return new ModifierMatcher<T>(ModifierMatcher.Mode.ANNOTATION);
+        return ModifierMatcher.of(ModifierMatcher.Mode.ANNOTATION);
     }
 
     /**
@@ -1502,7 +1540,7 @@ public final class ElementMatchers {
      * @return A matcher that only matches method descriptions that represent a Java method.
      */
     public static <T extends MethodDescription> ElementMatcher.Junction<T> isMethod() {
-        return new MethodSortMatcher<T>(MethodSortMatcher.Sort.METHOD);
+        return MethodSortMatcher.of(MethodSortMatcher.Sort.METHOD);
     }
 
     /**
@@ -1512,7 +1550,7 @@ public final class ElementMatchers {
      * @return A matcher that only matches method descriptions that represent a Java constructor.
      */
     public static <T extends MethodDescription> ElementMatcher.Junction<T> isConstructor() {
-        return new MethodSortMatcher<T>(MethodSortMatcher.Sort.CONSTRUCTOR);
+        return MethodSortMatcher.of(MethodSortMatcher.Sort.CONSTRUCTOR);
     }
 
     /**
@@ -1522,7 +1560,7 @@ public final class ElementMatchers {
      * @return A matcher that only matches method descriptions that represent the type initializer.
      */
     public static <T extends MethodDescription> ElementMatcher.Junction<T> isTypeInitializer() {
-        return new MethodSortMatcher<T>(MethodSortMatcher.Sort.TYPE_INITIALIZER);
+        return MethodSortMatcher.of(MethodSortMatcher.Sort.TYPE_INITIALIZER);
     }
 
     /**
@@ -1532,7 +1570,7 @@ public final class ElementMatchers {
      * @return A matcher for virtual methods.
      */
     public static <T extends MethodDescription> ElementMatcher.Junction<T> isVirtual() {
-        return new MethodSortMatcher<T>(MethodSortMatcher.Sort.VIRTUAL);
+        return MethodSortMatcher.of(MethodSortMatcher.Sort.VIRTUAL);
     }
 
     /**
@@ -1542,7 +1580,7 @@ public final class ElementMatchers {
      * @return A matcher that only matches Java 8 default methods.
      */
     public static <T extends MethodDescription> ElementMatcher.Junction<T> isDefaultMethod() {
-        return new MethodSortMatcher<T>(MethodSortMatcher.Sort.DEFAULT_METHOD);
+        return MethodSortMatcher.of(MethodSortMatcher.Sort.DEFAULT_METHOD);
     }
 
     /**
@@ -1552,7 +1590,17 @@ public final class ElementMatchers {
      * @return A matcher that matches a default constructor.
      */
     public static <T extends MethodDescription> ElementMatcher.Junction<T> isDefaultConstructor() {
-        return isConstructor().and(takesArguments(0));
+        return isConstructor().and(takesNoArguments());
+    }
+
+    /**
+     * Matches a Java <i>main</i> method as an application entry point.
+     *
+     * @param <T> The type of the matched object.
+     * @return A matcher that matches a Java <i>main</i> method.
+     */
+    public static <T extends MethodDescription> ElementMatcher.Junction<T> isMain() {
+        return named("main").and(takesArguments(String[].class)).and(returns(TypeDescription.ForLoadedType.of(void.class)).and(isStatic()).and(isPublic()));
     }
 
     /**
@@ -1562,7 +1610,7 @@ public final class ElementMatchers {
      * @return A matcher that only matches a non-overridden {@link Object#finalize()} method.
      */
     public static <T extends MethodDescription> ElementMatcher.Junction<T> isDefaultFinalizer() {
-        return isFinalizer().and(isDeclaredBy(TypeDescription.OBJECT));
+        return isFinalizer().and(isDeclaredBy(TypeDescription.ForLoadedType.of(Object.class)));
     }
 
     /**
@@ -1572,17 +1620,17 @@ public final class ElementMatchers {
      * @return A matcher that only matches the {@link Object#finalize()} method.
      */
     public static <T extends MethodDescription> ElementMatcher.Junction<T> isFinalizer() {
-        return named("finalize").and(takesArguments(0)).and(returns(TypeDescription.VOID));
+        return named("finalize").and(takesNoArguments()).and(returns(TypeDescription.ForLoadedType.of(void.class)));
     }
 
     /**
-     * Only matches the {@link Object#toString()} method, also if it was overridden.
+     * Only matches the {@link Object#hashCode()} method, also if it was overridden.
      *
      * @param <T> The type of the matched object.
-     * @return A matcher that only matches the {@link Object#toString()} method.
+     * @return A matcher that only matches the {@link Object#hashCode()} method.
      */
     public static <T extends MethodDescription> ElementMatcher.Junction<T> isHashCode() {
-        return named("hashCode").and(takesArguments(0)).and(returns(int.class));
+        return named("hashCode").and(takesNoArguments()).and(returns(int.class));
     }
 
     /**
@@ -1592,7 +1640,7 @@ public final class ElementMatchers {
      * @return A matcher that only matches the {@link Object#equals(Object)} method.
      */
     public static <T extends MethodDescription> ElementMatcher.Junction<T> isEquals() {
-        return named("equals").and(takesArguments(TypeDescription.OBJECT)).and(returns(boolean.class));
+        return named("equals").and(takesArguments(TypeDescription.ForLoadedType.of(Object.class))).and(returns(boolean.class));
     }
 
     /**
@@ -1602,7 +1650,7 @@ public final class ElementMatchers {
      * @return A matcher that only matches the {@link Object#clone()} method.
      */
     public static <T extends MethodDescription> ElementMatcher.Junction<T> isClone() {
-        return named("clone").and(takesArguments(0)).and(returns(TypeDescription.OBJECT));
+        return named("clone").and(takesNoArguments());
     }
 
     /**
@@ -1612,7 +1660,7 @@ public final class ElementMatchers {
      * @return A matcher that only matches the {@link Object#toString()} method.
      */
     public static <T extends MethodDescription> ElementMatcher.Junction<T> isToString() {
-        return named("toString").and(takesArguments(0)).and(returns(TypeDescription.STRING));
+        return named("toString").and(takesNoArguments()).and(returns(TypeDescription.ForLoadedType.of(String.class)));
     }
 
     /**
@@ -1622,7 +1670,7 @@ public final class ElementMatchers {
      * @return A matcher that matches any setter method.
      */
     public static <T extends MethodDescription> ElementMatcher.Junction<T> isSetter() {
-        return nameStartsWith("set").and(takesArguments(1)).and(returns(TypeDescription.VOID));
+        return nameStartsWith("set").and(takesArguments(1)).and(returns(TypeDescription.ForLoadedType.of(void.class)));
     }
 
     /**
@@ -1634,7 +1682,7 @@ public final class ElementMatchers {
      * @return A matcher that matches any setter method for the supplied property.
      */
     public static <T extends MethodDescription> ElementMatcher.Junction<T> isSetter(String property) {
-        return isSetter().and(property.isEmpty()
+        return isSetter().and(property.length() == 0
                 ? named("set")
                 : named("set" + Character.toUpperCase(property.charAt(0)) + property.substring(1)));
     }
@@ -1647,7 +1695,7 @@ public final class ElementMatchers {
      * @return A matcher that matches any setter method.
      */
     public static <T extends MethodDescription> ElementMatcher.Junction<T> isSetter(Class<?> type) {
-        return isSetter(new TypeDescription.ForLoadedType(type));
+        return isSetter(TypeDescription.ForLoadedType.of(type));
     }
 
     /**
@@ -1712,7 +1760,7 @@ public final class ElementMatchers {
      * @return A matcher that matches any getter method.
      */
     public static <T extends MethodDescription> ElementMatcher.Junction<T> isGetter() {
-        return takesArguments(0).and(not(returns(TypeDescription.VOID))).and(nameStartsWith("get").or(nameStartsWith("is").and(returnsGeneric(anyOf(boolean.class, Boolean.class)))));
+        return takesNoArguments().and(not(returns(TypeDescription.ForLoadedType.of(void.class)))).and(nameStartsWith("get").or(nameStartsWith("is").and(returnsGeneric(anyOf(boolean.class, Boolean.class)))));
     }
 
     /**
@@ -1725,7 +1773,7 @@ public final class ElementMatchers {
      * @return A matcher that matches any getter method for the supplied property.
      */
     public static <T extends MethodDescription> ElementMatcher.Junction<T> isGetter(String property) {
-        return isGetter().and(property.isEmpty()
+        return isGetter().and(property.length() == 0
                 ? named("get").or(named("is"))
                 : named("get" + Character.toUpperCase(property.charAt(0)) + property.substring(1)).or(named("is" + Character.toUpperCase(property.charAt(0)) + property.substring(1))));
     }
@@ -1738,7 +1786,7 @@ public final class ElementMatchers {
      * @return A matcher that matches a getter method with the given type.
      */
     public static <T extends MethodDescription> ElementMatcher.Junction<T> isGetter(Class<?> type) {
-        return isGetter(new TypeDescription.ForLoadedType(type));
+        return isGetter(TypeDescription.ForLoadedType.of(type));
     }
 
     /**
@@ -1775,7 +1823,7 @@ public final class ElementMatchers {
     }
 
     /**
-     * Matches any Java bean getter method which returns an value with a type matches the supplied matcher.
+     * Matches any Java bean getter method which returns a value with a type matches the supplied matcher.
      *
      * @param matcher A matcher to be allied to a getter method's argument type.
      * @param <T>     The type of the matched object.
@@ -1786,7 +1834,7 @@ public final class ElementMatchers {
     }
 
     /**
-     * Matches any Java bean getter method which returns an value with a type matches the supplied matcher.
+     * Matches any Java bean getter method which returns a value with a type matches the supplied matcher.
      *
      * @param matcher A matcher to be allied to a getter method's argument type.
      * @param <T>     The type of the matched object.
@@ -1832,7 +1880,7 @@ public final class ElementMatchers {
      * @return A matcher that matches any type description that represents a sub type of the given type.
      */
     public static <T extends TypeDescription> ElementMatcher.Junction<T> isSubTypeOf(Class<?> type) {
-        return isSubTypeOf(new TypeDescription.ForLoadedType(type));
+        return isSubTypeOf(TypeDescription.ForLoadedType.of(type));
     }
 
     /**
@@ -1854,7 +1902,7 @@ public final class ElementMatchers {
      * @return A matcher that matches any type description that represents a super type of the given type.
      */
     public static <T extends TypeDescription> ElementMatcher.Junction<T> isSuperTypeOf(Class<?> type) {
-        return isSuperTypeOf(new TypeDescription.ForLoadedType(type));
+        return isSuperTypeOf(TypeDescription.ForLoadedType.of(type));
     }
 
     /**
@@ -1866,6 +1914,28 @@ public final class ElementMatchers {
      */
     public static <T extends TypeDescription> ElementMatcher.Junction<T> isSuperTypeOf(TypeDescription type) {
         return new SuperTypeMatcher<T>(type);
+    }
+
+    /**
+     * Matches any type description that declares a super class (but not interface) that matches the provided matcher.
+     *
+     * @param matcher The type to be checked for being a super class of the matched type.
+     * @param <T>     The type of the matched object.
+     * @return A matcher that matches any type description that declares a super class that matches the provided matcher.
+     */
+    public static <T extends TypeDescription> ElementMatcher.Junction<T> hasSuperClass(ElementMatcher<? super TypeDescription> matcher) {
+        return hasGenericSuperClass(erasure(matcher));
+    }
+
+    /**
+     * Matches any type description that declares a super class (but not interface) that matches the provided matcher.
+     *
+     * @param matcher The type to be checked for being a super class of the matched type.
+     * @param <T>     The type of the matched object.
+     * @return A matcher that matches any type description that declares a super class that matches the provided matcher.
+     */
+    public static <T extends TypeDescription> ElementMatcher.Junction<T> hasGenericSuperClass(ElementMatcher<? super TypeDescription.Generic> matcher) {
+        return new HasSuperClassMatcher<T>(matcher);
     }
 
     /**
@@ -1899,7 +1969,7 @@ public final class ElementMatchers {
      * @return A matcher that matches any inherited annotation by their type.
      */
     public static <T extends TypeDescription> ElementMatcher.Junction<T> inheritsAnnotation(Class<?> type) {
-        return inheritsAnnotation(new TypeDescription.ForLoadedType(type));
+        return inheritsAnnotation(TypeDescription.ForLoadedType.of(type));
     }
 
     /**
@@ -1939,7 +2009,7 @@ public final class ElementMatchers {
     }
 
     /**
-     * Matches a type by a another matcher that is applied on any of its declared fields.
+     * Matches a type by another matcher that is applied on any of its declared fields.
      *
      * @param matcher The matcher that is applied onto each declared field.
      * @param <T>     The type of the matched object.
@@ -1950,7 +2020,7 @@ public final class ElementMatchers {
     }
 
     /**
-     * Matches a type by a another matcher that is applied on any of its declared methods.
+     * Matches a type by another matcher that is applied on any of its declared methods.
      *
      * @param matcher The matcher that is applied onto each declared method.
      * @param <T>     The type of the matched object.
@@ -1980,6 +2050,36 @@ public final class ElementMatchers {
      */
     public static <T extends TypeDefinition> ElementMatcher.Junction<T> ofSort(ElementMatcher<? super TypeDefinition.Sort> matcher) {
         return new TypeSortMatcher<T>(matcher);
+    }
+
+    /**
+     * Matches a type if it is primitive.
+     *
+     * @param <T> The type of the matched object.
+     * @return A matcher that determines if a type is primitive.
+     */
+    public static <T extends TypeDefinition> ElementMatcher.Junction<T> isPrimitive() {
+        return new PrimitiveTypeMatcher<T>();
+    }
+
+    /**
+     * Matches a type if it is an array type.
+     *
+     * @param <T> The type of the matched object.
+     * @return A matcher that determines if a type is an array type.
+     */
+    public static <T extends TypeDefinition> ElementMatcher.Junction<T> isArray() {
+        return new ArrayTypeMatcher<T>();
+    }
+
+    /**
+     * Matches a type if it is a record type.
+     *
+     * @param <T> The type of the matched object.
+     * @return A matcher that determines if a type is a record type.
+     */
+    public static <T extends TypeDefinition> ElementMatcher.Junction<T> isRecord() {
+        return new RecordMatcher<T>();
     }
 
     /**
@@ -2023,7 +2123,7 @@ public final class ElementMatchers {
      * @return A matcher matching the provided field type.
      */
     public static <T extends FieldDescription> ElementMatcher.Junction<T> fieldType(Class<?> fieldType) {
-        return fieldType(new TypeDescription.ForLoadedType(fieldType));
+        return fieldType(TypeDescription.ForLoadedType.of(fieldType));
     }
 
     /**
@@ -2055,7 +2155,7 @@ public final class ElementMatchers {
      * @return A matcher for a {@code volatile} field.
      */
     public static <T extends FieldDescription> ElementMatcher.Junction<T> isVolatile() {
-        return new ModifierMatcher<T>(ModifierMatcher.Mode.VOLATILE);
+        return ModifierMatcher.of(ModifierMatcher.Mode.VOLATILE);
     }
 
     /**
@@ -2065,7 +2165,7 @@ public final class ElementMatchers {
      * @return A matcher for a {@code transient} field.
      */
     public static <T extends FieldDescription> ElementMatcher.Junction<T> isTransient() {
-        return new ModifierMatcher<T>(ModifierMatcher.Mode.TRANSIENT);
+        return ModifierMatcher.of(ModifierMatcher.Mode.TRANSIENT);
     }
 
     /**
@@ -2076,7 +2176,7 @@ public final class ElementMatchers {
      * @return A matcher that matches the annotation's type for being equal to the given type.
      */
     public static <T extends AnnotationDescription> ElementMatcher.Junction<T> annotationType(Class<? extends Annotation> type) {
-        return annotationType(new TypeDescription.ForLoadedType(type));
+        return annotationType(TypeDescription.ForLoadedType.of(type));
     }
 
     /**
@@ -2102,14 +2202,25 @@ public final class ElementMatchers {
     }
 
     /**
-     * Matches exactly the bootstrap {@link java.lang.ClassLoader} . The returned matcher is a synonym to
+     * Matches if an annotation can target a given element type.
+     *
+     * @param elementType The element type we target.
+     * @param <T>         The type of the matched object.
+     * @return A matcher that matches annotations that target an element type.
+     */
+    public static <T extends AnnotationDescription> ElementMatcher.Junction<T> targetsElement(ElementType elementType) {
+        return new AnnotationTargetMatcher<T>(elementType);
+    }
+
+    /**
+     * Matches exactly the bootstrap {@link java.lang.ClassLoader}. The returned matcher is a synonym to
      * a matcher matching {@code null}.
      *
      * @param <T> The type of the matched object.
      * @return A matcher that only matches the bootstrap class loader.
      */
     public static <T extends ClassLoader> ElementMatcher.Junction<T> isBootstrapClassLoader() {
-        return new NullMatcher<T>();
+        return NullMatcher.make();
     }
 
     /**
@@ -2145,9 +2256,9 @@ public final class ElementMatchers {
      * @return A matcher that matches the given class loader and any class loader that is a child of the given
      * class loader.
      */
-    public static <T extends ClassLoader> ElementMatcher.Junction<T> isChildOf(ClassLoader classLoader) {
-        return classLoader == BOOTSTRAP_CLASSLOADER
-                ? new BooleanMatcher<T>(true)
+    public static <T extends ClassLoader> ElementMatcher.Junction<T> isChildOf(@MaybeNull ClassLoader classLoader) {
+        return classLoader == ClassLoadingStrategy.BOOTSTRAP_LOADER
+                ? BooleanMatcher.<T>of(true)
                 : ElementMatchers.<T>hasChild(is(classLoader));
     }
 
@@ -2170,8 +2281,8 @@ public final class ElementMatchers {
      * @return A matcher that matches the given class loader and any class loader that is a parent of the given
      * class loader.
      */
-    public static <T extends ClassLoader> ElementMatcher.Junction<T> isParentOf(ClassLoader classLoader) {
-        return classLoader == BOOTSTRAP_CLASSLOADER
+    public static <T extends ClassLoader> ElementMatcher.Junction<T> isParentOf(@MaybeNull ClassLoader classLoader) {
+        return classLoader == ClassLoadingStrategy.BOOTSTRAP_LOADER
                 ? ElementMatchers.<T>isBootstrapClassLoader()
                 : new ClassLoaderParentMatcher<T>(classLoader);
     }
@@ -2194,6 +2305,6 @@ public final class ElementMatchers {
      * @return A matcher that validates a module's existence.
      */
     public static <T extends JavaModule> ElementMatcher.Junction<T> supportsModules() {
-        return not(new NullMatcher<T>());
+        return not(NullMatcher.make());
     }
 }

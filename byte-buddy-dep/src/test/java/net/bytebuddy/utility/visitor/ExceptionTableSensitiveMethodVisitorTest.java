@@ -1,12 +1,12 @@
 package net.bytebuddy.utility.visitor;
 
-import net.bytebuddy.test.utility.MockitoRule;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 import org.objectweb.asm.Handle;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
@@ -25,6 +25,7 @@ public class ExceptionTableSensitiveMethodVisitorTest {
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
                 {Opcodes.ASM6, "visitLabel", new Class<?>[]{Label.class}, new Object[]{new Label()}},
+                {Opcodes.ASM6, "visitFrame", new Class<?>[]{int.class, int.class, Object[].class, int.class, Object[].class}, new Object[]{0, 0, new Object[0], 0, new Object[0]}},
                 {Opcodes.ASM6, "visitIntInsn", new Class<?>[]{int.class, int.class}, new Object[]{0, 0}},
                 {Opcodes.ASM6, "visitVarInsn", new Class<?>[]{int.class, int.class}, new Object[]{0, 0}},
                 {Opcodes.ASM6, "visitTypeInsn", new Class<?>[]{int.class, String.class}, new Object[]{0, ""}},
@@ -43,7 +44,7 @@ public class ExceptionTableSensitiveMethodVisitorTest {
     }
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     @Mock
     private MethodVisitor methodVisitor;
@@ -78,7 +79,7 @@ public class ExceptionTableSensitiveMethodVisitorTest {
 
         private boolean called;
 
-        public PseudoVisitor(int api, MethodVisitor methodVisitor) {
+        private PseudoVisitor(int api, MethodVisitor methodVisitor) {
             super(api, methodVisitor);
         }
 
@@ -88,7 +89,13 @@ public class ExceptionTableSensitiveMethodVisitorTest {
                 throw new AssertionError();
             }
             called = true;
-            verifyZeroInteractions(mv);
+            verifyNoMoreInteractions(mv);
+        }
+
+        @Override
+        @SuppressWarnings("deprecation") // avoid redirection implementation for redirection to work.
+        protected void onVisitMethodInsn(int opcode, String owner, String name, String descriptor) {
+            mv.visitMethodInsn(opcode, owner, name, descriptor);
         }
 
         protected void check() {

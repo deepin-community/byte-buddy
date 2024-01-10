@@ -1,7 +1,24 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.description.method;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.AccessControllerPlugin;
+import net.bytebuddy.build.CachedReturnPlugin;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.ByteCodeElement;
 import net.bytebuddy.description.ModifierReviewable;
 import net.bytebuddy.description.NamedElement;
@@ -13,10 +30,15 @@ import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.description.type.TypeList;
 import net.bytebuddy.implementation.bytecode.StackSize;
 import net.bytebuddy.matcher.ElementMatcher;
+import net.bytebuddy.utility.dispatcher.JavaDispatcher;
+import net.bytebuddy.utility.nullability.AlwaysNull;
+import net.bytebuddy.utility.nullability.MaybeNull;
 
 import java.lang.annotation.Annotation;
-import java.lang.reflect.*;
-import java.security.AccessController;
+import java.lang.reflect.AccessibleObject;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.security.PrivilegedAction;
 import java.util.AbstractList;
 import java.util.Collections;
@@ -77,7 +99,9 @@ public interface ParameterDescription extends AnnotationSource,
      */
     interface InGenericShape extends ParameterDescription {
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         MethodDescription.InGenericShape getDeclaringMethod();
     }
 
@@ -86,7 +110,9 @@ public interface ParameterDescription extends AnnotationSource,
      */
     interface InDefinedShape extends ParameterDescription {
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         MethodDescription.InDefinedShape getDeclaringMethod();
 
         /**
@@ -94,7 +120,9 @@ public interface ParameterDescription extends AnnotationSource,
          */
         abstract class AbstractBase extends ParameterDescription.AbstractBase implements InDefinedShape {
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public InDefinedShape asDefined() {
                 return this;
             }
@@ -106,29 +134,39 @@ public interface ParameterDescription extends AnnotationSource,
      */
     abstract class AbstractBase extends ModifierReviewable.AbstractBase implements ParameterDescription {
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public String getName() {
             return NAME_PREFIX.concat(String.valueOf(getIndex()));
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public String getInternalName() {
             return getName();
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public String getActualName() {
             return isNamed()
                     ? getName()
                     : EMPTY_NAME;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public int getModifiers() {
             return EMPTY_MASK;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public int getOffset() {
             TypeList parameterType = getDeclaringMethod().getParameters().asTypeList().asErasures();
             int offset = getDeclaringMethod().isStatic()
@@ -140,7 +178,9 @@ public interface ParameterDescription extends AnnotationSource,
             return offset;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Token asToken(ElementMatcher<? super TypeDescription> matcher) {
             return new Token(getType().accept(new TypeDescription.Generic.Visitor.Substitutor.ForDetachment(matcher)),
                     getDeclaredAnnotations(),
@@ -153,17 +193,20 @@ public interface ParameterDescription extends AnnotationSource,
         }
 
         @Override
-        public boolean equals(Object other) {
-            if (this == other) return true;
-            if (!(other instanceof ParameterDescription)) return false;
-            ParameterDescription parameterDescription = (ParameterDescription) other;
-            return getDeclaringMethod().equals(parameterDescription.getDeclaringMethod())
-                    && getIndex() == parameterDescription.getIndex();
+        @CachedReturnPlugin.Enhance("hashCode")
+        public int hashCode() {
+            return getDeclaringMethod().hashCode() ^ getIndex();
         }
 
         @Override
-        public int hashCode() {
-            return getDeclaringMethod().hashCode() ^ getIndex();
+        public boolean equals(@MaybeNull Object other) {
+            if (this == other) {
+                return true;
+            } else if (!(other instanceof ParameterDescription)) {
+                return false;
+            }
+            ParameterDescription parameterDescription = (ParameterDescription) other;
+            return getDeclaringMethod().equals(parameterDescription.getDeclaringMethod()) && getIndex() == parameterDescription.getIndex();
         }
 
         @Override
@@ -173,7 +216,7 @@ public interface ParameterDescription extends AnnotationSource,
                 stringBuilder.append(' ');
             }
             stringBuilder.append(isVarArgs()
-                    ? getType().asErasure().getName().replaceFirst("\\[\\]$", "...")
+                    ? getType().asErasure().getName().replaceFirst("\\[]$", "...")
                     : getType().asErasure().getName());
             return stringBuilder.append(' ').append(getName()).toString();
         }
@@ -187,9 +230,9 @@ public interface ParameterDescription extends AnnotationSource,
     abstract class ForLoadedParameter<T extends AccessibleObject> extends InDefinedShape.AbstractBase {
 
         /**
-         * A dispatcher for reading properties from {@code java.lang.reflect.Executable} instances.
+         * A dispatcher for reading properties from {@code java.lang.reflect.Parameter} instances.
          */
-        private static final Dispatcher DISPATCHER = AccessController.doPrivileged(Dispatcher.CreationAction.INSTANCE);
+        private static final Parameter PARAMETER = doPrivileged(JavaDispatcher.of(Parameter.class));
 
         /**
          * The {@code java.lang.reflect.Executable} for which the parameter types are described.
@@ -202,37 +245,66 @@ public interface ParameterDescription extends AnnotationSource,
         protected final int index;
 
         /**
+         * The parameter annotation source to query.
+         */
+        protected final ParameterAnnotationSource parameterAnnotationSource;
+
+        /**
          * Creates a new description for a loaded parameter.
          *
-         * @param executable The {@code java.lang.reflect.Executable} for which the parameter types are described.
-         * @param index      The parameter's index.
+         * @param executable                The {@code java.lang.reflect.Executable} for which the parameter types are described.
+         * @param index                     The parameter's index.
+         * @param parameterAnnotationSource The parameter annotation source to query.
          */
-        protected ForLoadedParameter(T executable, int index) {
+        protected ForLoadedParameter(T executable, int index, ParameterAnnotationSource parameterAnnotationSource) {
             this.executable = executable;
             this.index = index;
+            this.parameterAnnotationSource = parameterAnnotationSource;
         }
 
-        @Override
+        /**
+         * A proxy for {@code java.security.AccessController#doPrivileged} that is activated if available.
+         *
+         * @param action The action to execute from a privileged context.
+         * @param <T>    The type of the action's resolved value.
+         * @return The action's resolved value.
+         */
+        @AccessControllerPlugin.Enhance
+        private static <T> T doPrivileged(PrivilegedAction<T> action) {
+            return action.run();
+        }
+
+        /**
+         * {@inheritDoc}
+         */
         public String getName() {
-            return DISPATCHER.getName(executable, index);
+            return PARAMETER.getName(ParameterList.ForLoadedExecutable.EXECUTABLE.getParameters(executable)[index]);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public int getIndex() {
             return index;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public boolean isNamed() {
-            return DISPATCHER.isNamePresent(executable, index);
+            return PARAMETER.isNamePresent(ParameterList.ForLoadedExecutable.EXECUTABLE.getParameters(executable)[index]);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public int getModifiers() {
-            return DISPATCHER.getModifiers(executable, index);
+            return PARAMETER.getModifiers(ParameterList.ForLoadedExecutable.EXECUTABLE.getParameters(executable)[index]);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public boolean hasModifiers() {
             // Rational: If a parameter is not named despite the information being attached,
             // it is synthetic, i.e. it has non-default modifiers.
@@ -240,181 +312,103 @@ public interface ParameterDescription extends AnnotationSource,
         }
 
         /**
-         * A dispatcher creating parameter descriptions based on the API that is available for the current JVM.
+         * A source for querying parameter annotations.
          */
-        protected interface Dispatcher {
+        public interface ParameterAnnotationSource {
+
+            /**
+             * Returns the parameter annotations represented by this source.
+             *
+             * @return The parameter annotations as an array indexed by parameter index.
+             */
+            Annotation[][] getParameterAnnotations();
+
+            /**
+             * A source for a loaded constructor.
+             */
+            @HashCodeAndEqualsPlugin.Enhance
+            class ForLoadedConstructor implements ParameterAnnotationSource {
+
+                /**
+                 * The constructor to query for annotations.
+                 */
+                private final Constructor<?> constructor;
+
+                /**
+                 * Creates a new parameter annotation source for a constructor.
+                 *
+                 * @param constructor The constructor to query for annotations.
+                 */
+                public ForLoadedConstructor(Constructor<?> constructor) {
+                    this.constructor = constructor;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public Annotation[][] getParameterAnnotations() {
+                    return constructor.getParameterAnnotations();
+                }
+            }
+
+            /**
+             * A source for a loaded method.
+             */
+            @HashCodeAndEqualsPlugin.Enhance
+            class ForLoadedMethod implements ParameterAnnotationSource {
+
+                /**
+                 * The method to query for annotations.
+                 */
+                private final Method method;
+
+                /**
+                 * Creates a new parameter annpotation source for a method.
+                 *
+                 * @param method The method to query for annotations.
+                 */
+                public ForLoadedMethod(Method method) {
+                    this.method = method;
+                }
+
+                /**
+                 * {@inheritDoc}
+                 */
+                public Annotation[][] getParameterAnnotations() {
+                    return method.getParameterAnnotations();
+                }
+            }
+        }
+
+        /**
+         * A proxy for a {@code java.lang.reflect.Parameter}.
+         */
+        @JavaDispatcher.Proxied("java.lang.reflect.Parameter")
+        protected interface Parameter {
 
             /**
              * Returns the given parameter's modifiers.
              *
-             * @param executable The executable to introspect.
-             * @param index      The parameter's index.
+             * @param value The parameter to introspect.
              * @return The parameter's modifiers.
              */
-            int getModifiers(AccessibleObject executable, int index);
+            int getModifiers(Object value);
 
             /**
              * Returns {@code true} if the given parameter has an explicit name.
              *
-             * @param executable The parameter to introspect.
-             * @param index      The parameter's index.
+             * @param value The parameter to introspect.
              * @return {@code true} if the given parameter has an explicit name.
              */
-            boolean isNamePresent(AccessibleObject executable, int index);
+            boolean isNamePresent(Object value);
 
             /**
              * Returns the given parameter's implicit or explicit name.
              *
-             * @param executable The parameter to introspect.
-             * @param index      The parameter's index.
+             * @param value The parameter to introspect.
              * @return The parameter's name.
              */
-            String getName(AccessibleObject executable, int index);
-
-            /**
-             * A creation action for a dispatcher.
-             */
-            enum CreationAction implements PrivilegedAction<Dispatcher> {
-
-                /**
-                 * The singleton instance.
-                 */
-                INSTANCE;
-
-                @Override
-                @SuppressFBWarnings(value = "REC_CATCH_EXCEPTION", justification = "Exception should not be rethrown but trigger a fallback")
-                public Dispatcher run() {
-                    try {
-                        Class<?> executableType = Class.forName("java.lang.reflect.Executable");
-                        Class<?> parameterType = Class.forName("java.lang.reflect.Parameter");
-                        return new Dispatcher.ForJava8CapableVm(executableType.getMethod("getParameters"),
-                                parameterType.getMethod("getName"),
-                                parameterType.getMethod("isNamePresent"),
-                                parameterType.getMethod("getModifiers"));
-                    } catch (Exception ignored) {
-                        return Dispatcher.ForLegacyVm.INSTANCE;
-                    }
-                }
-            }
-
-            /**
-             * A dispatcher for VMs that support the {@code java.lang.reflect.Parameter} API for Java 8+.
-             */
-            @EqualsAndHashCode
-            class ForJava8CapableVm implements Dispatcher {
-
-                /**
-                 * A reference to {@code java.lang.reflect.Executable#getParameters}.
-                 */
-                private final Method getParameters;
-
-                /**
-                 * A reference to {@code java.lang.reflect.Parameter#getName}.
-                 */
-                private final Method getName;
-
-                /**
-                 * A reference to {@code java.lang.reflect.Parameter#isNamePresent}.
-                 */
-                private final Method isNamePresent;
-
-                /**
-                 * A reference to {@code java.lang.reflect.Parameter#getModifiers}.
-                 */
-                private final Method getModifiers;
-
-                /**
-                 * Creates a new dispatcher for a modern VM.
-                 *
-                 * @param getParameters A reference to {@code java.lang.reflect.Executable#getTypeArguments}.
-                 * @param getName       A reference to {@code java.lang.reflect.Parameter#getName}.
-                 * @param isNamePresent A reference to {@code java.lang.reflect.Parameter#isNamePresent}.
-                 * @param getModifiers  A reference to {@code java.lang.reflect.Parameter#getModifiers}.
-                 */
-                protected ForJava8CapableVm(Method getParameters, Method getName, Method isNamePresent, Method getModifiers) {
-                    this.getParameters = getParameters;
-                    this.getName = getName;
-                    this.isNamePresent = isNamePresent;
-                    this.getModifiers = getModifiers;
-                }
-
-                @Override
-                public int getModifiers(AccessibleObject executable, int index) {
-                    try {
-                        return (Integer) getModifiers.invoke(getParameter(executable, index));
-                    } catch (IllegalAccessException exception) {
-                        throw new IllegalStateException("Cannot access java.lang.reflect.Parameter#getModifiers", exception);
-                    } catch (InvocationTargetException exception) {
-                        throw new IllegalStateException("Error invoking java.lang.reflect.Parameter#getModifiers", exception.getCause());
-                    }
-                }
-
-                @Override
-                public boolean isNamePresent(AccessibleObject executable, int index) {
-                    try {
-                        return (Boolean) isNamePresent.invoke(getParameter(executable, index));
-                    } catch (IllegalAccessException exception) {
-                        throw new IllegalStateException("Cannot access java.lang.reflect.Parameter#isNamePresent", exception);
-                    } catch (InvocationTargetException exception) {
-                        throw new IllegalStateException("Error invoking java.lang.reflect.Parameter#isNamePresent", exception.getCause());
-                    }
-                }
-
-                @Override
-                public String getName(AccessibleObject executable, int index) {
-                    try {
-                        return (String) getName.invoke(getParameter(executable, index));
-                    } catch (IllegalAccessException exception) {
-                        throw new IllegalStateException("Cannot access java.lang.reflect.Parameter#getName", exception);
-                    } catch (InvocationTargetException exception) {
-                        throw new IllegalStateException("Error invoking java.lang.reflect.Parameter#getName", exception.getCause());
-                    }
-                }
-
-                /**
-                 * Returns the {@code java.lang.reflect.Parameter} of an executable at a given index.
-                 *
-                 * @param executable The executable for which a parameter should be read.
-                 * @param index      The index of the parameter.
-                 * @return The parameter for the given index.
-                 */
-                private Object getParameter(AccessibleObject executable, int index) {
-                    try {
-                        return Array.get(getParameters.invoke(executable), index);
-                    } catch (IllegalAccessException exception) {
-                        throw new IllegalStateException("Cannot access java.lang.reflect.Executable#getParameters", exception);
-                    } catch (InvocationTargetException exception) {
-                        throw new IllegalStateException("Error invoking java.lang.reflect.Executable#getParameters", exception.getCause());
-                    }
-                }
-            }
-
-            /**
-             * A dispatcher for a legacy VM that does not know the {@code java.lang.reflect.Parameter} type that only throws
-             * exceptions on any property extraction.
-             */
-            enum ForLegacyVm implements Dispatcher {
-
-                /**
-                 * The singleton instance.
-                 */
-                INSTANCE;
-
-                @Override
-                public int getModifiers(AccessibleObject executable, int index) {
-                    throw new IllegalStateException("Cannot dispatch method for java.lang.reflect.Parameter");
-                }
-
-                @Override
-                public boolean isNamePresent(AccessibleObject executable, int index) {
-                    throw new IllegalStateException("Cannot dispatch method for java.lang.reflect.Parameter");
-                }
-
-                @Override
-                public String getName(AccessibleObject executable, int index) {
-                    throw new IllegalStateException("Cannot dispatch method for java.lang.reflect.Parameter");
-                }
-            }
+            String getName(Object value);
         }
 
         /**
@@ -425,32 +419,39 @@ public interface ParameterDescription extends AnnotationSource,
             /**
              * Creates a new description for a loaded method.
              *
-             * @param method The method for which a parameter is represented.
-             * @param index  The index of the parameter.
+             * @param method                    The method for which a parameter is represented.
+             * @param index                     The index of the parameter.
+             * @param parameterAnnotationSource The parameter annotation source to query.
              */
-            protected OfMethod(Method method, int index) {
-                super(method, index);
+            protected OfMethod(Method method, int index, ParameterAnnotationSource parameterAnnotationSource) {
+                super(method, index, parameterAnnotationSource);
             }
 
-            @Override
-            @SuppressFBWarnings(value = "BC_UNCONFIRMED_CAST", justification = "The implicit field type casting is not understood by Findbugs")
+            /**
+             * {@inheritDoc}
+             */
+            @SuppressFBWarnings(value = "BC_UNCONFIRMED_CAST", justification = "The implicit field type casting is not understood by Findbugs.")
             public MethodDescription.InDefinedShape getDeclaringMethod() {
                 return new MethodDescription.ForLoadedMethod(executable);
             }
 
-            @Override
-            @SuppressFBWarnings(value = "BC_UNCONFIRMED_CAST", justification = "The implicit field type casting is not understood by Findbugs")
+            /**
+             * {@inheritDoc}
+             */
+            @SuppressFBWarnings(value = "BC_UNCONFIRMED_CAST", justification = "The implicit field type casting is not understood by Findbugs.")
             public TypeDescription.Generic getType() {
                 if (TypeDescription.AbstractBase.RAW_TYPES) {
-                    return new TypeDescription.Generic.OfNonGenericType.ForLoadedType(executable.getParameterTypes()[index]);
+                    return TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(executable.getParameterTypes()[index]);
                 }
                 return new TypeDescription.Generic.LazyProjection.OfMethodParameter(executable, index, executable.getParameterTypes());
             }
 
-            @Override
-            @SuppressFBWarnings(value = "BC_UNCONFIRMED_CAST", justification = "The implicit field type casting is not understood by Findbugs")
+            /**
+             * {@inheritDoc}
+             */
+            @SuppressFBWarnings(value = "BC_UNCONFIRMED_CAST", justification = "The implicit field type casting is not understood by Findbugs.")
             public AnnotationList getDeclaredAnnotations() {
-                return new AnnotationList.ForLoadedAnnotations(executable.getParameterAnnotations()[index]);
+                return new AnnotationList.ForLoadedAnnotations(parameterAnnotationSource.getParameterAnnotations()[index]);
             }
         }
 
@@ -462,32 +463,39 @@ public interface ParameterDescription extends AnnotationSource,
             /**
              * Creates a new description for a loaded constructor.
              *
-             * @param constructor The constructor for which a parameter is represented.
-             * @param index       The index of the parameter.
+             * @param constructor               The constructor for which a parameter is represented.
+             * @param index                     The index of the parameter.
+             * @param parameterAnnotationSource The parameter annotation source to query.
              */
-            protected OfConstructor(Constructor<?> constructor, int index) {
-                super(constructor, index);
+            protected OfConstructor(Constructor<?> constructor, int index, ParameterAnnotationSource parameterAnnotationSource) {
+                super(constructor, index, parameterAnnotationSource);
             }
 
-            @Override
-            @SuppressFBWarnings(value = "BC_UNCONFIRMED_CAST", justification = "The implicit field type casting is not understood by Findbugs")
+            /**
+             * {@inheritDoc}
+             */
+            @SuppressFBWarnings(value = "BC_UNCONFIRMED_CAST", justification = "The implicit field type casting is not understood by Findbugs.")
             public MethodDescription.InDefinedShape getDeclaringMethod() {
                 return new MethodDescription.ForLoadedConstructor(executable);
             }
 
-            @Override
-            @SuppressFBWarnings(value = "BC_UNCONFIRMED_CAST", justification = "The implicit field type casting is not understood by Findbugs")
+            /**
+             * {@inheritDoc}
+             */
+            @SuppressFBWarnings(value = "BC_UNCONFIRMED_CAST", justification = "The implicit field type casting is not understood by Findbugs.")
             public TypeDescription.Generic getType() {
                 if (TypeDescription.AbstractBase.RAW_TYPES) {
-                    return new TypeDescription.Generic.OfNonGenericType.ForLoadedType(executable.getParameterTypes()[index]);
+                    return TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(executable.getParameterTypes()[index]);
                 }
                 return new TypeDescription.Generic.LazyProjection.OfConstructorParameter(executable, index, executable.getParameterTypes());
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             @SuppressFBWarnings(value = "BC_UNCONFIRMED_CAST", justification = "The implicit field type casting is not understood by Findbugs")
             public AnnotationList getDeclaredAnnotations() {
-                Annotation[][] annotation = executable.getParameterAnnotations();
+                Annotation[][] annotation = parameterAnnotationSource.getParameterAnnotations();
                 MethodDescription.InDefinedShape declaringMethod = getDeclaringMethod();
                 if (annotation.length != declaringMethod.getParameters().size() && declaringMethod.getDeclaringType().isInnerClass()) {
                     return index == 0
@@ -521,56 +529,68 @@ public interface ParameterDescription extends AnnotationSource,
             private final Class<?>[] parameterType;
 
             /**
-             * The annotations of the represented method's parameters.
+             * The parameter annotation source to query.
              */
-            private final Annotation[][] parameterAnnotation;
+            private final ParameterAnnotationSource parameterAnnotationSource;
 
             /**
              * Creates a legacy representation of a method's parameter.
              *
-             * @param method              The method that declares this parameter.
-             * @param index               The index of this parameter.
-             * @param parameterType       The type erasures of the represented method.
-             * @param parameterAnnotation The annotations of the represented method's parameters.
+             * @param method                    The method that declares this parameter.
+             * @param index                     The index of this parameter.
+             * @param parameterType             The type erasures of the represented method.
+             * @param parameterAnnotationSource The parameter annotation source to query.
              */
-            protected OfLegacyVmMethod(Method method, int index, Class<?>[] parameterType, Annotation[][] parameterAnnotation) {
+            protected OfLegacyVmMethod(Method method, int index, Class<?>[] parameterType, ParameterAnnotationSource parameterAnnotationSource) {
                 this.method = method;
                 this.index = index;
                 this.parameterType = parameterType;
-                this.parameterAnnotation = parameterAnnotation;
+                this.parameterAnnotationSource = parameterAnnotationSource;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public TypeDescription.Generic getType() {
                 if (TypeDescription.AbstractBase.RAW_TYPES) {
-                    return new TypeDescription.Generic.OfNonGenericType.ForLoadedType(parameterType[index]);
+                    return TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(parameterType[index]);
                 }
                 return new TypeDescription.Generic.LazyProjection.OfMethodParameter(method, index, parameterType);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public MethodDescription.InDefinedShape getDeclaringMethod() {
                 return new MethodDescription.ForLoadedMethod(method);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public int getIndex() {
                 return index;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public boolean isNamed() {
                 return false;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public boolean hasModifiers() {
                 return false;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public AnnotationList getDeclaredAnnotations() {
-                return new AnnotationList.ForLoadedAnnotations(parameterAnnotation[index]);
+                return new AnnotationList.ForLoadedAnnotations(parameterAnnotationSource.getParameterAnnotations()[index]);
             }
         }
 
@@ -596,56 +616,69 @@ public interface ParameterDescription extends AnnotationSource,
             private final Class<?>[] parameterType;
 
             /**
-             * The annotations of this parameter.
+             * The parameter annotation source to query.
              */
-            private final Annotation[][] parameterAnnotation;
+            private final ParameterAnnotationSource parameterAnnotationSource;
 
             /**
              * Creates a legacy representation of a method's parameter.
              *
-             * @param constructor         The constructor that declares this parameter.
-             * @param index               The index of this parameter.
-             * @param parameterType       The type erasures of the represented method.
-             * @param parameterAnnotation An array of all parameter annotations of the represented method.
+             * @param constructor               The constructor that declares this parameter.
+             * @param index                     The index of this parameter.
+             * @param parameterType             The type erasures of the represented method.
+             * @param parameterAnnotationSource The parameter annotation source to query.
              */
-            protected OfLegacyVmConstructor(Constructor<?> constructor, int index, Class<?>[] parameterType, Annotation[][] parameterAnnotation) {
+            protected OfLegacyVmConstructor(Constructor<?> constructor, int index, Class<?>[] parameterType, ParameterAnnotationSource parameterAnnotationSource) {
                 this.constructor = constructor;
                 this.index = index;
                 this.parameterType = parameterType;
-                this.parameterAnnotation = parameterAnnotation;
+                this.parameterAnnotationSource = parameterAnnotationSource;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public TypeDescription.Generic getType() {
                 if (TypeDescription.AbstractBase.RAW_TYPES) {
-                    return new TypeDescription.Generic.OfNonGenericType.ForLoadedType(parameterType[index]);
+                    return TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(parameterType[index]);
                 }
                 return new TypeDescription.Generic.LazyProjection.OfConstructorParameter(constructor, index, parameterType);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public MethodDescription.InDefinedShape getDeclaringMethod() {
                 return new MethodDescription.ForLoadedConstructor(constructor);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public int getIndex() {
                 return index;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public boolean isNamed() {
                 return false;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public boolean hasModifiers() {
                 return false;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public AnnotationList getDeclaredAnnotations() {
                 MethodDescription.InDefinedShape declaringMethod = getDeclaringMethod();
+                Annotation[][] parameterAnnotation = parameterAnnotationSource.getParameterAnnotations();
                 if (parameterAnnotation.length != declaringMethod.getParameters().size() && declaringMethod.getDeclaringType().isInnerClass()) {
                     return index == 0
                             ? new AnnotationList.Empty()
@@ -680,11 +713,13 @@ public interface ParameterDescription extends AnnotationSource,
         /**
          * The name of the parameter or {@code null} if no name is explicitly defined.
          */
+        @MaybeNull
         private final String name;
 
         /**
          * The modifiers of the parameter or {@code null} if no modifiers are explicitly defined.
          */
+        @MaybeNull
         private final Integer modifiers;
 
         /**
@@ -750,8 +785,8 @@ public interface ParameterDescription extends AnnotationSource,
         public Latent(MethodDescription.InDefinedShape declaringMethod,
                       TypeDescription.Generic parameterType,
                       List<? extends AnnotationDescription> declaredAnnotations,
-                      String name,
-                      Integer modifiers,
+                      @MaybeNull String name,
+                      @MaybeNull Integer modifiers,
                       int index,
                       int offset) {
             this.declaringMethod = declaringMethod;
@@ -763,51 +798,69 @@ public interface ParameterDescription extends AnnotationSource,
             this.offset = offset;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public TypeDescription.Generic getType() {
             return parameterType.accept(TypeDescription.Generic.Visitor.Substitutor.ForAttachment.of(this));
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public MethodDescription.InDefinedShape getDeclaringMethod() {
             return declaringMethod;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public int getIndex() {
             return index;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public int getOffset() {
             return offset;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public boolean isNamed() {
             return name != null;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public boolean hasModifiers() {
             return modifiers != null;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public String getName() {
-            return isNamed()
-                    ? name
-                    : super.getName();
+            return name == null
+                    ? super.getName()
+                    : name;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public int getModifiers() {
-            return hasModifiers()
-                    ? modifiers
-                    : super.getModifiers();
+            return modifiers == null
+                    ? super.getModifiers()
+                    : modifiers;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public AnnotationList getDeclaredAnnotations() {
             return new AnnotationList.Explicit(declaredAnnotations);
         }
@@ -853,52 +906,72 @@ public interface ParameterDescription extends AnnotationSource,
             this.visitor = visitor;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public TypeDescription.Generic getType() {
             return parameterDescription.getType().accept(visitor);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public MethodDescription.InGenericShape getDeclaringMethod() {
             return declaringMethod;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public int getIndex() {
             return parameterDescription.getIndex();
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public boolean isNamed() {
             return parameterDescription.isNamed();
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public boolean hasModifiers() {
             return parameterDescription.hasModifiers();
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public int getOffset() {
             return parameterDescription.getOffset();
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public String getName() {
             return parameterDescription.getName();
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public int getModifiers() {
             return parameterDescription.getModifiers();
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public AnnotationList getDeclaredAnnotations() {
             return parameterDescription.getDeclaredAnnotations();
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public InDefinedShape asDefined() {
             return parameterDescription.asDefined();
         }
@@ -912,11 +985,13 @@ public interface ParameterDescription extends AnnotationSource,
         /**
          * Indicator for a method parameter without an explicit name.
          */
+        @AlwaysNull
         public static final String NO_NAME = null;
 
         /**
          * Indicator for a method parameter without explicit modifiers.
          */
+        @AlwaysNull
         public static final Integer NO_MODIFIERS = null;
 
         /**
@@ -932,11 +1007,13 @@ public interface ParameterDescription extends AnnotationSource,
         /**
          * The name of the parameter or {@code null} if no explicit name is defined.
          */
+        @MaybeNull
         private final String name;
 
         /**
          * The modifiers of the parameter or {@code null} if no explicit modifiers is defined.
          */
+        @MaybeNull
         private final Integer modifiers;
 
         /**
@@ -966,7 +1043,7 @@ public interface ParameterDescription extends AnnotationSource,
          * @param name      The name of the parameter or {@code null} if no explicit name is defined.
          * @param modifiers The modifiers of the parameter or {@code null} if no explicit modifiers is defined.
          */
-        public Token(TypeDescription.Generic type, String name, Integer modifiers) {
+        public Token(TypeDescription.Generic type, @MaybeNull String name, @MaybeNull Integer modifiers) {
             this(type, Collections.<AnnotationDescription>emptyList(), name, modifiers);
         }
 
@@ -980,8 +1057,8 @@ public interface ParameterDescription extends AnnotationSource,
          */
         public Token(TypeDescription.Generic type,
                      List<? extends AnnotationDescription> annotations,
-                     String name,
-                     Integer modifiers) {
+                     @MaybeNull String name,
+                     @MaybeNull Integer modifiers) {
             this.type = type;
             this.annotations = annotations;
             this.name = name;
@@ -1011,6 +1088,7 @@ public interface ParameterDescription extends AnnotationSource,
          *
          * @return The name of the parameter or {@code null} if no explicit name is defined.
          */
+        @MaybeNull
         public String getName() {
             return name;
         }
@@ -1020,11 +1098,14 @@ public interface ParameterDescription extends AnnotationSource,
          *
          * @return The modifiers of the parameter or {@code null} if no explicit modifiers is defined.
          */
+        @MaybeNull
         public Integer getModifiers() {
             return modifiers;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Token accept(TypeDescription.Generic.Visitor<? extends TypeDescription.Generic> visitor) {
             return new Token(type.accept(visitor),
                     annotations,
@@ -1033,23 +1114,27 @@ public interface ParameterDescription extends AnnotationSource,
         }
 
         @Override
-        public boolean equals(Object other) {
-            if (this == other) return true;
-            if (!(other instanceof Token)) return false;
-            Token token = (Token) other;
-            return type.equals(token.type)
-                    && annotations.equals(token.annotations)
-                    && (name != null ? name.equals(token.name) : token.name == null)
-                    && (modifiers != null ? modifiers.equals(token.modifiers) : token.modifiers == null);
-        }
-
-        @Override
+        @CachedReturnPlugin.Enhance("hashCode")
         public int hashCode() {
             int result = type.hashCode();
             result = 31 * result + annotations.hashCode();
             result = 31 * result + (name != null ? name.hashCode() : 0);
             result = 31 * result + (modifiers != null ? modifiers.hashCode() : 0);
             return result;
+        }
+
+        @Override
+        public boolean equals(@MaybeNull Object other) {
+            if (this == other) {
+                return true;
+            } else if (!(other instanceof Token)) {
+                return false;
+            }
+            Token token = (Token) other;
+            return type.equals(token.type)
+                    && annotations.equals(token.annotations)
+                    && (name != null ? name.equals(token.name) : token.name == null)
+                    && (modifiers != null ? modifiers.equals(token.modifiers) : token.modifiers == null);
         }
 
         @Override
@@ -1081,12 +1166,16 @@ public interface ParameterDescription extends AnnotationSource,
                 this.typeDescriptions = typeDescriptions;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Token get(int index) {
                 return new Token(typeDescriptions.get(index).asGenericType());
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public int size() {
                 return typeDescriptions.size();
             }

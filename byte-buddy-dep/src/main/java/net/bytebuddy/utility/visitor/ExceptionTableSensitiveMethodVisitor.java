@@ -1,3 +1,18 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.utility.visitor;
 
 import org.objectweb.asm.Handle;
@@ -43,6 +58,25 @@ public abstract class ExceptionTableSensitiveMethodVisitor extends MethodVisitor
     protected abstract void onAfterExceptionTable();
 
     @Override
+    public final void visitFrame(int type, int localVariableLength, Object[] localVariable, int stackSize, Object[] stack) {
+        considerEndOfExceptionTable();
+        onVisitFrame(type, localVariableLength, localVariable, stackSize, stack);
+    }
+
+    /**
+     * Visits a stack map frame.
+     *
+     * @param type                The type of stack map frame.
+     * @param localVariableLength The length of the local variable array.
+     * @param localVariable       An array containing type symbols for all values in the local variable array.
+     * @param stackSize           The size of the operand stack.
+     * @param stack               An array containing type symbols for all values on the operand stack.
+     */
+    protected void onVisitFrame(int type, int localVariableLength, Object[] localVariable, int stackSize, Object[] stack) {
+        super.visitFrame(type, localVariableLength, localVariable, stackSize, stack);
+    }
+
+    @Override
     public final void visitLabel(Label label) {
         considerEndOfExceptionTable();
         onVisitLabel(label);
@@ -75,9 +109,9 @@ public abstract class ExceptionTableSensitiveMethodVisitor extends MethodVisitor
     }
 
     @Override
-    public final void visitVarInsn(int opcode, int var) {
+    public final void visitVarInsn(int opcode, int offset) {
         considerEndOfExceptionTable();
-        onVisitVarInsn(opcode, var);
+        onVisitVarInsn(opcode, offset);
     }
 
     /**
@@ -107,9 +141,9 @@ public abstract class ExceptionTableSensitiveMethodVisitor extends MethodVisitor
     }
 
     @Override
-    public final void visitFieldInsn(int opcode, String owner, String name, String desc) {
+    public final void visitFieldInsn(int opcode, String owner, String name, String descriptor) {
         considerEndOfExceptionTable();
-        onVisitFieldInsn(opcode, owner, name, desc);
+        onVisitFieldInsn(opcode, owner, name, descriptor);
     }
 
     /**
@@ -126,9 +160,9 @@ public abstract class ExceptionTableSensitiveMethodVisitor extends MethodVisitor
 
     @Override
     @SuppressWarnings("deprecation")
-    public final void visitMethodInsn(int opcode, String owner, String name, String desc) {
+    public final void visitMethodInsn(int opcode, String owner, String name, String descriptor) {
         considerEndOfExceptionTable();
-        onVisitMethodInsn(opcode, owner, name, desc);
+        onVisitMethodInsn(opcode, owner, name, descriptor);
     }
 
     /**
@@ -143,33 +177,32 @@ public abstract class ExceptionTableSensitiveMethodVisitor extends MethodVisitor
     @Deprecated
     @SuppressWarnings("deprecation")
     protected void onVisitMethodInsn(int opcode, String owner, String name, String descriptor) {
-        considerEndOfExceptionTable();
         super.visitMethodInsn(opcode, owner, name, descriptor);
     }
 
     @Override
-    public final void visitMethodInsn(int opcode, String owner, String name, String desc, boolean iFace) {
+    public final void visitMethodInsn(int opcode, String owner, String name, String descriptor, boolean isInterface) {
         considerEndOfExceptionTable();
-        onVisitMethodInsn(opcode, owner, name, desc, iFace);
+        onVisitMethodInsn(opcode, owner, name, descriptor, isInterface);
     }
 
     /**
      * Visits a method instruction.
      *
-     * @param opcode     The visited opcode.
-     * @param owner      The method's owner.
-     * @param name       The method's internal name.
-     * @param descriptor The method's descriptor.
-     * @param iFace      {@code true} if the method belongs to an interface.
+     * @param opcode      The visited opcode.
+     * @param owner       The method's owner.
+     * @param name        The method's internal name.
+     * @param descriptor  The method's descriptor.
+     * @param isInterface {@code true} if the method belongs to an interface.
      */
-    protected void onVisitMethodInsn(int opcode, String owner, String name, String descriptor, boolean iFace) {
-        super.visitMethodInsn(opcode, owner, name, descriptor, iFace);
+    protected void onVisitMethodInsn(int opcode, String owner, String name, String descriptor, boolean isInterface) {
+        super.visitMethodInsn(opcode, owner, name, descriptor, isInterface);
     }
 
     @Override
-    public final void visitInvokeDynamicInsn(String name, String desc, Handle bsm, Object... bsmArgs) {
+    public final void visitInvokeDynamicInsn(String name, String descriptor, Handle handle, Object... argument) {
         considerEndOfExceptionTable();
-        onVisitInvokeDynamicInsn(name, desc, bsm, bsmArgs);
+        onVisitInvokeDynamicInsn(name, descriptor, handle, argument);
     }
 
     /**
@@ -201,9 +234,9 @@ public abstract class ExceptionTableSensitiveMethodVisitor extends MethodVisitor
     }
 
     @Override
-    public final void visitLdcInsn(Object cst) {
+    public final void visitLdcInsn(Object constant) {
         considerEndOfExceptionTable();
-        onVisitLdcInsn(cst);
+        onVisitLdcInsn(constant);
     }
 
     /**
@@ -216,9 +249,9 @@ public abstract class ExceptionTableSensitiveMethodVisitor extends MethodVisitor
     }
 
     @Override
-    public final void visitIincInsn(int var, int increment) {
+    public final void visitIincInsn(int offset, int increment) {
         considerEndOfExceptionTable();
-        onVisitIincInsn(var, increment);
+        onVisitIincInsn(offset, increment);
     }
 
     /**
@@ -232,44 +265,44 @@ public abstract class ExceptionTableSensitiveMethodVisitor extends MethodVisitor
     }
 
     @Override
-    public final void visitTableSwitchInsn(int min, int max, Label dflt, Label... labels) {
+    public final void visitTableSwitchInsn(int minimum, int maximum, Label defaultTarget, Label... label) {
         considerEndOfExceptionTable();
-        onVisitTableSwitchInsn(min, max, dflt, labels);
+        onVisitTableSwitchInsn(minimum, maximum, defaultTarget, label);
     }
 
     /**
      * Visits a table switch instruction.
      *
-     * @param min           The minimum index.
-     * @param max           The maximum index.
+     * @param minimum       The minimum index.
+     * @param maximum       The maximum index.
      * @param defaultTarget A label indicating the default value.
      * @param label         Labels indicating the jump targets.
      */
-    protected void onVisitTableSwitchInsn(int min, int max, Label defaultTarget, Label... label) {
-        super.visitTableSwitchInsn(min, max, defaultTarget, label);
+    protected void onVisitTableSwitchInsn(int minimum, int maximum, Label defaultTarget, Label... label) {
+        super.visitTableSwitchInsn(minimum, maximum, defaultTarget, label);
     }
 
     @Override
-    public final void visitLookupSwitchInsn(Label dflt, int[] keys, Label[] labels) {
+    public final void visitLookupSwitchInsn(Label dflt, int[] key, Label[] label) {
         considerEndOfExceptionTable();
-        onVisitLookupSwitchInsn(dflt, keys, labels);
+        onVisitLookupSwitchInsn(dflt, key, label);
     }
 
     /**
      * Visits a lookup switch instruction.
      *
      * @param defaultTarget The default option.
-     * @param keys          The key values.
-     * @param key           The targets for each key.
+     * @param key           The key values.
+     * @param label         The targets for each key.
      */
-    protected void onVisitLookupSwitchInsn(Label defaultTarget, int[] keys, Label[] key) {
-        super.visitLookupSwitchInsn(defaultTarget, keys, key);
+    protected void onVisitLookupSwitchInsn(Label defaultTarget, int[] key, Label[] label) {
+        super.visitLookupSwitchInsn(defaultTarget, key, label);
     }
 
     @Override
-    public final void visitMultiANewArrayInsn(String desc, int dims) {
+    public final void visitMultiANewArrayInsn(String descriptor, int dimensions) {
         considerEndOfExceptionTable();
-        onVisitMultiANewArrayInsn(desc, dims);
+        onVisitMultiANewArrayInsn(descriptor, dimensions);
     }
 
     /**

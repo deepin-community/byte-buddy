@@ -1,12 +1,28 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.dynamic.scaffold;
 
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.field.FieldDescription;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.dynamic.Transformer;
 import net.bytebuddy.implementation.attribute.FieldAttributeAppender;
 import net.bytebuddy.matcher.ElementMatcher;
 import net.bytebuddy.matcher.LatentMatcher;
+import net.bytebuddy.utility.nullability.MaybeNull;
 
 import java.util.*;
 
@@ -28,12 +44,12 @@ public interface FieldRegistry {
      * @param matcher                       The matcher to identify any field that this definition concerns.
      * @param fieldAttributeAppenderFactory The field attribute appender factory to apply on any matched field.
      * @param defaultValue                  The default value to write to the field or {@code null} if no default value is to be set for the field.
-     * @param transformer              The field transformer to apply to any matched field.
+     * @param transformer                   The field transformer to apply to any matched field.
      * @return An adapted version of this method registry.
      */
     FieldRegistry prepend(LatentMatcher<? super FieldDescription> matcher,
                           FieldAttributeAppender.Factory fieldAttributeAppenderFactory,
-                          Object defaultValue,
+                          @MaybeNull Object defaultValue,
                           Transformer<FieldDescription> transformer);
 
     /**
@@ -59,7 +75,9 @@ public interface FieldRegistry {
              */
             INSTANCE;
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Record target(FieldDescription fieldDescription) {
                 return new Record.ForImplicitField(fieldDescription);
             }
@@ -69,7 +87,7 @@ public interface FieldRegistry {
     /**
      * An immutable default implementation of a field registry.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class Default implements FieldRegistry {
 
         /**
@@ -93,10 +111,12 @@ public interface FieldRegistry {
             this.entries = entries;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public FieldRegistry prepend(LatentMatcher<? super FieldDescription> matcher,
                                      FieldAttributeAppender.Factory fieldAttributeAppenderFactory,
-                                     Object defaultValue,
+                                     @MaybeNull Object defaultValue,
                                      Transformer<FieldDescription> transformer) {
             List<Entry> entries = new ArrayList<Entry>(this.entries.size() + 1);
             entries.add(new Entry(matcher, fieldAttributeAppenderFactory, defaultValue, transformer));
@@ -104,7 +124,9 @@ public interface FieldRegistry {
             return new Default(entries);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public FieldRegistry.Compiled compile(TypeDescription instrumentedType) {
             List<Compiled.Entry> entries = new ArrayList<Compiled.Entry>(this.entries.size());
             Map<FieldAttributeAppender.Factory, FieldAttributeAppender> fieldAttributeAppenders = new HashMap<FieldAttributeAppender.Factory, FieldAttributeAppender>();
@@ -122,7 +144,7 @@ public interface FieldRegistry {
         /**
          * An entry of the default field registry.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         protected static class Entry implements LatentMatcher<FieldDescription> {
 
             /**
@@ -138,6 +160,8 @@ public interface FieldRegistry {
             /**
              * The default value to write to the field or {@code null} if no default value is to be set for the field.
              */
+            @MaybeNull
+            @HashCodeAndEqualsPlugin.ValueHandling(HashCodeAndEqualsPlugin.ValueHandling.Sort.REVERSE_NULLABILITY)
             private final Object defaultValue;
 
             /**
@@ -151,11 +175,11 @@ public interface FieldRegistry {
              * @param matcher                       The matcher to identify any field that this definition concerns.
              * @param fieldAttributeAppenderFactory The field attribute appender factory to apply on any matched field.
              * @param defaultValue                  The default value to write to the field or {@code null} if no default value is to be set for the field.
-             * @param transformer              The field transformer to apply to any matched field.
+             * @param transformer                   The field transformer to apply to any matched field.
              */
             protected Entry(LatentMatcher<? super FieldDescription> matcher,
                             FieldAttributeAppender.Factory fieldAttributeAppenderFactory,
-                            Object defaultValue,
+                            @MaybeNull Object defaultValue,
                             Transformer<FieldDescription> transformer) {
                 this.matcher = matcher;
                 this.fieldAttributeAppenderFactory = fieldAttributeAppenderFactory;
@@ -177,6 +201,7 @@ public interface FieldRegistry {
              *
              * @return The default value to write to the field or {@code null} if no default value is to be set for the field.
              */
+            @MaybeNull
             protected Object getDefaultValue() {
                 return defaultValue;
             }
@@ -190,7 +215,9 @@ public interface FieldRegistry {
                 return transformer;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public ElementMatcher<? super FieldDescription> resolve(TypeDescription typeDescription) {
                 return matcher.resolve(typeDescription);
             }
@@ -199,7 +226,7 @@ public interface FieldRegistry {
         /**
          * A compiled default field registry.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         protected static class Compiled implements FieldRegistry.Compiled {
 
             /**
@@ -223,7 +250,9 @@ public interface FieldRegistry {
                 this.entries = entries;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Record target(FieldDescription fieldDescription) {
                 for (Entry entry : entries) {
                     if (entry.matches(fieldDescription)) {
@@ -236,7 +265,7 @@ public interface FieldRegistry {
             /**
              * An entry of a compiled field registry.
              */
-            @EqualsAndHashCode
+            @HashCodeAndEqualsPlugin.Enhance
             protected static class Entry implements ElementMatcher<FieldDescription> {
 
                 /**
@@ -252,6 +281,8 @@ public interface FieldRegistry {
                 /**
                  * The default value to write to the field or {@code null} if no default value is to be set for the field.
                  */
+                @MaybeNull
+                @HashCodeAndEqualsPlugin.ValueHandling(HashCodeAndEqualsPlugin.ValueHandling.Sort.REVERSE_NULLABILITY)
                 private final Object defaultValue;
 
                 /**
@@ -265,11 +296,11 @@ public interface FieldRegistry {
                  * @param matcher                The matcher to identify any field that this definition concerns.
                  * @param fieldAttributeAppender The field attribute appender to apply on any matched field.
                  * @param defaultValue           The default value to write to the field or {@code null} if no default value is to be set for the field.
-                 * @param transformer       The field transformer to apply to any matched field.
+                 * @param transformer            The field transformer to apply to any matched field.
                  */
                 protected Entry(ElementMatcher<? super FieldDescription> matcher,
                                 FieldAttributeAppender fieldAttributeAppender,
-                                Object defaultValue,
+                                @MaybeNull Object defaultValue,
                                 Transformer<FieldDescription> transformer) {
                     this.matcher = matcher;
                     this.fieldAttributeAppender = fieldAttributeAppender;
@@ -288,8 +319,10 @@ public interface FieldRegistry {
                     return new Record.ForExplicitField(fieldAttributeAppender, defaultValue, transformer.transform(instrumentedType, fieldDescription));
                 }
 
-                @Override
-                public boolean matches(FieldDescription target) {
+                /**
+                 * {@inheritDoc}
+                 */
+                public boolean matches(@MaybeNull FieldDescription target) {
                     return matcher.matches(target);
                 }
             }

@@ -3,7 +3,6 @@ package net.bytebuddy.description.annotation;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.matcher.AbstractFilterableListTest;
 import net.bytebuddy.matcher.ElementMatchers;
-import org.hamcrest.CoreMatchers;
 import org.junit.Test;
 
 import java.lang.annotation.Annotation;
@@ -11,7 +10,6 @@ import java.lang.annotation.Inherited;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.Collections;
-import java.util.List;
 
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.nullValue;
@@ -31,12 +29,12 @@ public abstract class AbstractAnnotationListTest<U> extends AbstractFilterableLi
 
     @Test
     public void testAnnotationIsPresentDescription() throws Exception {
-        assertThat(asList(getFirst()).isAnnotationPresent(new TypeDescription.ForLoadedType(Foo.class)), is(true));
+        assertThat(asList(getFirst()).isAnnotationPresent(TypeDescription.ForLoadedType.of(Foo.class)), is(true));
     }
 
     @Test
     public void testAnnotationIsNotPresentDescription() throws Exception {
-        assertThat(asList(getFirst()).isAnnotationPresent(new TypeDescription.ForLoadedType(Annotation.class)), is(false));
+        assertThat(asList(getFirst()).isAnnotationPresent(TypeDescription.ForLoadedType.of(Annotation.class)), is(false));
     }
 
     @Test
@@ -51,13 +49,13 @@ public abstract class AbstractAnnotationListTest<U> extends AbstractFilterableLi
 
     @Test
     public void testAnnotationOfTypeDescription() throws Exception {
-        assertThat(asList(getFirst()).ofType(new TypeDescription.ForLoadedType(Foo.class)),
+        assertThat(asList(getFirst()).ofType(TypeDescription.ForLoadedType.of(Foo.class)),
                 is((AnnotationDescription) AnnotationDescription.ForLoadedAnnotation.of(Holder.class.getAnnotation(Foo.class))));
     }
 
     @Test
     public void testAnnotationWrongTypeOfTypeDescription() throws Exception {
-        assertThat(asList(getFirst()).ofType(new TypeDescription.ForLoadedType(Annotation.class)), nullValue(AnnotationDescription.class));
+        assertThat(asList(getFirst()).ofType(TypeDescription.ForLoadedType.of(Annotation.class)), nullValue(AnnotationDescription.class));
     }
 
     @Test
@@ -67,7 +65,7 @@ public abstract class AbstractAnnotationListTest<U> extends AbstractFilterableLi
 
     @Test
     public void testInheritedIgnoreType() throws Exception {
-        assertThat(asList(getFirst()).inherited(Collections.<TypeDescription>singleton(new TypeDescription.ForLoadedType(Foo.class))).size(), is(0));
+        assertThat(asList(getFirst()).inherited(Collections.<TypeDescription>singleton(TypeDescription.ForLoadedType.of(Foo.class))).size(), is(0));
     }
 
     @Test

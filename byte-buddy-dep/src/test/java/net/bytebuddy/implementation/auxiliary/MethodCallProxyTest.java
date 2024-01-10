@@ -1,7 +1,8 @@
 package net.bytebuddy.implementation.auxiliary;
 
+import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.test.utility.CallTraceable;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
+import net.bytebuddy.utility.RandomString;
 import org.junit.Test;
 
 import java.lang.reflect.Constructor;
@@ -11,6 +12,7 @@ import java.util.concurrent.Callable;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.nullValue;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.mockito.Mockito.when;
 
 public class MethodCallProxyTest extends AbstractMethodCallProxyTest {
 
@@ -21,6 +23,13 @@ public class MethodCallProxyTest extends AbstractMethodCallProxyTest {
     private static final int INT_VALUE = 21;
 
     private static final boolean BOOLEAN_VALUE = true;
+
+    @Test
+    public void testSignature() throws Exception {
+        MethodDescription methodDescription = new MethodDescription.ForLoadedMethod(Object.class.getMethod("toString"));
+        when(specialMethodInvocation.getMethodDescription()).thenReturn(methodDescription);
+        assertThat(new MethodCallProxy(specialMethodInvocation, true).getSuffix(), is(RandomString.hashOf(methodDescription.hashCode()) + "S"));
+    }
 
     @Test
     public void testNoParameterMethod() throws Exception {
@@ -77,12 +86,10 @@ public class MethodCallProxyTest extends AbstractMethodCallProxyTest {
     }
 
     @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(MethodCallProxy.class).apply();
-        ObjectPropertyAssertion.of(MethodCallProxy.AssignableSignatureCall.class).apply();
-        ObjectPropertyAssertion.of(MethodCallProxy.ConstructorCall.class).apply();
-        ObjectPropertyAssertion.of(MethodCallProxy.MethodCall.class).apply();
-        ObjectPropertyAssertion.of(MethodCallProxy.MethodCall.Appender.class).skipSynthetic().apply();
+    public void testSuffix() throws Exception {
+        MethodDescription methodDescription = new MethodDescription.ForLoadedMethod(Object.class.getMethod("toString"));
+        when(specialMethodInvocation.getMethodDescription()).thenReturn(methodDescription);
+        assertThat(new MethodCallProxy(specialMethodInvocation, false).getSuffix(), is("4cscpe10"));
     }
 
     @SuppressWarnings("unused")

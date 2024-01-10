@@ -1,7 +1,22 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.agent.builder;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.dynamic.ClassFileLocator;
 import net.bytebuddy.dynamic.loading.ClassInjector;
@@ -20,7 +35,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * singleton and for becoming reachable from the JVM's meta factory. This class keeps a reference to all registered transformers which need
  * to be explicitly deregistered in order to avoid a memory leak.
  */
-@EqualsAndHashCode
+@HashCodeAndEqualsPlugin.Enhance
 public class LambdaFactory {
 
     /**
@@ -32,7 +47,7 @@ public class LambdaFactory {
      * A mapping of all registered class file transformers and their lambda factories, linked in their application order.
      * This field <b>must not</b> be accessed directly but only by reading this class from the system class loader.
      */
-    @SuppressFBWarnings(value = "MS_MUTABLE_COLLECTION_PKGPROTECT", justification = "The field must be accessible by different class loader instances")
+    @SuppressFBWarnings(value = "MS_MUTABLE_COLLECTION_PKGPROTECT", justification = "The field must be accessible by different class loader instances.")
     public static final Map<ClassFileTransformer, LambdaFactory> CLASS_FILE_TRANSFORMERS = new ConcurrentHashMap<ClassFileTransformer, LambdaFactory>();
 
     /**
@@ -74,9 +89,9 @@ public class LambdaFactory {
     @SuppressWarnings("all")
     public static boolean register(ClassFileTransformer classFileTransformer, Object classFileFactory) {
         try {
-            TypeDescription typeDescription = new TypeDescription.ForLoadedType(LambdaFactory.class);
+            TypeDescription typeDescription = TypeDescription.ForLoadedType.of(LambdaFactory.class);
             Class<?> lambdaFactory = ClassInjector.UsingReflection.ofSystemClassLoader()
-                    .inject(Collections.singletonMap(typeDescription, ClassFileLocator.ForClassLoader.read(LambdaFactory.class).resolve()))
+                    .inject(Collections.singletonMap(typeDescription, ClassFileLocator.ForClassLoader.read(LambdaFactory.class)))
                     .get(typeDescription);
             @SuppressWarnings("unchecked")
             Map<ClassFileTransformer, Object> classFileTransformers = (Map<ClassFileTransformer, Object>) lambdaFactory

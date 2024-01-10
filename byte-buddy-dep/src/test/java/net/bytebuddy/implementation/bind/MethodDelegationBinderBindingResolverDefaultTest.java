@@ -1,25 +1,24 @@
 package net.bytebuddy.implementation.bind;
 
 import net.bytebuddy.description.method.MethodDescription;
-import net.bytebuddy.test.utility.MockitoRule;
 import org.hamcrest.MatcherAssert;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 
 import java.util.Arrays;
 import java.util.Collections;
 
 import static org.hamcrest.CoreMatchers.is;
-import static org.junit.Assert.assertThat;
 import static org.mockito.Mockito.*;
 
 public class MethodDelegationBinderBindingResolverDefaultTest {
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     @Mock
     private MethodDescription source, target;
@@ -47,7 +46,7 @@ public class MethodDelegationBinderBindingResolverDefaultTest {
                 source,
                 Collections.singletonList(boundDelegation));
         MatcherAssert.assertThat(result, is(boundDelegation));
-        verifyZeroInteractions(ambiguityResolver);
+        verifyNoMoreInteractions(ambiguityResolver);
     }
 
     @Test

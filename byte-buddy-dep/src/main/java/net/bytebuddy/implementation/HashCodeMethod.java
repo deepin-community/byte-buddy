@@ -1,13 +1,29 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation;
 
-import lombok.EqualsAndHashCode;
-import net.bytebuddy.ClassFileVersion;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.field.FieldDescription;
 import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.type.TypeDefinition;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.dynamic.scaffold.InstrumentedType;
 import net.bytebuddy.implementation.bytecode.*;
+import net.bytebuddy.implementation.bytecode.constant.ClassConstant;
 import net.bytebuddy.implementation.bytecode.constant.IntegerConstant;
 import net.bytebuddy.implementation.bytecode.member.FieldAccess;
 import net.bytebuddy.implementation.bytecode.member.MethodInvocation;
@@ -19,6 +35,7 @@ import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import static net.bytebuddy.matcher.ElementMatchers.*;
@@ -28,7 +45,7 @@ import static net.bytebuddy.matcher.ElementMatchers.*;
  * primitive field types to an {@code int} value and by summing those values up starting from a given offset after multiplying any previous value
  * with a multiplier. Reference values are checked against {@code null} values unless specified otherwise.
  */
-@EqualsAndHashCode
+@HashCodeAndEqualsPlugin.Enhance
 public class HashCodeMethod implements Implementation {
 
     /**
@@ -44,9 +61,17 @@ public class HashCodeMethod implements Implementation {
     /**
      * The {@link Object#hashCode()} method.
      */
-    private static final MethodDescription.InDefinedShape HASH_CODE = new TypeDescription.ForLoadedType(Object.class)
+    private static final MethodDescription.InDefinedShape HASH_CODE = TypeDescription.ForLoadedType.of(Object.class)
             .getDeclaredMethods()
             .filter(isHashCode())
+            .getOnly();
+
+    /**
+     * The {@link Object#getClass()} method.
+     */
+    private static final MethodDescription.InDefinedShape GET_CLASS = TypeDescription.ForLoadedType.of(Object.class)
+            .getDeclaredMethods()
+            .filter(named("getClass").and(takesArguments(0)))
             .getOnly();
 
     /**
@@ -106,6 +131,16 @@ public class HashCodeMethod implements Implementation {
     }
 
     /**
+     * Creates a hash code method implementation that bases the hash code on the instrumented type's class constant's hash code..
+     *
+     * @param dynamic {@code true} if the type should be resolved from the instance and not be set as the declaring class.
+     * @return A hash code method implementation that bases the hash code on the instrumented type's class constant's hash code.
+     */
+    public static HashCodeMethod usingTypeHashOffset(boolean dynamic) {
+        return new HashCodeMethod(dynamic ? OffsetProvider.ForDynamicTypeHash.INSTANCE : OffsetProvider.ForStaticTypeHash.INSTANCE);
+    }
+
+    /**
      * Creates a hash code method implementation that bases the hash code on a fixed value.
      *
      * @return A hash code method implementation that bases the hash code on a fixed value.
@@ -162,12 +197,16 @@ public class HashCodeMethod implements Implementation {
         return new HashCodeMethod(offsetProvider, multiplier, ignored, nonNullable);
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public InstrumentedType prepare(InstrumentedType instrumentedType) {
         return instrumentedType;
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public ByteCodeAppender appender(Target implementationTarget) {
         if (implementationTarget.getInstrumentedType().isInterface()) {
             throw new IllegalStateException("Cannot implement meaningful hash code method for " + implementationTarget.getInstrumentedType());
@@ -194,7 +233,7 @@ public class HashCodeMethod implements Implementation {
         /**
          * An offset provider that supplies a fixed value.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class ForFixedValue implements OffsetProvider {
 
             /**
@@ -211,7 +250,9 @@ public class HashCodeMethod implements Implementation {
                 this.value = value;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public StackManipulation resolve(TypeDescription instrumentedType) {
                 return IntegerConstant.forValue(value);
             }
@@ -227,13 +268,53 @@ public class HashCodeMethod implements Implementation {
              */
             INSTANCE;
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public StackManipulation resolve(TypeDescription instrumentedType) {
                 TypeDefinition superClass = instrumentedType.getSuperClass();
                 if (superClass == null) {
                     throw new IllegalStateException(instrumentedType + " does not declare a super class");
                 }
                 return new StackManipulation.Compound(MethodVariableAccess.loadThis(), MethodInvocation.invoke(HASH_CODE).special(superClass.asErasure()));
+            }
+        }
+
+        /**
+         * An offset provider that uses the instrumented type's class constant's hash code.
+         */
+        enum ForStaticTypeHash implements OffsetProvider {
+
+            /**
+             * The singleton instance.
+             */
+            INSTANCE;
+
+            /**
+             * {@inheritDoc}
+             */
+            public StackManipulation resolve(TypeDescription instrumentedType) {
+                return new StackManipulation.Compound(ClassConstant.of(instrumentedType), MethodInvocation.invoke(HASH_CODE).virtual(TypeDescription.ForLoadedType.of(Class.class)));
+            }
+        }
+
+        /**
+         * An offset provider that uses the instance's class's hash code.
+         */
+        enum ForDynamicTypeHash implements OffsetProvider {
+
+            /**
+             * The singleton instance.
+             */
+            INSTANCE;
+
+            /**
+             * {@inheritDoc}
+             */
+            public StackManipulation resolve(TypeDescription instrumentedType) {
+                return new StackManipulation.Compound(MethodVariableAccess.loadThis(),
+                        MethodInvocation.invoke(GET_CLASS).virtual(instrumentedType),
+                        MethodInvocation.invoke(HASH_CODE).virtual(TypeDescription.ForLoadedType.of(Class.class)));
             }
         }
     }
@@ -274,17 +355,23 @@ public class HashCodeMethod implements Implementation {
              */
             INSTANCE;
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public StackManipulation before() {
                 return StackManipulation.Trivial.INSTANCE;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public StackManipulation after() {
                 return StackManipulation.Trivial.INSTANCE;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public int getRequiredVariablePadding() {
                 return StackSize.ZERO.getSize();
             }
@@ -293,18 +380,8 @@ public class HashCodeMethod implements Implementation {
         /**
          * A null value guard that expects a reference type and that uses a jump if a field value is {@code null}.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class UsingJump implements NullValueGuard {
-
-            /**
-             * An empty array.
-             */
-            private static final Object[] EMPTY = new Object[0];
-
-            /**
-             * An array that only contains an integer stack map frame.
-             */
-            private static final Object[] INTEGER = new Object[]{Opcodes.INTEGER};
 
             /**
              * The instrumented method.
@@ -326,17 +403,23 @@ public class HashCodeMethod implements Implementation {
                 label = new Label();
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public StackManipulation before() {
-                return new BeforeInstruction(instrumentedMethod, label);
+                return new BeforeInstruction();
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public StackManipulation after() {
-                return new AfterInstruction(label);
+                return new AfterInstruction();
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public int getRequiredVariablePadding() {
                 return 1;
             }
@@ -344,77 +427,36 @@ public class HashCodeMethod implements Implementation {
             /**
              * The stack manipulation to apply before the hash value computation.
              */
-            @EqualsAndHashCode
-            protected static class BeforeInstruction implements StackManipulation {
+            @HashCodeAndEqualsPlugin.Enhance(includeSyntheticFields = true)
+            protected class BeforeInstruction extends StackManipulation.AbstractBase {
 
                 /**
-                 * The instrumented method.
+                 * {@inheritDoc}
                  */
-                private final MethodDescription instrumentedMethod;
-
-                /**
-                 * A label to indicate the target of a jump.
-                 */
-                private final Label label;
-
-                /**
-                 * Creates a new instruction to run before a {@code null} check.
-                 *
-                 * @param instrumentedMethod The instrumented method.
-                 * @param label              A label to indicate the target of a jump.
-                 */
-                protected BeforeInstruction(MethodDescription instrumentedMethod, Label label) {
-                    this.instrumentedMethod = instrumentedMethod;
-                    this.label = label;
-                }
-
-                @Override
-                public boolean isValid() {
-                    return true;
-                }
-
-                @Override
                 public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                     methodVisitor.visitVarInsn(Opcodes.ASTORE, instrumentedMethod.getStackSize());
                     methodVisitor.visitVarInsn(Opcodes.ALOAD, instrumentedMethod.getStackSize());
                     methodVisitor.visitJumpInsn(Opcodes.IFNULL, label);
                     methodVisitor.visitVarInsn(Opcodes.ALOAD, instrumentedMethod.getStackSize());
-                    return new Size(0, 0);
+                    return Size.ZERO;
                 }
             }
 
             /**
              * The stack manipulation to apply after the hash value computation.
              */
-            @EqualsAndHashCode
-            protected static class AfterInstruction implements StackManipulation {
+            @HashCodeAndEqualsPlugin.Enhance(includeSyntheticFields = true)
+            protected class AfterInstruction extends StackManipulation.AbstractBase {
 
                 /**
-                 * A label to indicate the target of a jump.
+                 * {@inheritDoc}
                  */
-                private final Label label;
-
-                /**
-                 * Creates a new instruction to run after a {@code null} check.
-                 *
-                 * @param label A label to indicate the target of a jump.
-                 */
-                protected AfterInstruction(Label label) {
-                    this.label = label;
-                }
-
-                @Override
-                public boolean isValid() {
-                    return true;
-                }
-
-                @Override
                 public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                     methodVisitor.visitLabel(label);
-                    if (implementationContext.getClassFileVersion().isAtLeast(ClassFileVersion.JAVA_V6)) {
-                        methodVisitor.visitFrame(Opcodes.F_SAME1, EMPTY.length, EMPTY, INTEGER.length, INTEGER);
-                    }
-                    return new Size(0, 0);
+                    implementationContext.getFrameGeneration().same1(methodVisitor,
+                            TypeDescription.ForLoadedType.of(int.class),
+                            Arrays.asList(implementationContext.getInstrumentedType(), TypeDescription.ForLoadedType.of(Object.class)));
+                    return Size.ZERO;
                 }
             }
         }
@@ -429,7 +471,7 @@ public class HashCodeMethod implements Implementation {
          * A transformer for a {@code long} value.
          */
         LONG {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitInsn(Opcodes.DUP2);
                 methodVisitor.visitIntInsn(Opcodes.BIPUSH, 32);
@@ -444,10 +486,10 @@ public class HashCodeMethod implements Implementation {
          * A transformer for a {@code float} value.
          */
         FLOAT {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Float", "floatToIntBits", "(F)I", false);
-                return new Size(0, 0);
+                return Size.ZERO;
             }
         },
 
@@ -455,7 +497,7 @@ public class HashCodeMethod implements Implementation {
          * A transformer for a {@code double} value.
          */
         DOUBLE {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Double", "doubleToLongBits", "(D)J", false);
                 methodVisitor.visitInsn(Opcodes.DUP2);
@@ -471,10 +513,10 @@ public class HashCodeMethod implements Implementation {
          * A transformer for a {@code boolean[]} value.
          */
         BOOLEAN_ARRAY {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Arrays", "hashCode", "([Z)I", false);
-                return new Size(0, 0);
+                return Size.ZERO;
             }
         },
 
@@ -482,10 +524,10 @@ public class HashCodeMethod implements Implementation {
          * A transformer for a {@code byte[]} value.
          */
         BYTE_ARRAY {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Arrays", "hashCode", "([B)I", false);
-                return new Size(0, 0);
+                return Size.ZERO;
             }
         },
 
@@ -493,10 +535,10 @@ public class HashCodeMethod implements Implementation {
          * A transformer for a {@code short[]} value.
          */
         SHORT_ARRAY {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Arrays", "hashCode", "([S)I", false);
-                return new Size(0, 0);
+                return Size.ZERO;
             }
         },
 
@@ -504,10 +546,10 @@ public class HashCodeMethod implements Implementation {
          * A transformer for a {@code char[]} value.
          */
         CHARACTER_ARRAY {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Arrays", "hashCode", "([C)I", false);
-                return new Size(0, 0);
+                return Size.ZERO;
             }
         },
 
@@ -515,10 +557,10 @@ public class HashCodeMethod implements Implementation {
          * A transformer for an {@code int[]} value.
          */
         INTEGER_ARRAY {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Arrays", "hashCode", "([I)I", false);
-                return new Size(0, 0);
+                return Size.ZERO;
             }
         },
 
@@ -526,10 +568,10 @@ public class HashCodeMethod implements Implementation {
          * A transformer for a {@code long[]} value.
          */
         LONG_ARRAY {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Arrays", "hashCode", "([J)I", false);
-                return new Size(0, 0);
+                return Size.ZERO;
             }
         },
 
@@ -537,10 +579,10 @@ public class HashCodeMethod implements Implementation {
          * A transformer for a {@code float[]} value.
          */
         FLOAT_ARRAY {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Arrays", "hashCode", "([F)I", false);
-                return new Size(0, 0);
+                return Size.ZERO;
             }
         },
 
@@ -548,10 +590,10 @@ public class HashCodeMethod implements Implementation {
          * A transformer for a {@code double[]} value.
          */
         DOUBLE_ARRAY {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Arrays", "hashCode", "([D)I", false);
-                return new Size(0, 0);
+                return Size.ZERO;
             }
         },
 
@@ -559,10 +601,10 @@ public class HashCodeMethod implements Implementation {
          * A transformer for a reference array value.
          */
         REFERENCE_ARRAY {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Arrays", "hashCode", "([Ljava/lang/Object;)I", false);
-                return new Size(0, 0);
+                return Size.ZERO;
             }
         },
 
@@ -570,10 +612,10 @@ public class HashCodeMethod implements Implementation {
          * A transformer for a nested reference array value.
          */
         NESTED_ARRAY {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Arrays", "deepHashCode", "([Ljava/lang/Object;)I", false);
-                return new Size(0, 0);
+                return Size.ZERO;
             }
         };
 
@@ -583,6 +625,7 @@ public class HashCodeMethod implements Implementation {
          * @param typeDefinition The type definition to resolve.
          * @return The stack manipulation to apply.
          */
+        @SuppressFBWarnings(value = "NP_NULL_ON_SOME_PATH_FROM_RETURN_VALUE", justification = "Assuming component type for array type.")
         public static StackManipulation of(TypeDefinition typeDefinition) {
             if (typeDefinition.represents(boolean.class)
                     || typeDefinition.represents(byte.class)
@@ -621,7 +664,9 @@ public class HashCodeMethod implements Implementation {
             }
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public boolean isValid() {
             return true;
         }
@@ -630,7 +675,7 @@ public class HashCodeMethod implements Implementation {
     /**
      * A byte code appender to implement a hash code method.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     protected static class Appender implements ByteCodeAppender {
 
         /**
@@ -671,7 +716,9 @@ public class HashCodeMethod implements Implementation {
             this.nonNullable = nonNullable;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Size apply(MethodVisitor methodVisitor, Context implementationContext, MethodDescription instrumentedMethod) {
             if (instrumentedMethod.isStatic()) {
                 throw new IllegalStateException("Hash code method must not be static: " + instrumentedMethod);

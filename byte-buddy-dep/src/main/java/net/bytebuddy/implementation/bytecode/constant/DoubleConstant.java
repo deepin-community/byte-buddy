@@ -1,6 +1,21 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation.bytecode.constant;
 
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.implementation.Implementation;
 import net.bytebuddy.implementation.bytecode.StackManipulation;
 import net.bytebuddy.implementation.bytecode.StackSize;
@@ -59,12 +74,16 @@ public enum DoubleConstant implements StackManipulation {
         }
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public boolean isValid() {
         return true;
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public StackManipulation.Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext) {
         methodVisitor.visitInsn(opcode);
         return SIZE;
@@ -73,8 +92,8 @@ public enum DoubleConstant implements StackManipulation {
     /**
      * A stack manipulation for loading a {@code double} value from a class's constant pool onto the operand stack.
      */
-    @EqualsAndHashCode
-    protected static class ConstantPool implements StackManipulation {
+    @HashCodeAndEqualsPlugin.Enhance
+    protected static class ConstantPool extends StackManipulation.AbstractBase {
 
         /**
          * The {@code double} value to be loaded onto the operand stack.
@@ -90,12 +109,9 @@ public enum DoubleConstant implements StackManipulation {
             this.value = value;
         }
 
-        @Override
-        public boolean isValid() {
-            return true;
-        }
-
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext) {
             methodVisitor.visitLdcInsn(value);
             return SIZE;

@@ -2,23 +2,25 @@ package net.bytebuddy.dynamic.loading;
 
 import net.bytebuddy.ByteBuddy;
 import net.bytebuddy.description.type.TypeDescription;
+import net.bytebuddy.dynamic.ClassFileLocator;
 import net.bytebuddy.dynamic.TargetType;
 import net.bytebuddy.implementation.MethodDelegation;
 import net.bytebuddy.implementation.bind.annotation.AllArguments;
 import net.bytebuddy.implementation.bind.annotation.Origin;
 import net.bytebuddy.implementation.bind.annotation.RuntimeType;
 import net.bytebuddy.implementation.bind.annotation.Super;
-import net.bytebuddy.test.utility.ClassFileExtraction;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
+import net.bytebuddy.test.utility.ClassReflectionInjectionAvailableRule;
+import net.bytebuddy.test.utility.JavaVersionRule;
+import net.bytebuddy.test.utility.LegacyGetPackageClassLoader;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.MethodRule;
 
 import java.lang.reflect.Method;
 import java.net.URL;
 import java.net.URLClassLoader;
-import java.util.Arrays;
 import java.util.Collections;
-import java.util.Iterator;
 
 import static net.bytebuddy.matcher.ElementMatchers.named;
 import static org.hamcrest.CoreMatchers.*;
@@ -28,6 +30,12 @@ import static org.mockito.Mockito.mock;
 public class ClassInjectorUsingReflectionTest {
 
     private static final String FOO = "foo", BAR = "bar";
+
+    @Rule
+    public MethodRule classInjectionAvailableRule = new ClassReflectionInjectionAvailableRule();
+
+    @Rule
+    public MethodRule javaVersionRule = new JavaVersionRule();
 
     private ClassLoader classLoader;
 
@@ -42,16 +50,30 @@ public class ClassInjectorUsingReflectionTest {
     }
 
     @Test
+    @ClassReflectionInjectionAvailableRule.Enforce
     public void testInjection() throws Exception {
-        new ClassInjector.UsingReflection(classLoader)
-                .inject(Collections.<TypeDescription, byte[]>singletonMap(new TypeDescription.ForLoadedType(Foo.class), ClassFileExtraction.extract(Foo.class)));
+        new ClassInjector.UsingReflection(classLoader).inject(Collections.singletonMap(TypeDescription.ForLoadedType.of(Foo.class),
+                ClassFileLocator.ForClassLoader.read(Foo.class)));
         assertThat(classLoader.loadClass(Foo.class.getName()).getClassLoader(), is(classLoader));
     }
 
     @Test
+    @ClassReflectionInjectionAvailableRule.Enforce
+    public void testInjectionOnLegacyClassloader() throws Exception {
+        ClassLoader classLoader = new LegacyGetPackageClassLoader();
+        new ClassInjector.UsingReflection(classLoader.getParent()).inject(Collections.singletonMap(TypeDescription.ForLoadedType.of(Foo.class),
+                ClassFileLocator.ForClassLoader.read(Foo.class)));
+        new ClassInjector.UsingReflection(classLoader).inject(Collections.singletonMap(TypeDescription.ForLoadedType.of(Foo.class),
+                ClassFileLocator.ForClassLoader.read(Foo.class)));
+        assertThat(classLoader.loadClass(Foo.class.getName()).getClassLoader(), is(classLoader));
+    }
+
+    @Test
+    @ClassReflectionInjectionAvailableRule.Enforce
+    @JavaVersionRule.Enforce(atMost = 8)
     public void testDirectInjection() throws Exception {
         ClassInjector.UsingReflection.Dispatcher dispatcher = ClassInjector.UsingReflection.Dispatcher.Direct.make().initialize();
-        assertThat(dispatcher.getPackage(classLoader, Foo.class.getPackage().getName()), nullValue(Package.class));
+        assertThat(dispatcher.getDefinedPackage(classLoader, Foo.class.getPackage().getName()), nullValue(Package.class));
         assertThat(dispatcher.definePackage(classLoader,
                 Foo.class.getPackage().getName(),
                 null,
@@ -62,14 +84,16 @@ public class ClassInjectorUsingReflectionTest {
                 null,
                 null), notNullValue(Package.class));
         assertThat(dispatcher.findClass(classLoader, Foo.class.getName()), nullValue(Class.class));
-        assertThat(dispatcher.defineClass(classLoader, Foo.class.getName(), ClassFileExtraction.extract(Foo.class), null), notNullValue(Class.class));
+        assertThat(dispatcher.defineClass(classLoader, Foo.class.getName(), ClassFileLocator.ForClassLoader.read(Foo.class), null), notNullValue(Class.class));
         assertThat(classLoader.loadClass(Foo.class.getName()).getClassLoader(), is(classLoader));
     }
 
     @Test
-    public void testIndirectInjection() throws Exception {
-        ClassInjector.UsingReflection.Dispatcher dispatcher = ClassInjector.UsingReflection.Dispatcher.Indirect.make().initialize();
-        assertThat(dispatcher.getPackage(classLoader, Foo.class.getPackage().getName()), nullValue(Package.class));
+    @ClassReflectionInjectionAvailableRule.Enforce
+    @JavaVersionRule.Enforce(atMost = 10)
+    public void testUnsafeInjection() throws Exception {
+        ClassInjector.UsingReflection.Dispatcher dispatcher = ClassInjector.UsingReflection.Dispatcher.UsingUnsafeInjection.make().initialize();
+        assertThat(dispatcher.getDefinedPackage(classLoader, Foo.class.getPackage().getName()), nullValue(Package.class));
         assertThat(dispatcher.definePackage(classLoader,
                 Foo.class.getPackage().getName(),
                 null,
@@ -80,25 +104,44 @@ public class ClassInjectorUsingReflectionTest {
                 null,
                 null), notNullValue(Package.class));
         assertThat(dispatcher.findClass(classLoader, Foo.class.getName()), nullValue(Class.class));
-        assertThat(dispatcher.defineClass(classLoader, Foo.class.getName(), ClassFileExtraction.extract(Foo.class), null), notNullValue(Class.class));
+        assertThat(dispatcher.defineClass(classLoader, Foo.class.getName(), ClassFileLocator.ForClassLoader.read(Foo.class), null), notNullValue(Class.class));
+        assertThat(classLoader.loadClass(Foo.class.getName()).getClassLoader(), is(classLoader));
+    }
+
+    @Test
+    @ClassReflectionInjectionAvailableRule.Enforce
+    public void testUnsafeOverride() throws Exception {
+        ClassInjector.UsingReflection.Dispatcher dispatcher = ClassInjector.UsingReflection.Dispatcher.UsingUnsafeOverride.make().initialize();
+        assertThat(dispatcher.getDefinedPackage(classLoader, Foo.class.getPackage().getName()), nullValue(Package.class));
+        assertThat(dispatcher.definePackage(classLoader,
+                Foo.class.getPackage().getName(),
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null), notNullValue(Package.class));
+        assertThat(dispatcher.findClass(classLoader, Foo.class.getName()), nullValue(Class.class));
+        assertThat(dispatcher.defineClass(classLoader, Foo.class.getName(), ClassFileLocator.ForClassLoader.read(Foo.class), null), notNullValue(Class.class));
         assertThat(classLoader.loadClass(Foo.class.getName()).getClassLoader(), is(classLoader));
     }
 
     @Test
     public void testDispatcherFaultyInitializationGetClass() throws Exception {
-        assertThat(new ClassInjector.UsingReflection.Dispatcher.Unavailable(new Exception()).initialize().findClass(getClass().getClassLoader(),
+        assertThat(new ClassInjector.UsingReflection.Dispatcher.Initializable.Unavailable("foo").initialize().findClass(getClass().getClassLoader(),
                 Object.class.getName()), is((Object) Object.class));
     }
 
     @Test
-    public void testDispatcherFaultyInitializationGetClassInexistant() throws Exception {
-        assertThat(new ClassInjector.UsingReflection.Dispatcher.Unavailable(new Exception()).initialize().findClass(getClass().getClassLoader(),
+    public void testDispatcherFaultyInitializationGetClassInexistent() throws Exception {
+        assertThat(new ClassInjector.UsingReflection.Dispatcher.Initializable.Unavailable("foo").initialize().findClass(getClass().getClassLoader(),
                 FOO), nullValue(Class.class));
     }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testDispatcherFaultyInitializationDefineClass() throws Exception {
-        new ClassInjector.UsingReflection.Dispatcher.Unavailable(new Exception()).initialize().defineClass(null,
+        new ClassInjector.UsingReflection.Dispatcher.Initializable.Unavailable("foo").initialize().defineClass(null,
                 null,
                 null,
                 null);
@@ -106,12 +149,38 @@ public class ClassInjectorUsingReflectionTest {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testDispatcherFaultyInitializationGetPackage() throws Exception {
-        new ClassInjector.UsingReflection.Dispatcher.Unavailable(new Exception()).initialize().getPackage(null, null);
+        new ClassInjector.UsingReflection.Dispatcher.Initializable.Unavailable("foo").initialize().getDefinedPackage(null, null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testDispatcherFaultyInitializationDefinePackage() throws Exception {
-        new ClassInjector.UsingReflection.Dispatcher.Unavailable(new Exception()).initialize().definePackage(null,
+        new ClassInjector.UsingReflection.Dispatcher.Initializable.Unavailable("foo").initialize().definePackage(null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testDispatcherFaultyDispatcherDefineClass() throws Exception {
+        new ClassInjector.UsingReflection.Dispatcher.Unavailable(FOO).defineClass(null,
+                null,
+                null,
+                null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testDispatcherFaultyDispatcherGetPackage() throws Exception {
+        new ClassInjector.UsingReflection.Dispatcher.Unavailable(FOO).getDefinedPackage(null, null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testDispatcherFaultyDispatcherDefinePackage() throws Exception {
+        new ClassInjector.UsingReflection.Dispatcher.Unavailable(FOO).definePackage(null,
                 null,
                 null,
                 null,
@@ -128,6 +197,7 @@ public class ClassInjectorUsingReflectionTest {
         assertThat(new ClassInjector.UsingReflection.Dispatcher.Direct.ForLegacyVm(null,
                 null,
                 null,
+                null,
                 null).getClassLoadingLock(classLoader, FOO), is((Object) classLoader));
     }
 
@@ -138,10 +208,12 @@ public class ClassInjectorUsingReflectionTest {
     }
 
     @Test
+    @ClassReflectionInjectionAvailableRule.Enforce
     public void testInjectionOrderNoPrematureAuxiliaryInjection() throws Exception {
         ClassLoader classLoader = new ByteArrayClassLoader(ClassLoadingStrategy.BOOTSTRAP_LOADER,
-                ClassFileExtraction.of(Bar.class, Interceptor.class));
-        Class<?> type = new ByteBuddy().rebase(Bar.class)
+                ClassFileLocator.ForClassLoader.readToNames(Bar.class, Interceptor.class));
+        Class<?> type = new ByteBuddy()
+                .rebase(Bar.class)
                 .method(named(BAR))
                 .intercept(MethodDelegation.to(Interceptor.class)).make()
                 .load(classLoader, ClassLoadingStrategy.Default.INJECTION)
@@ -150,36 +222,11 @@ public class ClassInjectorUsingReflectionTest {
     }
 
     @Test
+    @ClassReflectionInjectionAvailableRule.Enforce
     public void testAvailability() throws Exception {
         assertThat(ClassInjector.UsingReflection.isAvailable(), is(true));
-        assertThat(new ClassInjector.UsingReflection.Dispatcher.Unavailable(null).isAvailable(), is(false));
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(ClassInjector.UsingReflection.class).apply();
-        final Iterator<Method> methods = Arrays.asList(String.class.getDeclaredMethods()).iterator();
-        ObjectPropertyAssertion.of(ClassInjector.UsingReflection.Dispatcher.Direct.ForLegacyVm.class).create(new ObjectPropertyAssertion.Creator<Method>() {
-            @Override
-            public Method create() {
-                return methods.next();
-            }
-        }).apply();
-        ObjectPropertyAssertion.of(ClassInjector.UsingReflection.Dispatcher.Direct.ForJava7CapableVm.class).create(new ObjectPropertyAssertion.Creator<Method>() {
-            @Override
-            public Method create() {
-                return methods.next();
-            }
-        }).apply();
-        ObjectPropertyAssertion.of(ClassInjector.UsingReflection.Dispatcher.Indirect.class).create(new ObjectPropertyAssertion.Creator<Method>() {
-            @Override
-            public Method create() {
-                return methods.next();
-            }
-        }).apply();
-        ObjectPropertyAssertion.of(ClassInjector.UsingReflection.Dispatcher.Unavailable.class).apply();
-        ObjectPropertyAssertion.of(ClassInjector.UsingReflection.Dispatcher.Unavailable.class).apply();
-        ObjectPropertyAssertion.of(ClassInjector.UsingReflection.Dispatcher.CreationAction.class).apply();
+        assertThat(new ClassInjector.UsingReflection(ClassLoader.getSystemClassLoader()).isAlive(), is(true));
+        assertThat(new ClassInjector.UsingReflection.Dispatcher.Initializable.Unavailable(null).isAvailable(), is(false));
     }
 
     private static class Foo {

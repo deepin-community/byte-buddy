@@ -1,15 +1,35 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.dynamic.scaffold.inline;
 
-import lombok.EqualsAndHashCode;
 import net.bytebuddy.ClassFileVersion;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.type.TypeDescription;
+import net.bytebuddy.description.type.TypeList;
 import net.bytebuddy.dynamic.scaffold.MethodGraph;
 import net.bytebuddy.implementation.Implementation;
 import net.bytebuddy.implementation.bytecode.StackManipulation;
+import net.bytebuddy.implementation.bytecode.constant.DefaultValue;
 import net.bytebuddy.implementation.bytecode.member.MethodInvocation;
+import net.bytebuddy.utility.CompoundList;
 import org.objectweb.asm.MethodVisitor;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -22,7 +42,7 @@ import java.util.Map;
  * virtually or they are invoked directly via the {@code INVOKESPECIAL} invocation to explicitly forbid a virtual
  * dispatch.
  */
-@EqualsAndHashCode(callSuper = true)
+@HashCodeAndEqualsPlugin.Enhance
 public class RebaseImplementationTarget extends Implementation.Target.AbstractBase {
 
     /**
@@ -62,7 +82,9 @@ public class RebaseImplementationTarget extends Implementation.Target.AbstractBa
         return new RebaseImplementationTarget(instrumentedType, methodGraph, DefaultMethodInvocation.of(classFileVersion), methodRebaseResolver.asTokenMap());
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public Implementation.SpecialMethodInvocation invokeSuper(MethodDescription.SignatureToken token) {
         MethodRebaseResolver.Resolution resolution = rebaseableMethods.get(token);
         return resolution == null
@@ -77,8 +99,9 @@ public class RebaseImplementationTarget extends Implementation.Target.AbstractBa
      * @return A special method invocation for the provided node.
      */
     private Implementation.SpecialMethodInvocation invokeSuper(MethodGraph.Node node) {
-        return node.getSort().isResolved()
-                ? Implementation.SpecialMethodInvocation.Simple.of(node.getRepresentative(), instrumentedType.getSuperClass().asErasure())
+        TypeDescription.Generic superClass = instrumentedType.getSuperClass();
+        return node.getSort().isResolved() && superClass != null
+                ? Implementation.SpecialMethodInvocation.Simple.of(node.getRepresentative(), superClass.asErasure())
                 : Implementation.SpecialMethodInvocation.Illegal.INSTANCE;
     }
 
@@ -90,11 +113,13 @@ public class RebaseImplementationTarget extends Implementation.Target.AbstractBa
      */
     private Implementation.SpecialMethodInvocation invokeSuper(MethodRebaseResolver.Resolution resolution) {
         return resolution.isRebased()
-                ? RebasedMethodInvocation.of(resolution.getResolvedMethod(), instrumentedType, resolution.getAdditionalArguments())
+                ? RebasedMethodInvocation.of(resolution.getResolvedMethod(), instrumentedType, resolution.getAppendedParameters())
                 : Implementation.SpecialMethodInvocation.Simple.of(resolution.getResolvedMethod(), instrumentedType);
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public TypeDescription getOriginType() {
         return instrumentedType;
     }
@@ -121,16 +146,26 @@ public class RebaseImplementationTarget extends Implementation.Target.AbstractBa
         private final StackManipulation stackManipulation;
 
         /**
+         * Any additional arguments that are to be provided to the rebased method.
+         */
+        private final TypeList prependedParameters;
+
+        /**
          * Creates a new rebased method invocation.
          *
-         * @param methodDescription The method to invoke via a special method invocation.
-         * @param instrumentedType  The instrumented type on which the method should be invoked on.
-         * @param stackManipulation The stack manipulation to execute in order to invoke the rebased method.
+         * @param methodDescription   The method to invoke via a special method invocation.
+         * @param instrumentedType    The instrumented type on which the method should be invoked on.
+         * @param stackManipulation   The stack manipulation to execute in order to invoke the rebased method.
+         * @param prependedParameters Any additional arguments that are to be provided to the rebased method.
          */
-        protected RebasedMethodInvocation(MethodDescription methodDescription, TypeDescription instrumentedType, StackManipulation stackManipulation) {
+        protected RebasedMethodInvocation(MethodDescription methodDescription,
+                                          TypeDescription instrumentedType,
+                                          StackManipulation stackManipulation,
+                                          TypeList prependedParameters) {
             this.methodDescription = methodDescription;
             this.instrumentedType = instrumentedType;
             this.stackManipulation = stackManipulation;
+            this.prependedParameters = prependedParameters;
         }
 
         /**
@@ -138,40 +173,63 @@ public class RebaseImplementationTarget extends Implementation.Target.AbstractBa
          *
          * @param resolvedMethod      The rebased method to be invoked.
          * @param instrumentedType    The instrumented type on which the method is to be invoked if it is non-static.
-         * @param additionalArguments Any additional arguments that are to be provided to the rebased method.
+         * @param prependedParameters Any additional arguments that are to be provided to the rebased method.
          * @return A special method invocation of the rebased method.
          */
-        protected static Implementation.SpecialMethodInvocation of(MethodDescription resolvedMethod,
-                                                                   TypeDescription instrumentedType,
-                                                                   StackManipulation additionalArguments) {
+        protected static Implementation.SpecialMethodInvocation of(MethodDescription resolvedMethod, TypeDescription instrumentedType, TypeList prependedParameters) {
             StackManipulation stackManipulation = resolvedMethod.isStatic()
                     ? MethodInvocation.invoke(resolvedMethod)
                     : MethodInvocation.invoke(resolvedMethod).special(instrumentedType);
-            return stackManipulation.isValid()
-                    ? new RebasedMethodInvocation(resolvedMethod, instrumentedType, new Compound(additionalArguments, stackManipulation))
-                    : Illegal.INSTANCE;
+            if (stackManipulation.isValid()) {
+                List<StackManipulation> stackManipulations = new ArrayList<StackManipulation>(prependedParameters.size() + 1);
+                for (TypeDescription prependedParameter : prependedParameters) {
+                    stackManipulations.add(DefaultValue.of(prependedParameter));
+                }
+                stackManipulations.add(stackManipulation);
+                return new RebasedMethodInvocation(resolvedMethod, instrumentedType, new Compound(stackManipulations), prependedParameters);
+            } else {
+                return Implementation.SpecialMethodInvocation.Illegal.INSTANCE;
+            }
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public MethodDescription getMethodDescription() {
             return methodDescription;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public TypeDescription getTypeDescription() {
             return instrumentedType;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext) {
             return stackManipulation.apply(methodVisitor, implementationContext);
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public Implementation.SpecialMethodInvocation withCheckedCompatibilityTo(MethodDescription.TypeToken token) {
+            if (methodDescription.asTypeToken().equals(new MethodDescription.TypeToken(token.getReturnType(),
+                    CompoundList.of(token.getParameterTypes(), prependedParameters)))) {
+                return this;
+            } else {
+                return Implementation.SpecialMethodInvocation.Illegal.INSTANCE;
+            }
         }
     }
 
     /**
      * A factory for creating a {@link RebaseImplementationTarget}.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     public static class Factory implements Implementation.Target.Factory {
 
         /**
@@ -188,7 +246,9 @@ public class RebaseImplementationTarget extends Implementation.Target.AbstractBa
             this.methodRebaseResolver = methodRebaseResolver;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Implementation.Target make(TypeDescription instrumentedType, MethodGraph.Linked methodGraph, ClassFileVersion classFileVersion) {
             return RebaseImplementationTarget.of(instrumentedType, methodGraph, classFileVersion, methodRebaseResolver);
         }

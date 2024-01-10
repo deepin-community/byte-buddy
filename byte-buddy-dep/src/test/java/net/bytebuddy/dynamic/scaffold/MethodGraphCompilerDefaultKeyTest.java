@@ -1,12 +1,10 @@
 package net.bytebuddy.dynamic.scaffold;
 
-import net.bytebuddy.description.modifier.Visibility;
-import net.bytebuddy.test.utility.MockitoRule;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 
 import java.util.Arrays;
 import java.util.Collections;
@@ -23,7 +21,7 @@ public class MethodGraphCompilerDefaultKeyTest {
     private static final String FOO = "foo", BAR = "bar";
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     @Mock
     private SampleKey foo, bar, qux;
@@ -77,44 +75,32 @@ public class MethodGraphCompilerDefaultKeyTest {
     }
 
     @Test(expected = IllegalStateException.class)
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings({"unchecked", "rawtypes"})
     public void testInitialEntryCannotInject() throws Exception {
-        new MethodGraph.Compiler.Default.Key.Store.Entry.Initial(new MethodGraph.Compiler.Default.Key.Harmonized(FOO, Collections.emptyMap()))
-                .inject(mock(MethodGraph.Compiler.Default.Key.Harmonized.class), Visibility.PUBLIC);
+        new MethodGraph.Compiler.Default.Key.Store.Entry.Initial(new MethodGraph.Compiler.Default.Key.Harmonized(FOO, -1, Collections.emptyMap()))
+                .inject(mock(MethodGraph.Compiler.Default.Key.Store.Entry.class));
     }
 
     @Test(expected = IllegalStateException.class)
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings({"unchecked", "rawtypes"})
     public void testInitialEntryCannotBeTransformed() throws Exception {
-        new MethodGraph.Compiler.Default.Key.Store.Entry.Initial(new MethodGraph.Compiler.Default.Key.Harmonized(FOO, Collections.emptyMap()))
+        new MethodGraph.Compiler.Default.Key.Store.Entry.Initial(new MethodGraph.Compiler.Default.Key.Harmonized(FOO, -1, Collections.emptyMap()))
                 .asNode(mock(MethodGraph.Compiler.Default.Merger.class));
     }
 
     @Test(expected = IllegalStateException.class)
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings({"unchecked", "rawtypes"})
     public void testInitialEntryCannotExposeKey() throws Exception {
-        new MethodGraph.Compiler.Default.Key.Store.Entry.Initial(new MethodGraph.Compiler.Default.Key.Harmonized(FOO, Collections.emptyMap()))
+        new MethodGraph.Compiler.Default.Key.Store.Entry.Initial(new MethodGraph.Compiler.Default.Key.Harmonized(FOO, -1, Collections.emptyMap()))
                 .getKey();
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(MethodGraph.Compiler.Default.Key.Store.class).apply();
-        ObjectPropertyAssertion.of(MethodGraph.Compiler.Default.Key.Store.class).apply();
-        ObjectPropertyAssertion.of(MethodGraph.Compiler.Default.Key.Store.Graph.class).apply();
-        ObjectPropertyAssertion.of(MethodGraph.Compiler.Default.Key.Store.Entry.Initial.class).apply();
-        ObjectPropertyAssertion.of(MethodGraph.Compiler.Default.Key.Store.Entry.Ambiguous.class).apply();
-        ObjectPropertyAssertion.of(MethodGraph.Compiler.Default.Key.Store.Entry.Ambiguous.Node.class).apply();
-        ObjectPropertyAssertion.of(MethodGraph.Compiler.Default.Key.Store.Entry.Resolved.class).apply();
-        ObjectPropertyAssertion.of(MethodGraph.Compiler.Default.Key.Store.Entry.Resolved.Node.class).apply();
     }
 
     protected static class PseudoKey extends MethodGraph.Compiler.Default.Key<SampleKey> {
 
         private final Set<SampleKey> identifiers;
 
-        public PseudoKey(String internalName, Set<SampleKey> identifiers) {
-            super(internalName);
+        protected PseudoKey(String internalName, Set<SampleKey> identifiers) {
+            super(internalName, -1);
             this.identifiers = identifiers;
         }
 

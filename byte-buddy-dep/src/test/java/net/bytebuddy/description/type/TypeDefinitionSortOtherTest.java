@@ -1,8 +1,8 @@
 package net.bytebuddy.description.type;
 
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Test;
 
+import java.lang.reflect.AnnotatedElement;
 import java.lang.reflect.Type;
 
 import static org.mockito.Mockito.mock;
@@ -14,8 +14,8 @@ public class TypeDefinitionSortOtherTest {
         TypeDefinition.Sort.describe(mock(Type.class));
     }
 
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(TypeDefinition.Sort.class).apply();
+    @Test(expected = IllegalArgumentException.class)
+    public void testNonAnnotatedType() {
+        TypeDefinition.Sort.describeAnnotated(mock(AnnotatedElement.class));
     }
 }

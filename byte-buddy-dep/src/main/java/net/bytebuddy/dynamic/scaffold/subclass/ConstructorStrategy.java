@@ -1,6 +1,21 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.dynamic.scaffold.subclass;
 
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.method.MethodList;
 import net.bytebuddy.description.type.TypeDescription;
@@ -71,7 +86,7 @@ public interface ConstructorStrategy {
         },
 
         /**
-         * This strategy is adding a default constructor that calls it's super types default constructor. If no such
+         * This strategy is adding a default constructor that calls its super types default constructor. If no such
          * constructor is defined by the super class, an {@link IllegalArgumentException} is thrown. Note that the default
          * constructor needs to be visible to its sub type for this strategy to work. The declared default constructor of
          * the created class is declared public and without annotations.
@@ -174,7 +189,9 @@ public interface ConstructorStrategy {
             }
         };
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public List<MethodDescription.Token> extractConstructors(TypeDescription instrumentedType) {
             List<MethodDescription.Token> tokens = doExtractConstructors(instrumentedType), stripped = new ArrayList<MethodDescription.Token>(tokens.size());
             for (MethodDescription.Token token : tokens) {
@@ -209,7 +226,9 @@ public interface ConstructorStrategy {
          */
         protected abstract List<MethodDescription.Token> doExtractConstructors(TypeDescription instrumentedType);
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public MethodRegistry inject(TypeDescription instrumentedType, MethodRegistry methodRegistry) {
             return doInject(methodRegistry, MethodAttributeAppender.NoOp.INSTANCE);
         }
@@ -245,7 +264,7 @@ public interface ConstructorStrategy {
         /**
          * A wrapper for a default constructor strategy which additionally applies a method attribute appender factory.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         protected static class WithMethodAttributeAppenderFactory implements ConstructorStrategy {
 
             /**
@@ -269,12 +288,16 @@ public interface ConstructorStrategy {
                 this.methodAttributeAppenderFactory = methodAttributeAppenderFactory;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public List<MethodDescription.Token> extractConstructors(TypeDescription instrumentedType) {
                 return delegate.extractConstructors(instrumentedType);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public MethodRegistry inject(TypeDescription instrumentedType, MethodRegistry methodRegistry) {
                 return delegate.doInject(methodRegistry, methodAttributeAppenderFactory);
             }
@@ -284,7 +307,7 @@ public interface ConstructorStrategy {
     /**
      * A constructor strategy that creates a default constructor that invokes a super constructor with default arguments.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class ForDefaultConstructor implements ConstructorStrategy {
 
         /**
@@ -334,19 +357,30 @@ public interface ConstructorStrategy {
             this.methodAttributeAppenderFactory = methodAttributeAppenderFactory;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public List<MethodDescription.Token> extractConstructors(TypeDescription instrumentedType) {
-            if (instrumentedType.getSuperClass().getDeclaredMethods().filter(isConstructor()).isEmpty()) {
+            TypeDescription.Generic superClass = instrumentedType.getSuperClass();
+            if (superClass == null) {
+                throw new IllegalArgumentException("Cannot extract constructors for " + instrumentedType);
+            } else if (superClass.getDeclaredMethods().filter(isConstructor()).isEmpty()) {
                 throw new IllegalStateException("Cannot define default constructor for class without super class constructor");
             }
             return Collections.singletonList(new MethodDescription.Token(Opcodes.ACC_PUBLIC));
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public MethodRegistry inject(TypeDescription instrumentedType, MethodRegistry methodRegistry) {
-            MethodList<?> candidates = instrumentedType.getSuperClass().getDeclaredMethods().filter(isConstructor().and(elementMatcher));
+            TypeDescription.Generic superClass = instrumentedType.getSuperClass();
+            if (superClass == null) {
+                throw new IllegalArgumentException("Cannot inject constructors for " + instrumentedType);
+            }
+            MethodList<?> candidates = superClass.getDeclaredMethods().filter(isConstructor().and(elementMatcher));
             if (candidates.isEmpty()) {
-                throw new IllegalStateException("No possible candidate for super constructor invocation in " + instrumentedType.getSuperClass());
+                throw new IllegalStateException("No possible candidate for super constructor invocation in " + superClass);
             } else if (!candidates.filter(takesArguments(0)).isEmpty()) {
                 candidates = candidates.filter(takesArguments(0));
             } else if (candidates.size() > 1) {

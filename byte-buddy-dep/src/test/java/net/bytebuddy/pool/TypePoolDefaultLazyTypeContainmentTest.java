@@ -20,8 +20,6 @@ public class TypePoolDefaultLazyTypeContainmentTest {
         assertThat(TypePool.Default.LazyTypeDescription.TypeContainment.SelfContained.INSTANCE
                 .isLocalType(), is(false));
         assertThat(TypePool.Default.LazyTypeDescription.TypeContainment.SelfContained.INSTANCE
-                .isMemberClass(), is(false));
-        assertThat(TypePool.Default.LazyTypeDescription.TypeContainment.SelfContained.INSTANCE
                 .isSelfContained(), is(true));
     }
 
@@ -42,13 +40,9 @@ public class TypePoolDefaultLazyTypeContainmentTest {
         assertThat(new TypePool.Default.LazyTypeDescription.TypeContainment.WithinType(FOO_INTERNAL, false)
                 .isLocalType(), is(false));
         assertThat(new TypePool.Default.LazyTypeDescription.TypeContainment.WithinType(FOO_INTERNAL, false)
-                .isMemberClass(), is(true));
-        assertThat(new TypePool.Default.LazyTypeDescription.TypeContainment.WithinType(FOO_INTERNAL, false)
                 .isSelfContained(), is(false));
         assertThat(new TypePool.Default.LazyTypeDescription.TypeContainment.WithinType(FOO_INTERNAL, true)
                 .isLocalType(), is(true));
-        assertThat(new TypePool.Default.LazyTypeDescription.TypeContainment.WithinType(FOO_INTERNAL, true)
-                .isMemberClass(), is(false));
         assertThat(new TypePool.Default.LazyTypeDescription.TypeContainment.WithinType(FOO_INTERNAL, true)
                 .isSelfContained(), is(false));
     }
@@ -79,8 +73,6 @@ public class TypePoolDefaultLazyTypeContainmentTest {
         assertThat(new TypePool.Default.LazyTypeDescription.TypeContainment.WithinMethod(FOO_INTERNAL, BAR, QUX)
                 .isLocalType(), is(true));
         assertThat(new TypePool.Default.LazyTypeDescription.TypeContainment.WithinMethod(FOO_INTERNAL, BAR, QUX)
-                .isMemberClass(), is(false));
-        assertThat(new TypePool.Default.LazyTypeDescription.TypeContainment.WithinMethod(FOO_INTERNAL, BAR, QUX)
                 .isSelfContained(), is(false));
     }
 
@@ -96,7 +88,7 @@ public class TypePoolDefaultLazyTypeContainmentTest {
     @Test
     @SuppressWarnings("unchecked")
     public void testDeclaredInMethodGetMethodIsNull() throws Exception {
-        MethodDescription methodDescription = mock(MethodDescription.class);
+        MethodDescription.InDefinedShape methodDescription = mock(MethodDescription.InDefinedShape.class);
         when(methodDescription.getActualName()).thenReturn(BAR);
         when(methodDescription.getDescriptor()).thenReturn(QUX);
         TypeDescription typeDescription = mock(TypeDescription.class);

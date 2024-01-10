@@ -2,14 +2,16 @@ package net.bytebuddy.dynamic;
 
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.implementation.LoadedTypeInitializer;
-import net.bytebuddy.test.utility.MockitoRule;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
+import net.bytebuddy.test.utility.JavaVersionRule;
 import net.bytebuddy.utility.RandomString;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.mockito.Mock;
+import org.mockito.invocation.InvocationOnMock;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.stubbing.Answer;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -30,7 +32,10 @@ public class DynamicTypeDefaultTest {
     private static final String FOOBAR = "foo/bar", QUXBAZ = "qux/baz", BARBAZ = "bar/baz", FOO = "foo", BAR = "bar", TEMP = "tmp";
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
+
+    @Rule
+    public MethodRule javaVersionRule = new JavaVersionRule();
 
     private static final byte[] BINARY_FIRST = new byte[]{1, 2, 3}, BINARY_SECOND = new byte[]{4, 5, 6}, BINARY_THIRD = new byte[]{7, 8, 9};
 
@@ -105,6 +110,13 @@ public class DynamicTypeDefaultTest {
         when(auxiliaryTypeDescription.getInternalName()).thenReturn(QUXBAZ);
         when(auxiliaryType.getTypeDescription()).thenReturn(auxiliaryTypeDescription);
         when(auxiliaryType.getBytes()).thenReturn(BINARY_SECOND);
+        when(auxiliaryType.locate(anyString())).thenAnswer(new Answer<ClassFileLocator.Resolution>() {
+
+            public ClassFileLocator.Resolution answer(InvocationOnMock invocation) {
+                return new ClassFileLocator.Resolution.Illegal(invocation.getArgument(0, String.class));
+            }
+        });
+        when(auxiliaryType.locate(QUXBAZ.replace('/', '.'))).thenReturn(new ClassFileLocator.Resolution.Explicit(BINARY_SECOND));
         when(auxiliaryType.getLoadedTypeInitializers()).thenReturn(Collections.singletonMap(auxiliaryTypeDescription, auxiliaryLoadedTypeInitializer));
         when(auxiliaryType.getAuxiliaryTypes()).thenReturn(Collections.<TypeDescription, byte[]>emptyMap());
         when(auxiliaryType.getAllTypes()).thenReturn(Collections.singletonMap(auxiliaryTypeDescription, BINARY_SECOND));
@@ -280,6 +292,39 @@ public class DynamicTypeDefaultTest {
     }
 
     @Test
+    public void testJarSelfInjectionWithDuplicateSpecification() throws Exception {
+        File file = File.createTempFile(BAR, TEMP);
+        Manifest manifest = new Manifest();
+        manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, BAR);
+        JarOutputStream jarOutputStream = new JarOutputStream(new FileOutputStream(file), manifest);
+        try {
+            jarOutputStream.putNextEntry(new JarEntry(BARBAZ + CLASS_FILE_EXTENSION));
+            jarOutputStream.write(BINARY_THIRD);
+            jarOutputStream.closeEntry();
+            jarOutputStream.putNextEntry(new JarEntry(FOOBAR + CLASS_FILE_EXTENSION));
+            jarOutputStream.write(BINARY_THIRD);
+            jarOutputStream.closeEntry();
+        } finally {
+            jarOutputStream.close();
+        }
+        boolean fileDeletion;
+        try {
+            assertThat(dynamicType.inject(file, file), is(file));
+            assertThat(file.exists(), is(true));
+            assertThat(file.isFile(), is(true));
+            assertThat(file.length() > 0L, is(true));
+            Map<String, byte[]> bytes = new HashMap<String, byte[]>();
+            bytes.put(FOOBAR + CLASS_FILE_EXTENSION, BINARY_FIRST);
+            bytes.put(QUXBAZ + CLASS_FILE_EXTENSION, BINARY_SECOND);
+            bytes.put(BARBAZ + CLASS_FILE_EXTENSION, BINARY_THIRD);
+            assertJarFile(file, manifest, bytes);
+        } finally {
+            fileDeletion = file.delete();
+        }
+        assertThat(fileDeletion, is(true));
+    }
+
+    @Test
     public void testIterationOrder() throws Exception {
         Iterator<TypeDescription> types = dynamicType.getAllTypes().keySet().iterator();
         assertThat(types.hasNext(), is(true));
@@ -290,7 +335,9 @@ public class DynamicTypeDefaultTest {
     }
 
     @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(DynamicType.Default.class).apply();
+    public void testClassFileLocator() throws Exception {
+        assertThat(dynamicType.locate(FOOBAR.replace('/', '.')).isResolved(), is(true));
+        assertThat(dynamicType.locate(QUXBAZ.replace('/', '.')).isResolved(), is(true));
+        assertThat(dynamicType.locate(BARBAZ.replace('/', '.')).isResolved(), is(false));
     }
 }

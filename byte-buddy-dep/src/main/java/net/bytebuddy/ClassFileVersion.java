@@ -1,25 +1,44 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.AccessControllerPlugin;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.dynamic.ClassFileLocator;
-import org.objectweb.asm.ClassReader;
-import org.objectweb.asm.ClassVisitor;
+import net.bytebuddy.utility.OpenedClassReader;
 import org.objectweb.asm.Opcodes;
 
 import java.io.IOException;
-import java.lang.reflect.InvocationTargetException;
+import java.io.Serializable;
 import java.lang.reflect.Method;
-import java.security.AccessController;
 import java.security.PrivilegedAction;
 
 /**
  * A wrapper object for representing a validated class file version in the format that is specified by the
  * <a href="http://docs.oracle.com/javase/specs/jvms/se7/html/jvms-4.html">JVMS</a>.
  */
-@EqualsAndHashCode
-public class ClassFileVersion implements Comparable<ClassFileVersion> {
+@HashCodeAndEqualsPlugin.Enhance
+public class ClassFileVersion implements Comparable<ClassFileVersion>, Serializable {
+
+    /**
+     * The class's serial version UID.
+     */
+    private static final long serialVersionUID = 1L;
 
     /**
      * Returns the minimal version number that is legal.
@@ -77,14 +96,59 @@ public class ClassFileVersion implements Comparable<ClassFileVersion> {
     public static final ClassFileVersion JAVA_V10 = new ClassFileVersion(Opcodes.V10);
 
     /**
-     * The class file version of Java 11 (preliminary).
+     * The class file version of Java 11.
      */
-    public static final ClassFileVersion JAVA_V11 = new ClassFileVersion(Opcodes.V10 + 1);
+    public static final ClassFileVersion JAVA_V11 = new ClassFileVersion(Opcodes.V11);
+
+    /**
+     * The class file version of Java 12.
+     */
+    public static final ClassFileVersion JAVA_V12 = new ClassFileVersion(Opcodes.V12);
+
+    /**
+     * The class file version of Java 13.
+     */
+    public static final ClassFileVersion JAVA_V13 = new ClassFileVersion(Opcodes.V13);
+
+    /**
+     * The class file version of Java 14.
+     */
+    public static final ClassFileVersion JAVA_V14 = new ClassFileVersion(Opcodes.V14);
+
+    /**
+     * The class file version of Java 15.
+     */
+    public static final ClassFileVersion JAVA_V15 = new ClassFileVersion(Opcodes.V15);
+
+    /**
+     * The class file version of Java 16.
+     */
+    public static final ClassFileVersion JAVA_V16 = new ClassFileVersion(Opcodes.V16);
+
+    /**
+     * The class file version of Java 17.
+     */
+    public static final ClassFileVersion JAVA_V17 = new ClassFileVersion(Opcodes.V17);
+
+    /**
+     * The class file version of Java 18.
+     */
+    public static final ClassFileVersion JAVA_V18 = new ClassFileVersion(Opcodes.V18);
+
+    /**
+     * The class file version of Java 19.
+     */
+    public static final ClassFileVersion JAVA_V19 = new ClassFileVersion(Opcodes.V19);
+
+    /**
+     * The class file version of Java 20.
+     */
+    public static final ClassFileVersion JAVA_V20 = new ClassFileVersion(Opcodes.V20);
 
     /**
      * A version locator for the executing JVM.
      */
-    private static final VersionLocator VERSION_LOCATOR = AccessController.doPrivileged(VersionLocator.CreationAction.INSTANCE);
+    private static final VersionLocator VERSION_LOCATOR = doPrivileged(VersionLocator.Resolver.INSTANCE);
 
     /**
      * The version number that is represented by this class file version instance.
@@ -92,7 +156,7 @@ public class ClassFileVersion implements Comparable<ClassFileVersion> {
     private final int versionNumber;
 
     /**
-     * Creates a wrapper for a given minor-major release of the Java class file file.
+     * Creates a wrapper for a given minor-major release of the Java class file format.
      *
      * @param versionNumber The minor-major release number.
      */
@@ -101,7 +165,19 @@ public class ClassFileVersion implements Comparable<ClassFileVersion> {
     }
 
     /**
-     * Creates a wrapper for a given minor-major release of the Java class file file.
+     * A proxy for {@code java.security.AccessController#doPrivileged} that is activated if available.
+     *
+     * @param action The action to execute from a privileged context.
+     * @param <T>    The type of the action's resolved value.
+     * @return The action's resolved value.
+     */
+    @AccessControllerPlugin.Enhance
+    private static <T> T doPrivileged(PrivilegedAction<T> action) {
+        return action.run();
+    }
+
+    /**
+     * Creates a wrapper for a given minor-major release of the Java class file format.
      *
      * @param versionNumber The minor-major release number.
      * @return A representation of the version number.
@@ -143,11 +219,39 @@ public class ClassFileVersion implements Comparable<ClassFileVersion> {
             return JAVA_V10;
         } else if (javaVersionString.equals("1.11") || javaVersionString.equals("11")) {
             return JAVA_V11;
+        } else if (javaVersionString.equals("1.12") || javaVersionString.equals("12")) {
+            return JAVA_V12;
+        } else if (javaVersionString.equals("1.13") || javaVersionString.equals("13")) {
+            return JAVA_V13;
+        } else if (javaVersionString.equals("1.14") || javaVersionString.equals("14")) {
+            return JAVA_V14;
+        } else if (javaVersionString.equals("1.15") || javaVersionString.equals("15")) {
+            return JAVA_V15;
+        } else if (javaVersionString.equals("1.16") || javaVersionString.equals("16")) {
+            return JAVA_V16;
+        } else if (javaVersionString.equals("1.17") || javaVersionString.equals("17")) {
+            return JAVA_V17;
+        } else if (javaVersionString.equals("1.18") || javaVersionString.equals("18")) {
+            return JAVA_V18;
+        } else if (javaVersionString.equals("1.19") || javaVersionString.equals("19")) {
+            return JAVA_V19;
+        } else if (javaVersionString.equals("1.20") || javaVersionString.equals("20")) {
+            return JAVA_V20;
         } else {
+            if (OpenedClassReader.EXPERIMENTAL) {
+                try {
+                    int version = Integer.parseInt(javaVersionString.startsWith("1.")
+                            ? javaVersionString.substring(2)
+                            : javaVersionString);
+                    if (version > 0) {
+                        return new ClassFileVersion(BASE_VERSION + version);
+                    }
+                } catch (NumberFormatException ignored) {
+                }
+            }
             throw new IllegalArgumentException("Unknown Java version string: " + javaVersionString);
         }
     }
-
 
     /**
      * Creates a class file version for a given major release of Java. Currently, all versions reaching from
@@ -180,9 +284,40 @@ public class ClassFileVersion implements Comparable<ClassFileVersion> {
                 return JAVA_V10;
             case 11:
                 return JAVA_V11;
+            case 12:
+                return JAVA_V12;
+            case 13:
+                return JAVA_V13;
+            case 14:
+                return JAVA_V14;
+            case 15:
+                return JAVA_V15;
+            case 16:
+                return JAVA_V16;
+            case 17:
+                return JAVA_V17;
+            case 18:
+                return JAVA_V18;
+            case 19:
+                return JAVA_V19;
+            case 20:
+                return JAVA_V20;
             default:
-                throw new IllegalArgumentException("Unknown Java version: " + javaVersion);
+                if (OpenedClassReader.EXPERIMENTAL && javaVersion > 0) {
+                    return new ClassFileVersion(BASE_VERSION + javaVersion);
+                } else {
+                    throw new IllegalArgumentException("Unknown Java version: " + javaVersion);
+                }
         }
+    }
+
+    /**
+     * Returns the latest officially supported Java version when experimental support is not enabled.
+     *
+     * @return The latest officially supported Java version.
+     */
+    public static ClassFileVersion latest() {
+        return ClassFileVersion.JAVA_V20;
     }
 
     /**
@@ -193,7 +328,7 @@ public class ClassFileVersion implements Comparable<ClassFileVersion> {
      * @return The currently running Java process's class file version.
      */
     public static ClassFileVersion ofThisVm() {
-        return VERSION_LOCATOR.locate();
+        return VERSION_LOCATOR.resolve();
     }
 
     /**
@@ -204,7 +339,7 @@ public class ClassFileVersion implements Comparable<ClassFileVersion> {
      * @param fallback The version to fallback to if locating a class file version is not possible.
      * @return The currently running Java process's class file version or the fallback if locating this version is impossible.
      */
-    @SuppressFBWarnings(value = "REC_CATCH_EXCEPTION", justification = "Exception should not be rethrown but trigger a fallback")
+    @SuppressFBWarnings(value = "REC_CATCH_EXCEPTION", justification = "Exception should not be rethrown but trigger a fallback.")
     public static ClassFileVersion ofThisVm(ClassFileVersion fallback) {
         try {
             return ofThisVm();
@@ -233,7 +368,7 @@ public class ClassFileVersion implements Comparable<ClassFileVersion> {
      * @throws IOException If an error occurs while reading the class file.
      */
     public static ClassFileVersion of(Class<?> type, ClassFileLocator classFileLocator) throws IOException {
-        return of(new TypeDescription.ForLoadedType(type), classFileLocator);
+        return of(TypeDescription.ForLoadedType.of(type), classFileLocator);
     }
 
     /**
@@ -245,10 +380,20 @@ public class ClassFileVersion implements Comparable<ClassFileVersion> {
      * @throws IOException If an error occurs while reading the class file.
      */
     public static ClassFileVersion of(TypeDescription typeDescription, ClassFileLocator classFileLocator) throws IOException {
-        ClassReader classReader = new ClassReader(classFileLocator.locate(typeDescription.getName()).resolve());
-        VersionExtractor versionExtractor = new VersionExtractor();
-        classReader.accept(versionExtractor, ClassReader.SKIP_CODE);
-        return ClassFileVersion.ofMinorMajor(versionExtractor.getClassFileVersionNumber());
+        return ofClassFile(classFileLocator.locate(typeDescription.getName()).resolve());
+    }
+
+    /**
+     * Extracts a class' class version from a class file.
+     *
+     * @param binaryRepresentation The class file's binary representation.
+     * @return The supplied class file's class file version.
+     */
+    public static ClassFileVersion ofClassFile(byte[] binaryRepresentation) {
+        if (binaryRepresentation.length < 7) {
+            throw new IllegalArgumentException("Supplied byte array is too short to be a class file with " + binaryRepresentation.length + " byte");
+        }
+        return ofMinorMajor(binaryRepresentation[6] << 8 | binaryRepresentation[7] & 0xFF);
     }
 
     /**
@@ -265,8 +410,8 @@ public class ClassFileVersion implements Comparable<ClassFileVersion> {
      *
      * @return The major version this instance represents.
      */
-    public int getMajorVersion() {
-        return versionNumber & 0xFF;
+    public short getMajorVersion() {
+        return (short) (versionNumber & 0xFF);
     }
 
     /**
@@ -274,8 +419,8 @@ public class ClassFileVersion implements Comparable<ClassFileVersion> {
      *
      * @return The minor version this instance represents.
      */
-    public int getMinorVersion() {
-        return versionNumber >> 16;
+    public short getMinorVersion() {
+        return (short) (versionNumber >> 16);
     }
 
     /**
@@ -327,11 +472,36 @@ public class ClassFileVersion implements Comparable<ClassFileVersion> {
         return compareTo(classFileVersion) < 0;
     }
 
-    @Override
+    /**
+     * Returns this class file version indicating a class using preview features.
+     *
+     * @return This class file version but indicating the use of preview features.
+     */
+    public ClassFileVersion asPreviewVersion() {
+        return new ClassFileVersion(versionNumber | Opcodes.V_PREVIEW);
+    }
+
+    /**
+     * Returns {@code true} if this class file version indicates the use of preview features.
+     *
+     * @return {@code true} if this class file version indicates the use of preview features.
+     */
+    public boolean isPreviewVersion() {
+        return (versionNumber & Opcodes.V_PREVIEW) == Opcodes.V_PREVIEW;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
     public int compareTo(ClassFileVersion other) {
         return Integer.signum(getMajorVersion() == other.getMajorVersion()
                 ? getMinorVersion() - other.getMinorVersion()
                 : getMajorVersion() - other.getMajorVersion());
+    }
+
+    @Override
+    public String toString() {
+        return "Java " + getJavaVersion() + " (" + getMinorMajorVersion() + ")";
     }
 
     /**
@@ -340,142 +510,126 @@ public class ClassFileVersion implements Comparable<ClassFileVersion> {
     protected interface VersionLocator {
 
         /**
+         * A suffix that might indicate an early access version of Java.
+         */
+        String EARLY_ACCESS = "-ea";
+
+        /**
+         * The property for reading the current VM's Java version.
+         */
+        String JAVA_VERSION = "java.version";
+
+        /**
          * Locates the current VM's major version number.
          *
          * @return The current VM's major version number.
          */
-        ClassFileVersion locate();
+        ClassFileVersion resolve();
 
         /**
-         * A creation action for a version locator.
+         * A resolver for the current VM's class file version.
          */
-        enum CreationAction implements PrivilegedAction<VersionLocator> {
+        enum Resolver implements PrivilegedAction<VersionLocator> {
 
             /**
              * The singleton instance.
              */
             INSTANCE;
 
-            @Override
-            @SuppressFBWarnings(value = "REC_CATCH_EXCEPTION", justification = "Exception should not be rethrown but trigger a fallback")
+            /**
+             * {@inheritDoc}
+             */
+            @SuppressFBWarnings(value = "REC_CATCH_EXCEPTION", justification = "Exception should not be rethrown but trigger a fallback.")
             public VersionLocator run() {
                 try {
-                    return new VersionLocator.ForJava9CapableVm(Runtime.class.getMethod("version"),
-                            Class.forName("java.lang.Runtime$Version").getMethod("major"));
-                } catch (Exception ignored) {
-                    return VersionLocator.ForLegacyVm.INSTANCE;
-                }
-            }
-        }
-
-        /**
-         * A version locator for a JVM of at least version 9.
-         */
-        @EqualsAndHashCode
-        class ForJava9CapableVm implements VersionLocator {
-
-            /**
-             * Indicates that a reflective method call invokes a static method.
-             */
-            private static final Object STATIC_METHOD = null;
-
-            /**
-             * The {@code java.lang.Runtime#version()} method.
-             */
-            private final Method current;
-
-            /**
-             * The {@code java.lang.Runtime.Version#major()} method.
-             */
-            private final Method major;
-
-            /**
-             * Creates a new version locator for a Java 9 capable VM.
-             *
-             * @param current The {@code java.lang.Runtime#version()} method.
-             * @param major   The {@code java.lang.Runtime.Version#major()} method.
-             */
-            protected ForJava9CapableVm(Method current, Method major) {
-                this.current = current;
-                this.major = major;
-            }
-
-            @Override
-            public ClassFileVersion locate() {
-                try {
-                    return ClassFileVersion.ofJavaVersion((Integer) major.invoke(current.invoke(STATIC_METHOD)));
-                } catch (IllegalAccessException exception) {
-                    throw new IllegalStateException("Could not access VM version lookup", exception);
-                } catch (InvocationTargetException exception) {
-                    throw new IllegalStateException("Could not look up VM version", exception.getCause());
-                }
-            }
-        }
-
-        /**
-         * A version locator for a JVM that does not provide the {@code java.lang.Runtime.Version} class.
-         */
-        enum ForLegacyVm implements VersionLocator, PrivilegedAction<String> {
-
-            /**
-             * The singleton instance.
-             */
-            INSTANCE;
-
-            /**
-             * The system property for this JVM's Java version.
-             */
-            private static final String JAVA_VERSION_PROPERTY = "java.version";
-
-            @Override
-            public ClassFileVersion locate() {
-                String versionString = AccessController.doPrivileged(this);
-                int[] versionIndex = {-1, 0, 0};
-                for (int i = 1; i < 3; i++) {
-                    versionIndex[i] = versionString.indexOf('.', versionIndex[i - 1] + 1);
-                    if (versionIndex[i] == -1) {
-                        throw new IllegalStateException("This JVM's version string does not seem to be valid: " + versionString);
+                    Class<?> type = Class.forName(Runtime.class.getName() + "$Version");
+                    Method method;
+                    try {
+                        method = type.getMethod("feature");
+                    } catch (NoSuchMethodException ignored) {
+                        method = type.getMethod("major");
+                    }
+                    return new Resolved(ClassFileVersion.ofJavaVersion((Integer) method.invoke(Runtime.class.getMethod("version").invoke(null))));
+                } catch (Throwable ignored) {
+                    try {
+                        String versionString = System.getProperty(JAVA_VERSION);
+                        if (versionString == null) {
+                            throw new IllegalStateException("Java version property is not set");
+                        } else if (versionString.equals("0")) { // Used by Android, assume Java 6 defensively.
+                            return new Resolved(ClassFileVersion.JAVA_V6);
+                        }
+                        if (versionString.endsWith(EARLY_ACCESS)) {
+                            versionString = versionString.substring(0, versionString.length() - EARLY_ACCESS.length());
+                        }
+                        int[] versionIndex = {-1, 0, 0};
+                        for (int index = 1; index < 3; index++) {
+                            versionIndex[index] = versionString.indexOf('.', versionIndex[index - 1] + 1);
+                            if (versionIndex[index] == -1) {
+                                throw new IllegalStateException("This JVM's version string does not seem to be valid: " + versionString);
+                            }
+                        }
+                        return new Resolved(ClassFileVersion.ofJavaVersion(Integer.parseInt(versionString.substring(versionIndex[1] + 1, versionIndex[2]))));
+                    } catch (Throwable throwable) {
+                        return new Unresolved(throwable.getMessage());
                     }
                 }
-                return ClassFileVersion.ofJavaVersion(Integer.parseInt(versionString.substring(versionIndex[1] + 1, versionIndex[2])));
-            }
-
-            @Override
-            public String run() {
-                return System.getProperty(JAVA_VERSION_PROPERTY);
             }
         }
-    }
-
-    /**
-     * A simple visitor that extracts the class file version of a class file.
-     */
-    protected static class VersionExtractor extends ClassVisitor {
 
         /**
-         * The class file version extracted from a class.
+         * A version locator for a resolved class file version.
          */
-        private int classFileVersionNumber;
+        @HashCodeAndEqualsPlugin.Enhance
+        class Resolved implements VersionLocator {
 
-        /**
-         * Creates a new extractor.
-         */
-        protected VersionExtractor() {
-            super(Opcodes.ASM6);
+            /**
+             * The resolved class file version.
+             */
+            private final ClassFileVersion classFileVersion;
+
+            /**
+             * Creates a new resolved version locator.
+             *
+             * @param classFileVersion The resolved class file version.
+             */
+            protected Resolved(ClassFileVersion classFileVersion) {
+                this.classFileVersion = classFileVersion;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public ClassFileVersion resolve() {
+                return classFileVersion;
+            }
         }
 
-        @Override
-        public void visit(int classFileVersionNumber, int modifier, String internalName, String signature, String superTypeName, String[] interfaceName) {
-            this.classFileVersionNumber = classFileVersionNumber;
-        }
-
         /**
-         * Returns the class file version number found in a class file.
-         *
-         * @return The class file version number found in a class file.
+         * An unresolved version locator.
          */
-        protected int getClassFileVersionNumber() {
-            return classFileVersionNumber;
+        @HashCodeAndEqualsPlugin.Enhance
+        class Unresolved implements VersionLocator {
+
+            /**
+             * The message of the exception that explains the resolution error.
+             */
+            private final String message;
+
+            /**
+             * Creates an unresolved version locator.
+             *
+             * @param message The message of the exception that explains the resolution error.
+             */
+            protected Unresolved(String message) {
+                this.message = message;
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public ClassFileVersion resolve() {
+                throw new IllegalStateException("Failed to resolve the class file version of the current VM: " + message);
+            }
         }
     }
 }

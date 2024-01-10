@@ -5,7 +5,7 @@ import net.bytebuddy.agent.ByteBuddyAgent;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.dynamic.DynamicType;
 import net.bytebuddy.test.utility.AgentAttachmentRule;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
+import net.bytebuddy.test.utility.ClassReflectionInjectionAvailableRule;
 import net.bytebuddy.utility.RandomString;
 import org.junit.Before;
 import org.junit.Rule;
@@ -28,6 +28,9 @@ public class ClassLoadingStrategyForBootstrapInjectionTest {
 
     @Rule
     public MethodRule agentAttachmentRule = new AgentAttachmentRule();
+
+    @Rule
+    public MethodRule classInjectionAvailableRule = new ClassReflectionInjectionAvailableRule();
 
     private File file;
 
@@ -53,6 +56,7 @@ public class ClassLoadingStrategyForBootstrapInjectionTest {
 
     @Test
     @AgentAttachmentRule.Enforce
+    @ClassReflectionInjectionAvailableRule.Enforce
     public void testClassLoaderInjection() throws Exception {
         ClassLoadingStrategy<ClassLoader> bootstrapStrategy = new ClassLoadingStrategy.ForBootstrapInjection(ByteBuddyAgent.install(), file);
         String name = BAR + RandomString.make();
@@ -62,10 +66,5 @@ public class ClassLoadingStrategyForBootstrapInjectionTest {
         assertThat(loaded.size(), is(1));
         assertThat(loaded.get(dynamicType.getTypeDescription()).getName(), is(name));
         assertThat(loaded.get(dynamicType.getTypeDescription()).getClassLoader(), is(classLoader));
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(ClassLoadingStrategy.ForBootstrapInjection.class).apply();
     }
 }

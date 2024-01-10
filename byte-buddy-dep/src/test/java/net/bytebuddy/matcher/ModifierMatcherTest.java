@@ -10,6 +10,7 @@ import org.objectweb.asm.Opcodes;
 import java.util.Arrays;
 import java.util.Collection;
 
+import static net.bytebuddy.test.utility.FieldByFieldComparison.hasPrototype;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.mockito.Mockito.*;
@@ -69,13 +70,13 @@ public class ModifierMatcherTest extends AbstractElementMatcherTest<ModifierMatc
         verifyNoMoreInteractions(modifierReviewable);
     }
 
-    @Override
-    protected String makeRegex(String startsWith) {
-        return null;
+    @Test
+    public void testStringRepresentation() throws Exception {
+        assertThat(new ModifierMatcher<ModifierReviewable>(mode).toString(), is(mode.getDescription()));
     }
 
     @Test
-    public void testToString() throws Exception {
-        assertThat(new ModifierMatcher<ModifierReviewable>(mode).toString(), is(mode.getDescription()));
+    public void testSingletonEquivalentToNewInstance() {
+        assertThat(ModifierMatcher.of(mode), hasPrototype((ElementMatcher.Junction<ModifierReviewable>) new ModifierMatcher<ModifierReviewable>(mode)));
     }
 }

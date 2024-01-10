@@ -1,3 +1,95 @@
+byte-buddy (1.12.23-1) unstable; urgency=medium
+
+  * Team upload.
+  * New upstream release
+    - Refreshed the patches
+
+ -- Emmanuel Bourg <ebourg@apache.org>  Sun, 11 Jun 2023 09:54:02 +0200
+
+byte-buddy (1.12.21-1) unstable; urgency=medium
+
+  * Team upload.
+  * Remove the precompiled classes from the upstream tarball
+  * Regenerate the precompiled classes
+  * New upstream release
+    - Refreshed the patches
+    - Depend on libbyte-buddy-java (>= 1.11.22)
+
+ -- Emmanuel Bourg <ebourg@apache.org>  Thu, 12 Jan 2023 13:49:53 +0100
+
+byte-buddy (1.11.22-1) unstable; urgency=medium
+
+  * Team upload.
+  * New upstream release
+    - Refreshed the patches
+    - Depend on libbyte-buddy-java (>= 1.11.4)
+
+ -- Emmanuel Bourg <ebourg@apache.org>  Thu, 12 Jan 2023 10:30:34 +0100
+
+byte-buddy (1.11.4-1) unstable; urgency=medium
+
+  * Team upload.
+  * New upstream release
+    - Refreshed the patches
+
+ -- Emmanuel Bourg <ebourg@apache.org>  Thu, 12 Jan 2023 00:07:18 +0100
+
+byte-buddy (1.10.22-1) unstable; urgency=medium
+
+  * Team upload.
+  * New upstream release
+    - Refreshed the patches
+    - Enabled CachedReturnPlugin when building byte-buddy-dep
+    - Depend on libbyte-buddy-java (>= 1.8.22)
+
+ -- Emmanuel Bourg <ebourg@apache.org>  Wed, 11 Jan 2023 19:19:43 +0100
+
+byte-buddy (1.9.16-1) unstable; urgency=medium
+
+  * Team upload.
+  * Filter out the Windows libraries from the upstream tarball
+  * New upstream release
+    - Refreshed the patches
+    - Depend on libasm-java (>= 7.1)
+    - New dependencies on build-helper-maven-plugin and jna-platform
+
+ -- Emmanuel Bourg <ebourg@apache.org>  Wed, 11 Jan 2023 16:34:18 +0100
+
+byte-buddy (1.8.22-1) unstable; urgency=medium
+
+  * Team upload.
+  * New upstream release
+    - Refreshed the patches
+    - Depend on libbyte-buddy-java (>= 1.8.15)
+
+ -- Emmanuel Bourg <ebourg@apache.org>  Wed, 11 Jan 2023 14:12:08 +0100
+
+byte-buddy (1.8.15-1) unstable; urgency=medium
+
+  * Team upload.
+  * New upstream release
+    - Depend on libbyte-buddy-java and relocate byte-buddy-maven-plugin
+      at build time to avoid a circular dependency in the Maven reactor
+    - Depend on libasm-java (>= 7.0)
+    - New dependency on libmaven-bundle-plugin-java
+  * Removed the unused dependency on libmaven-javadoc-plugin-java
+  * Updated the watch file
+  * Standards-Version updated to 4.6.2
+
+ -- Emmanuel Bourg <ebourg@apache.org>  Tue, 10 Jan 2023 15:12:05 +0100
+
+byte-buddy (1.8.2-3) unstable; urgency=medium
+
+  * Team upload.
+  * Drop javadoc package (Closes: #1025836)
+  * Use debhelper-compat (=13)
+  * Update Homepage URL
+  * Set Rules-Requires-Root: no in debian/control
+  * Bump Standards-Version to 4.6.1
+  * Freshen years in debian/copyright
+
+ -- tony mancill <tmancill@debian.org>  Sat, 10 Dec 2022 10:14:33 -0800
+
 byte-buddy (1.8.2-2) unstable; urgency=medium
 
   * Team upload.

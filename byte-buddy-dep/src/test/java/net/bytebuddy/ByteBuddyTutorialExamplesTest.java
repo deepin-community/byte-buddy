@@ -40,14 +40,13 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.instrument.Instrumentation;
 import java.lang.reflect.Method;
-import java.net.URL;
-import java.net.URLClassLoader;
+import java.security.ProtectionDomain;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Callable;
 
-import static net.bytebuddy.matcher.ElementMatchers.*;
 import static net.bytebuddy.matcher.ElementMatchers.not;
+import static net.bytebuddy.matcher.ElementMatchers.*;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.*;
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -55,9 +54,9 @@ import static org.mockito.Mockito.mock;
 
 public class ByteBuddyTutorialExamplesTest {
 
-    private static final String DEFAULT_METHOD_INTERFACE = "net.bytebuddy.test.precompiled.SingleDefaultMethodInterface";
+    private static final String DEFAULT_METHOD_INTERFACE = "net.bytebuddy.test.precompiled.v8.SingleDefaultMethodInterface";
 
-    private static final String CONFLICTING_DEFAULT_METHOD_INTERFACE = "net.bytebuddy.test.precompiled.SingleDefaultMethodConflictingInterface";
+    private static final String CONFLICTING_DEFAULT_METHOD_INTERFACE = "net.bytebuddy.test.precompiled.v8.SingleDefaultMethodConflictingInterface";
 
     @Rule
     public MethodRule javaVersionRule = new JavaVersionRule();
@@ -154,21 +153,23 @@ public class ByteBuddyTutorialExamplesTest {
 
     @Test
     public void testTutorialGettingStartedTypePool() throws Exception {
-        TypePool typePool = TypePool.Default.ofClassPath();
-        ClassLoader classLoader = new URLClassLoader(new URL[0], null); // Assure repeatability.
-        new ByteBuddy().redefine(typePool.describe(UnloadedBar.class.getName()).resolve(),
-                ClassFileLocator.ForClassLoader.ofClassPath())
+        TypePool typePool = TypePool.Default.ofSystemLoader();
+        Class<?> type = new ByteBuddy().redefine(typePool.describe(UnloadedBar.class.getName()).resolve(), ClassFileLocator.ForClassLoader.ofSystemLoader())
                 .defineField("qux", String.class)
                 .make()
-                .load(classLoader, ClassLoadingStrategy.Default.INJECTION);
-        assertThat(classLoader.loadClass(UnloadedBar.class.getName()).getDeclaredField("qux"), notNullValue(java.lang.reflect.Field.class));
+                .load(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassLoadingStrategy.Default.WRAPPER)
+                .getLoaded();
+        assertThat(type.getDeclaredField("qux"), notNullValue(java.lang.reflect.Field.class));
     }
 
     @Test
     public void testTutorialGettingStartedJavaAgent() throws Exception {
         new AgentBuilder.Default().type(isAnnotatedWith(Rebase.class)).transform(new AgentBuilder.Transformer() {
-            @Override
-            public DynamicType.Builder<?> transform(DynamicType.Builder<?> builder, TypeDescription typeDescription, ClassLoader classLoader, JavaModule module) {
+            public DynamicType.Builder<?> transform(DynamicType.Builder<?> builder,
+                                                    TypeDescription typeDescription,
+                                                    ClassLoader classLoader,
+                                                    JavaModule module,
+                                                    ProtectionDomain protectionDomain) {
                 return builder.method(named("toString")).intercept(FixedValue.value("transformed"));
             }
         }).installOn(mock(Instrumentation.class));
@@ -176,7 +177,7 @@ public class ByteBuddyTutorialExamplesTest {
 
     @Test
     public void testFieldsAndMethodsToString() throws Exception {
-        String toString = new ByteBuddy()
+        assertThat(new ByteBuddy()
                 .subclass(Object.class)
                 .name("example.Type")
                 .make()
@@ -184,13 +185,12 @@ public class ByteBuddyTutorialExamplesTest {
                 .getLoaded()
                 .getDeclaredConstructor()
                 .newInstance()
-                .toString();
-        assertThat(toString, startsWith("example.Type"));
+                .toString(), startsWith("example.Type"));
     }
 
     @Test
     public void testFieldsAndMethodsDetailedMatcher() throws Exception {
-        assertThat(TypeDescription.OBJECT
+        assertThat(TypeDescription.ForLoadedType.of(Object.class)
                 .getDeclaredMethods()
                 .filter(named("toString").and(returns(String.class)).and(takesArguments(0))).size(), is(1));
     }
@@ -440,12 +440,10 @@ public class ByteBuddyTutorialExamplesTest {
 
         INSTANCE;
 
-        @Override
         public boolean isValid() {
             return true;
         }
 
-        @Override
         public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext) {
             methodVisitor.visitInsn(Opcodes.IADD);
             return new Size(-1, 0);
@@ -456,7 +454,6 @@ public class ByteBuddyTutorialExamplesTest {
 
         INSTANCE;
 
-        @Override
         public Size apply(MethodVisitor methodVisitor,
                           Implementation.Context implementationContext,
                           MethodDescription instrumentedMethod) {
@@ -476,12 +473,10 @@ public class ByteBuddyTutorialExamplesTest {
     public enum SumImplementation implements Implementation {
         INSTANCE;
 
-        @Override
         public InstrumentedType prepare(InstrumentedType instrumentedType) {
             return instrumentedType;
         }
 
-        @Override
         public ByteCodeAppender appender(Target implementationTarget) {
             return SumMethod.INSTANCE;
         }
@@ -491,10 +486,9 @@ public class ByteBuddyTutorialExamplesTest {
 
         INSTANCE;
 
-        @Override
         public StackManipulation assign(TypeDescription.Generic source, TypeDescription.Generic target, Typing typing) {
             if (!source.isPrimitive() && target.represents(String.class)) {
-                MethodDescription toStringMethod = TypeDescription.OBJECT.getDeclaredMethods()
+                MethodDescription toStringMethod = TypeDescription.ForLoadedType.of(Object.class).getDeclaredMethods()
                         .filter(named("toString"))
                         .getOnly();
                 return MethodInvocation.invoke(toStringMethod).virtual(source.asErasure());
@@ -508,12 +502,10 @@ public class ByteBuddyTutorialExamplesTest {
 
         INSTANCE;
 
-        @Override
         public Class<StringValue> getHandledType() {
             return StringValue.class;
         }
 
-        @Override
         public MethodDelegationBinder.ParameterBinding<?> bind(AnnotationDescription.Loadable<StringValue> annotation,
                                                                MethodDescription source,
                                                                ParameterDescription target,
@@ -523,7 +515,7 @@ public class ByteBuddyTutorialExamplesTest {
             if (!target.getType().asErasure().represents(String.class)) {
                 throw new IllegalStateException(target + " makes wrong use of StringValue");
             }
-            StackManipulation constant = new TextConstant(annotation.loadSilent().value());
+            StackManipulation constant = new TextConstant(annotation.load().value());
             return new MethodDelegationBinder.ParameterBinding.Anonymous(constant);
         }
     }
@@ -750,7 +742,6 @@ public class ByteBuddyTutorialExamplesTest {
     @SuppressWarnings("unused")
     public static class HelloWorldInterceptor implements Interceptor2 {
 
-        @Override
         public String doSomethingElse() {
             return "Hello World!";
         }
@@ -758,7 +749,6 @@ public class ByteBuddyTutorialExamplesTest {
 
     private static class RuntimeDefinitionImpl implements RuntimeDefinition {
 
-        @Override
         public Class<? extends Annotation> annotationType() {
             return RuntimeDefinition.class;
         }
@@ -776,8 +766,8 @@ public class ByteBuddyTutorialExamplesTest {
         }
     }
 
-    private static class UnloadedBar {
-
+    public static class UnloadedBar {
+        /* empty */
     }
 
     public class ForwardingLoggerInterceptor {
@@ -798,10 +788,9 @@ public class ByteBuddyTutorialExamplesTest {
         }
     }
 
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings({"unchecked", "rawtypes"})
     class LoggingMemoryDatabase extends MemoryDatabase {
 
-        @Override
         public List<String> load(String info) {
             try {
                 return LoggerInterceptor.log(new LoadMethodSuperCall(info));
@@ -818,7 +807,6 @@ public class ByteBuddyTutorialExamplesTest {
                 this.info = info;
             }
 
-            @Override
             public Object call() throws Exception {
                 return LoggingMemoryDatabase.super.load(info);
             }

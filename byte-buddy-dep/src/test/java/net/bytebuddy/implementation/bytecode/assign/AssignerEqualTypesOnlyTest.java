@@ -3,15 +3,15 @@ package net.bytebuddy.implementation.bytecode.assign;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.implementation.Implementation;
 import net.bytebuddy.implementation.bytecode.StackManipulation;
-import net.bytebuddy.test.utility.MockitoRule;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 import org.objectweb.asm.MethodVisitor;
 
 import java.util.Arrays;
@@ -27,7 +27,7 @@ public class AssignerEqualTypesOnlyTest {
     private final boolean dynamicallyTyped;
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     @Mock
     private TypeDescription.Generic first, second;
@@ -58,8 +58,8 @@ public class AssignerEqualTypesOnlyTest {
 
     @After
     public void tearDown() throws Exception {
-        verifyZeroInteractions(methodVisitor);
-        verifyZeroInteractions(implementationContext);
+        verifyNoMoreInteractions(methodVisitor);
+        verifyNoMoreInteractions(implementationContext);
     }
 
     @Test
@@ -69,15 +69,15 @@ public class AssignerEqualTypesOnlyTest {
         StackManipulation.Size size = stackManipulation.apply(methodVisitor, implementationContext);
         assertThat(size.getSizeImpact(), is(0));
         assertThat(size.getMaximalSize(), is(0));
-        verifyZeroInteractions(first);
+        verifyNoMoreInteractions(first);
     }
 
     @Test
     public void testAssignmentGenericNotEqual() throws Exception {
         StackManipulation stackManipulation = Assigner.EqualTypesOnly.GENERIC.assign(first, second, Assigner.Typing.of(dynamicallyTyped));
         assertThat(stackManipulation.isValid(), is(false));
-        verifyZeroInteractions(first);
-        verifyZeroInteractions(second);
+        verifyNoMoreInteractions(first);
+        verifyNoMoreInteractions(second);
     }
 
     @Test

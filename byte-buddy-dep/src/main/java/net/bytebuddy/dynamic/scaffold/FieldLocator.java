@@ -1,6 +1,21 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.dynamic.scaffold;
 
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.field.FieldDescription;
 import net.bytebuddy.description.field.FieldList;
 import net.bytebuddy.description.type.TypeDefinition;
@@ -61,12 +76,16 @@ public interface FieldLocator {
              */
             INSTANCE;
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public boolean isResolved() {
                 return false;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public FieldDescription getField() {
                 throw new IllegalStateException("Could not locate field");
             }
@@ -75,7 +94,7 @@ public interface FieldLocator {
         /**
          * A simple implementation for a field resolution.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class Simple implements Resolution {
 
             /**
@@ -92,12 +111,16 @@ public interface FieldLocator {
                 this.fieldDescription = fieldDescription;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public boolean isResolved() {
                 return true;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public FieldDescription getField() {
                 return fieldDescription;
             }
@@ -128,17 +151,23 @@ public interface FieldLocator {
          */
         INSTANCE;
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public FieldLocator make(TypeDescription typeDescription) {
             return this;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Resolution locate(String name) {
             return Resolution.Illegal.INSTANCE;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Resolution locate(String name, TypeDescription type) {
             return Resolution.Illegal.INSTANCE;
         }
@@ -147,7 +176,7 @@ public interface FieldLocator {
     /**
      * An abstract base implementation of a field locator.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     abstract class AbstractBase implements FieldLocator {
 
         /**
@@ -164,7 +193,9 @@ public interface FieldLocator {
             this.accessingType = accessingType;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Resolution locate(String name) {
             FieldList<?> candidates = locate(named(name).and(isVisibleTo(accessingType)));
             return candidates.size() == 1
@@ -172,7 +203,9 @@ public interface FieldLocator {
                     : Resolution.Illegal.INSTANCE;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Resolution locate(String name, TypeDescription type) {
             FieldList<?> candidates = locate(named(name).and(fieldType(type)).and(isVisibleTo(accessingType)));
             return candidates.size() == 1
@@ -192,7 +225,7 @@ public interface FieldLocator {
     /**
      * A field locator that only looks up fields that are declared by a specific type.
      */
-    @EqualsAndHashCode(callSuper = true)
+    @HashCodeAndEqualsPlugin.Enhance
     class ForExactType extends AbstractBase {
 
         /**
@@ -228,7 +261,7 @@ public interface FieldLocator {
         /**
          * A factory for creating a {@link ForExactType}.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         public static class Factory implements FieldLocator.Factory {
 
             /**
@@ -245,7 +278,9 @@ public interface FieldLocator {
                 this.typeDescription = typeDescription;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public FieldLocator make(TypeDescription typeDescription) {
                 return new ForExactType(this.typeDescription, typeDescription);
             }
@@ -255,7 +290,7 @@ public interface FieldLocator {
     /**
      * A field locator that looks up fields that are declared within a class's class hierarchy.
      */
-    @EqualsAndHashCode(callSuper = true)
+    @HashCodeAndEqualsPlugin.Enhance
     class ForClassHierarchy extends AbstractBase {
 
         /**
@@ -304,7 +339,9 @@ public interface FieldLocator {
              */
             INSTANCE;
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public FieldLocator make(TypeDescription typeDescription) {
                 return new ForClassHierarchy(typeDescription);
             }
@@ -340,7 +377,9 @@ public interface FieldLocator {
              */
             INSTANCE;
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public FieldLocator make(TypeDescription typeDescription) {
                 return new ForTopLevelType(typeDescription);
             }

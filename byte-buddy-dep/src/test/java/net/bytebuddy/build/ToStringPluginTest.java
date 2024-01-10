@@ -2,12 +2,12 @@ package net.bytebuddy.build;
 
 import net.bytebuddy.ByteBuddy;
 import net.bytebuddy.description.type.TypeDescription;
+import net.bytebuddy.dynamic.ClassFileLocator;
 import net.bytebuddy.dynamic.loading.ClassLoadingStrategy;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Test;
 
+import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.core.Is.is;
 
 public class ToStringPluginTest {
 
@@ -16,14 +16,14 @@ public class ToStringPluginTest {
     @Test
     public void testPluginMatches() throws Exception {
         Plugin plugin = new ToStringPlugin();
-        assertThat(plugin.matches(new TypeDescription.ForLoadedType(SimpleSample.class)), is(true));
-        assertThat(plugin.matches(TypeDescription.OBJECT), is(false));
+        assertThat(plugin.matches(TypeDescription.ForLoadedType.of(SimpleSample.class)), is(true));
+        assertThat(plugin.matches(TypeDescription.ForLoadedType.of(Object.class)), is(false));
     }
 
     @Test
     public void testPluginEnhance() throws Exception {
         Class<?> type = new ToStringPlugin()
-                .apply(new ByteBuddy().redefine(SimpleSample.class), new TypeDescription.ForLoadedType(SimpleSample.class))
+                .apply(new ByteBuddy().redefine(SimpleSample.class), TypeDescription.ForLoadedType.of(SimpleSample.class), ClassFileLocator.ForClassLoader.of(SimpleSample.class.getClassLoader()))
                 .make()
                 .load(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassLoadingStrategy.Default.WRAPPER)
                 .getLoaded();
@@ -35,7 +35,7 @@ public class ToStringPluginTest {
     @Test
     public void testPluginEnhanceRedundant() throws Exception {
         Class<?> type = new ToStringPlugin()
-                .apply(new ByteBuddy().redefine(RedundantSample.class), new TypeDescription.ForLoadedType(RedundantSample.class))
+                .apply(new ByteBuddy().redefine(RedundantSample.class), TypeDescription.ForLoadedType.of(RedundantSample.class), ClassFileLocator.ForClassLoader.of(RedundantSample.class.getClassLoader()))
                 .make()
                 .load(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassLoadingStrategy.Default.WRAPPER)
                 .getLoaded();
@@ -45,18 +45,13 @@ public class ToStringPluginTest {
     @Test
     public void testPluginEnhanceIgnore() throws Exception {
         Class<?> type = new ToStringPlugin()
-                .apply(new ByteBuddy().redefine(IgnoredFieldSample.class), new TypeDescription.ForLoadedType(IgnoredFieldSample.class))
+                .apply(new ByteBuddy().redefine(IgnoredFieldSample.class), TypeDescription.ForLoadedType.of(IgnoredFieldSample.class), ClassFileLocator.ForClassLoader.of(IgnoredFieldSample.class.getClassLoader()))
                 .make()
                 .load(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassLoadingStrategy.Default.WRAPPER)
                 .getLoaded();
         Object instance = type.getDeclaredConstructor().newInstance();
         type.getDeclaredField(FOO).set(instance, FOO);
         assertThat(instance.toString(), is("IgnoredFieldSample{}"));
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(ToStringPlugin.class).apply();
     }
 
     @ToStringPlugin.Enhance
@@ -75,7 +70,6 @@ public class ToStringPluginTest {
     @ToStringPlugin.Enhance
     public static class RedundantSample {
 
-        @Override
         public String toString() {
             return BAR;
         }

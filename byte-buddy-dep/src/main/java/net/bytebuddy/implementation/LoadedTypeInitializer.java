@@ -1,13 +1,32 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.AccessControllerPlugin;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
+import net.bytebuddy.description.type.TypeDescription;
+import net.bytebuddy.utility.JavaModule;
+import net.bytebuddy.utility.nullability.MaybeNull;
 import net.bytebuddy.utility.privilege.SetAccessibleAction;
 
 import java.io.Serializable;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
-import java.security.AccessController;
+import java.security.PrivilegedAction;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -45,12 +64,16 @@ public interface LoadedTypeInitializer {
          */
         INSTANCE;
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public void onLoad(Class<?> type) {
             /* do nothing */
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public boolean isAlive() {
             return false;
         }
@@ -59,18 +82,13 @@ public interface LoadedTypeInitializer {
     /**
      * A type initializer for setting a value for a static field.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class ForStaticField implements LoadedTypeInitializer, Serializable {
 
         /**
          * This class's serial version UID.
          */
         private static final long serialVersionUID = 1L;
-
-        /**
-         * A value for accessing a static field.
-         */
-        private static final Object STATIC_FIELD = null;
 
         /**
          * The name of the field.
@@ -80,7 +98,16 @@ public interface LoadedTypeInitializer {
         /**
          * The value of the field.
          */
+        @SuppressWarnings("serial")
         private final Object value;
+
+        /**
+         * The access control context to use for loading classes or {@code null} if the
+         * access controller is not available on the current VM.
+         */
+        @MaybeNull
+        @HashCodeAndEqualsPlugin.ValueHandling(HashCodeAndEqualsPlugin.ValueHandling.Sort.IGNORE)
+        private final transient Object accessControlContext;
 
         /**
          * Creates a new {@link LoadedTypeInitializer} for setting a static field.
@@ -88,19 +115,59 @@ public interface LoadedTypeInitializer {
          * @param fieldName the name of the field.
          * @param value     The value to be set.
          */
-        protected ForStaticField(String fieldName, Object value) {
+        public ForStaticField(String fieldName, Object value) {
             this.fieldName = fieldName;
             this.value = value;
+            accessControlContext = getContext();
         }
 
-        @Override
+        /**
+         * A proxy for {@code java.security.AccessController#getContext} that is activated if available.
+         *
+         * @return The current access control context or {@code null} if the current VM does not support it.
+         */
+        @MaybeNull
+        @AccessControllerPlugin.Enhance
+        private static Object getContext() {
+            return null;
+        }
+
+        /**
+         * A proxy for {@code java.security.AccessController#doPrivileged} that is activated if available.
+         *
+         * @param action  The action to execute from a privileged context.
+         * @param context The access control context or {@code null} if the current VM does not support it.
+         * @param <T>     The type of the action's resolved value.
+         * @return The action's resolved value.
+         */
+        @AccessControllerPlugin.Enhance
+        private static <T> T doPrivileged(PrivilegedAction<T> action, @MaybeNull @SuppressWarnings("unused") Object context) {
+            return action.run();
+        }
+
+        /**
+         * Resolves this instance after deserialization to assure the access control context is set.
+         *
+         * @return A resolved instance of this instance that includes an appropriate access control context.
+         */
+        private Object readResolve() {
+            return new ForStaticField(fieldName, value);
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        @SuppressFBWarnings(value = "NP_NULL_ON_SOME_PATH_FROM_RETURN_VALUE", justification = "Modules are assumed available when module system is supported")
         public void onLoad(Class<?> type) {
             try {
                 Field field = type.getDeclaredField(fieldName);
-                if (!Modifier.isPublic(field.getModifiers()) || !Modifier.isPublic(field.getDeclaringClass().getModifiers())) {
-                    AccessController.doPrivileged(new SetAccessibleAction<Field>(field));
+                if (!Modifier.isPublic(field.getModifiers())
+                        || !Modifier.isPublic(field.getDeclaringClass().getModifiers())
+                        || JavaModule.isSupported()
+                        && !JavaModule.ofType(type).isExported(TypeDescription.ForLoadedType.of(type).getPackage(), JavaModule.ofType(ForStaticField.class))) {
+                    doPrivileged(new SetAccessibleAction<Field>(field), accessControlContext);
                 }
-                field.set(STATIC_FIELD, value);
+                field.set(null, value);
             } catch (IllegalAccessException exception) {
                 throw new IllegalArgumentException("Cannot access " + fieldName + " from " + type, exception);
             } catch (NoSuchFieldException exception) {
@@ -108,7 +175,9 @@ public interface LoadedTypeInitializer {
             }
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public boolean isAlive() {
             return true;
         }
@@ -118,7 +187,7 @@ public interface LoadedTypeInitializer {
      * A compound loaded type initializer that combines several type initializers.
      */
     @SuppressFBWarnings(value = "SE_BAD_FIELD", justification = "Serialization is considered opt-in for a rare use case")
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class Compound implements LoadedTypeInitializer, Serializable {
 
         /**
@@ -129,6 +198,7 @@ public interface LoadedTypeInitializer {
         /**
          * The loaded type initializers that are represented by this compound type initializer.
          */
+        @SuppressWarnings("serial")
         private final List<LoadedTypeInitializer> loadedTypeInitializers;
 
         /**
@@ -156,14 +226,18 @@ public interface LoadedTypeInitializer {
             }
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public void onLoad(Class<?> type) {
             for (LoadedTypeInitializer loadedTypeInitializer : loadedTypeInitializers) {
                 loadedTypeInitializer.onLoad(type);
             }
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public boolean isAlive() {
             for (LoadedTypeInitializer loadedTypeInitializer : loadedTypeInitializers) {
                 if (loadedTypeInitializer.isAlive()) {

@@ -1,17 +1,704 @@
 Byte Buddy release notes
 ------------------------
 
+### 12. January 2023: version 1.12.22
+
+- Support `MethodHandle` and `MethodType` in `Advice.Origin` annotation.
+- Support `MethodHandles.Lookup` in `Origin` and `Advice.Origin` annotations.
+- Use modern API for Gradle Android API, if available, to avoid now failing cast.
+
+### 5. January 2023: version 1.12.21
+
+- Create a Gradle source set for each JVM build automatically to reduce boilerplate.
+- Fix Gradle plugin class loading to use correct class loader.
+- Use updated release plugin to avoid outdated timestamp in jar.
+
+### 15. December 2022: version 1.12.20
+
+- Avoid stack overflow error when type variable cannot be resolve during error message generation.
+- Allow dumping error message to file when remote attach fails.
+
+### 17. November 2022: version 1.12.19
+
+- Avoid possible lock through circular class loading of `TypeDescription` subtypes.
+- Avoid access error when using unsafe API on Java 17 with an active security manager.
+- Close URL class loader used in Gradle plugin.
+
+### 11. October 2022: version 1.12.18
+
+- Allow writing to field from enter `Advice` in constructor, as byte code allows it.
+- Refactor Android plugin processor to avoid skipping local classes.
+- Improve staleness filter for Maven plugin.
+- Fix incorrect resolution of custom bound *invokedynamic* values in `Advice`.
+
+### 21. September 2022: version 1.12.17
+
+- Use decorating `EntryPoint` in Android Gradle plugin.
+- Introduce `PatchMode` on `AgentBuilder` patching to allow for control over overlap.
+
+### 8. September 2022: version 1.12.16
+
+- Fix Gradle release script to publish plugin.
+
+### 8. September 2022: version 1.12.15
+
+- Introduce `ClassVisitorFactory` which allows to translate to and from class wrappers in a different ASM namespace.
+- Allow builders to change to `ClassVisitors`.
+- Add support for Android instrumentation from Gradle plugin.
+
+### 22. August 2022: version 1.12.14
+
+- Add `wrap` method to `DynamicType.Builder` that allows for the representation of a dynamic type via a `ClassVisitor`.
+- Add `ClassVisitorFactory` that allows to translate between Byte Buddy's, the original, or other shaded representations of ASM.
+- Fix visibility check for types in the default package.
+- Return correct value for types in the default package.
+
+### 1. August 2022: version 1.12.13
+
+- Avoid duplicate application of Byte Buddy Maven plugin.
+- Allow for class path discovery of `Plugin`s when using Maven.
+- Fix build cache when using Byte Buddy Gradle plugin.
+- Allow `Plugin`s to define new types prior to transformation.
+
+### 25. June 2022: version 1.12.12
+
+- Use correct annotation in Byte Buddy Gradle plugin.
+- Correctly resolve generified anonymous/local types that are declared within a method.
+
+### 22. June 2022: version 1.12.11
+
+- Remove use of thread-local to guarantee Loom compatibility.
+- Allow usage of *byte-buddy-parent* as BOM for imports.
+- Add convenience for Maven to disable type validation on entry point.
+- Allow Gradle plugin to consume *pluginName* property and *discoverySet* to only load plugins in the plugin class loader.
+
+### 1. May 2022: version 1.12.10
+
+- Correctly resolve temporary folder, if custom folder is set, on Linux during emulated attach.
+- Attempt guessing if Graal automatic configuration agent for native image is run.
+- Avoid hard-coded dependencies to classes of *java.management* module.
+- Do not include OSGi info in Byte Buddy source module.
+
+### 7. April 2022: version 1.12.9
+
+- Add support for Java 19.
+- Add basic support for Graal native image.
+- Add option for strongly referenced cache keys.
+- Reduce access requirements for fields from `Advice`.
+
+### 10. February 2022: version 1.12.8
+
+- Make `Step` type in `MemberSubstitution` public as intended.
+- Add factory that uses `ArrayDeque` instead of `LinkedList` if the used JVM supports it (Java 6+).
+- Fix resolution of internal names for arrays in `TypeReferenceAdjustment`.
+
+### 15. January 2022: version 1.12.7
+
+- Adjust warm-up API to return warmed-up byte code.
+- Check *release* property in Byte Buddy Maven plugin.
+- Propagate exception from Byte Buddy's class file transformer to improve wrapping behavior.
+- Avoid loading of `ElementType` when checking compatibility as the current VM might not provide all constants.
+- Allow for disabling stack adjustment as it might not always be possible.
+- Make stack adjustment more robust when *goto* targets contain stack values.
+
+### 20. December 2021: version 1.12.6
+
+- Mark argument for `equals` method as `@MaybeNull`.
+- Mark argument for `ElementMatcher` as `@UnknownNull`.
+
+### 16. December 2021: version 1.12.5
+
+- Add alias annotations to avoid compilation warnings for optional findbugs dependency.
+- Adjust `HashCodeEqualsPlugin` to allow for inclusion of custom annotation type on equals method parameter.
+
+### 15. December 2021: version 1.12.4
+
+- Make paths in Gradle plugin relative and therewith cachable.
+- Add explicit check for empty or non-existent source folder to Maven and Gradle plugins.
+- Add support for modules when accessing system class loader for `Nexus` or `Installer`.
+- Add nullability annotations to all type members which are nullable and declare non-nullability the default.
+
+### 2. December 2021: version 1.12.3
+
+- Move configuration for Java version to extension and avoid implicit configuration during task execution to allow for using a configuration cache.
+- Make fail last the alternative to fail fast instead of not failing the build. Enable fail fast by default in the Gradle plugin.
+- Use instrumented type in `MemberSubstitution` to include newly added properties in its description.
+
+### 22. November 2021: version 1.12.2
+
+- Improve error message when class file version is not supported.
+- Avoid duplication of fields to store auxiliary objects.
+- Fix Gradle plugin to be skipped when input files are empty.
+- Resolve dynamic bootstrap constant type correctly.
+
+### 9. November 2021: version 1.12.1
+
+- Fix binary incompatibility in `BaseNameResolver` for suffixing naming strategy.
+- Introduce caller sensitive base name resolver for suffixing naming strategies and use it as default if Graal native image property is discovered.
+
+### 5. November 2021: version 1.12.0
+
+- Introduce detection for Graal native image execution.
+- Correctly resolve interface implementations in revers order when compiling method graph.
+- Adjust lambda instrumentation strategy to support Java 17.
+
+### 29. October 2021: version 1.11.22
+
+- Remove automatic frame padding mechanism in favor of explicit *NOP* instruction after injected blocks.
+
+### 18. October 2021: version 1.11.21
+
+- Allow `Advice.PostProcessor` to emit frames.
+- Add possibility for `Advice.AssignReturned` to suppress exceptions.
+- Add frame when rebasing constructors to avoid breakage if frames are assumed prior to super constructor call.
+
+### 11. October 2021: version 1.11.20
+
+- Add option for `AsScalar` annotation to assign default value instead of ignoring it.
+- Add *transform-runtime* goal to Byte Buddy Mojo to allow for running plugins with runtime class path included.
+
+### 5. October 2021: version 1.11.19
+
+- Add `Advice.AssignReturned` post processor to allow for assigning values from `Advice` that uses delegation rather than inlining.
+- Allow for declaring `Advice.Local` values from both enter and exit advice.
+- Add option for using runtime class path rather than only compile scope from Byte Buddy Maven plugin.
+- Avoid loading of annotation proxies within Byte Buddy's internal API.
+- Add plugin to add Java `Repeatable` annotations without requiring a JDK 8+.
+
+### 23. September 2021: version 1.11.18
+
+- Avoid binary incompatibility due to signature change by reintroducing method overload.
+- Use plugin to add annotations for dispatcher methods to avoid breakage when using obfuscators.
+
+### 22. September 2021: version 1.11.17
+
+- Better error message upon attachment failure due to overridden attach socket.
+- Retain label order for instructions in `Advice` to avoid incorrect offsets in stack map frames.
+- Change `MethodGraph.Compiler` API to accept generic types.
+- Add plugin to add `Proxied` annotations to all proxied methods of a dispatcher. This avoids problems in obfuscators.
+- Fix resolution of type initializer in a `Nexus`.
+
+### 17. September 2021: version 1.11.16
+
+- Avoid naming conflicts when adding super and default method delegation for the same method using `MethodDelegation`.
+- Fix module visibility for `Invoker` to avoid breakage if Byte Buddy is shaded into another module with different package exports.
+
+### 2. September 2021: version 1.11.15
+
+- Add *net.bytebuddy* prefix to Byte Buddy specific privileges.
+- Rework `JavaDispatcher` to require specific privilege but use Byte Buddy's protection domain for dispatchers, once acquired.
+
+### 31. August 2021: version 1.11.14
+
+- Adjust `InvocationHandlerAdapter` to use `null` for methods without parameters as specified by contract.
+- Offer option to use `null` for `MethodDelegation` and `Advice` if method has no parameters.
+- Add method to seal unsealed class loaders after the fact.
+- Use correct type for resolving security manager method in `ByteBuddyAgent`.
+
+### 18. August 2021: version 1.11.13
+
+- Introduce `warmUp` to further avoid circularities when using `AgentBuilder`.
+- Fix ignore matcher of `AgentBuilder` to include *jdk.internal.reflect* package by default.
+
+### 6. August 2021: version 1.11.12
+
+- Always use reflection and not a `JavaDispatcher` when a method potentially checks the access context via a security manager.
+
+### 5. August 2021: version 1.11.11
+
+- Do not pollute access context for security manager when defining classes via a method handle lookup.
+
+### 4. August 2021: version 1.11.10
+
+- Added option for Gradle plugin to register `adjustmentPostProcessor` to manually add task dependencies.
+
+### 27. July 2021: version 1.11.9
+
+- Include *jdk.reflect* package in default ignore matcher.
+- Retain parameter names for constructor of Java record as it is done by *javac*.
+- Throw `NoSuchTypeException` on non-resolved types rather then `IllegalStateException`.
+- Weaken visibility checks for fields set by `MethodCall`.
+
+### 15. July 2021: version 1.11.8
+
+- Fix package exposure for `JavaDispatcher` class when Byte Buddy is used as a module.
+
+### 14. July 2021: version 1.11.7
+
+- Introduce a more complex error handler for Gradle builds in favor of strict mode.
+- Include method for reading all loaded `Class` values of a loaded dynamic type.
+- Include Byte Buddy version in *module-info*.
+- Fix package list in *module-info*.
+
+### 2. July 2021: version 1.11.6
+
+- Add fallback for `JavaDispatcher` that works on Android and other platforms that do not support dynamic class definitions.
+- Make Gradle task dependency resolution more robust and configurable.
+- Update ASM and support Java 18 without experimental configuration.
+
+### 19. June 2021: version 1.11.5
+
+- Remove `AccessController` API to replace with weaved access control via `AccessControllerPlugin`.
+
+### 19. June 2021: version 1.11.4
+
+- Add constant for Java 18
+- Improve constructor resolution for `Plugin`s.
+- Add convenience method for translating `TypeDescription.Generic` to a builder.
+- Add convenience method for resolving an annotation property from a property name.
+
+### 18. June 2021: version 1.11.3
+
+- Introduce `AccessControllerPlugin` to weave use of `AccessController` only if available.
+- Fix use of incorrect type when chaining `InvokeDynamic`.
+- Better emulate visitation order of ASM when creating types.
+- Avoid writing duplicate entries for submitted subtypes in sealed types.
+- Better encapsulate `JavaDispatcher` utility.
+- Add frame padding to initialization handler when redefining or rebasing a class.
+- Do not assume that `TypeVariable`s are `AnnotatedElement`s to support Java 7 and earlier.
+
+### 11. June 2021: version 1.11.2
+
+- Fixes resolution of array types for Java descriptors of `JavaConstant`.
+- Properly process Android's version string and avoid relying on the version string where possible.
+- Allow for self-calls when creating a `MethodCall` and identifying a method via a matcher.
+
+### 1. June 2021: version 1.11.1
+
+- Add JNA based `ClassInjector` for use if JNA is already available.
+- Allow `HashCodeEqualsPlugin` to derive hash code from instrumented type rather then lowest type in hierarchy.
+- Retain *this* variable name for index 0 when using advice with remapped locals.
+- Rework `AnnotationDescription` for `TypePool` to mirror JVM behavior if annotation properties are changed inconsistently.
+- Add several `StackManipulation`s for common operations.
+- Remove unwanted dependency to `Instrumentation` API from `JavaModule` type.
+- Rework use of reflection to use `JavaDispatcher` API which also allows for custom generation of proxies without use of reflection.
+- Fully rework `JavaConstant` API to integrate with Java's `ConstantDesc` API and to allow for production of such descriptions.
+- Fix different bugs to properly support representation sealed classes.
+
+### 19. April 2021: version 1.11.0
+
+- Rework resubmission strategy to allow for immediate resubmission or on error.
+- Fix type for constructor call when setting field in MethodCall.
+- Include thread in default agent logger.
+- Add compound property to InvocationHandlerAdapter.
+- Flatten conjunction and disjunction matchers.
+- Add method to get possibly known class file version of TypeDescription.
+- Correctly consider generic array type when computing erasure.
+
+### 9. March 2021: version 1.10.22
+
+- Refactor `JavaConstant` API and fix handle resolution.
+- Adjust bootstrap method validation to account for possible dynamic constants.
+- Make class loaders parallel capable.
+- Correct code for attaching to Windows VMs with 32 bit.
+- Allow configuration for Gradle plugin to consider class path as incremental.
+
+### 21. February 2021: version 1.10.21
+
+- Update ASM and add support for Java 17.
+- Make plugin discoverability configurable.
+- Add advice suppression handler for rethrowing.
+
+### 3. February 2021: version 1.10.20
+
+- Reuse simple but commonly used matchers as constants to avoid repeated allocation.
+- Allow build plugins to be discovered from a plugin's class path.
+- Do not use cached version of classes that are currently transformed.
+- Allow using an incremental class path for build plugins in Gradle.
+- Fix filter applied to declared, non-virtual methods in `MethodCall`.
+
+### 21. December 2020: version 1.10.19
+
+- Fix constructor type resolution in `MethodCall`.
+- Add support for incremental builds to Byte Buddy Maven plugin.
+- Correctly handle empty, primitive arrays as annotation properties in `TypePool`.
+- Improve matching of rebaseale methods by using signature tokens rather then full tokens.
+- Use *get* as prefix for getters of `Boolean` wrapper properties.
+- Consider types in `net.bytebuddy.renamed` package in Byte Buddy agent.
+- Set names for all cached variables.
+- Do not fail validation for generic properties in Java 1.4 class files since they can be legally contained due to JSR14.
+
+### 1. November 2020: version 1.10.18
+
+- Fixes descriptor used for method handle constant of field.
+- Fixes assignability check for varargs.
+- Allow using static interface methods for bootstraping.
+- Allow providing null to setsValue for field assignment.
+- Cleans up providing of constant arguments as type description, enum or constant.
+- Support getPackage in legacy class loaders.
+- Allow method call by matcher on private method of instrumented type.
+
+### 7. October 2020: version 1.10.17
+
+- Adjust Gradle plugin to properly consider registration order with the Java plugin.
+- Correct task adjustment when using Byte Buddy in a multimodule project.
+
+### 23. September 2020: version 1.10.16
+
+- Update to ASM 9 for full support of sealed types.
+
+### 19. September 2020: version 1.10.15
+
+- Rewrite of Gradle plugin, including support for incremental builds.
+- Fix `MethodCall` bug when loading arguments from array.
+- Mark rebased methods `private final` as required by the JVM when using a native method preifx.
+- Fix stack excess monitoring when using advice to discover excess stack values correctly to avoid verifier error.
+
+### 31. July 2020: version 1.10.14
+
+- Fix build config to include Eclipse e2e file.
+- Allow for not printing a warning if no file is transformed in build plugin.
+- Fix invokability check in `MethodCall` validation.
+- Avoid premature validation of `InstrumentType`'s method modifiers.
+- Use type cache by default when using loaded type class pool since class lookup showed to be rather expensive.
+
+### 27. June 2020: version 1.10.13
+
+- Add possibility to filter class loaders before attempting to load a class using the `AgentBuilder`'s resubmission feature.
+- Add `nameOf` matcher for more efficient string matching based on a hash set.
+
+### 18. June 2020: version 1.10.12
+
+- Experimental support for Java 16.
+- Support all constant pool constant types in all APIs.
+- Adjust methods for bootstrap arguments to allow types of *constantdynamic* constants.
+- Correctly resolve handle type for method handles on private constructors.
+- Fix stack size computation for minimal methods in `Advice`.
+
+### 4. June 2020: version 1.10.11
+
+- Emit full frame after super or auxiliary constructor call in constructors if no full frame was already issued within this constructor.
+- Support methods that start with a stack map frame before any code.
+- Pop array after `@AllArguments` parameter.
+- Fix source inclusion for ASM commons.
+- Avoid resolution of detached types when replacing target types in generic arrays on members of instrumented types.
+- Fix validation of member substitution.
+- Include post processor for `Advice`.
+
+### 29. April 2020: version 1.10.10
+
+- Update ASM to 8.0.1
+- Close Dex files in Android class loader.
+- Add abstraction for advice dispatcher to allow for use of invokedynamic.
+- Properly handle incompatible type changes in parsed annotations.
+- Add support for Java records.
+
+### 29. March 2020: version 1.10.9
+
+- Add validation for interface method modifiers.
+- Correct discovery of MacOs temp directory for Byte Buddy Agent `VirtualMachine`.
+- Add parallel processor for Byte Buddy build engine.
+- Add preprocessor for Byte Buddy build engine.
+- Explicitly load Java's `Module` from boot loader to avoid loading pseudo compiler target bundled with NetBeans.
+- Add convenience method for creating lookup-based class loading strategy with fallback to Unsafe for Java 8 and older.
+- Add caching for method, field and parameter description hashCode methods.
+
+### 16. February 2020: version 1.10.8
+
+- Adjust use of types of the `java.instrument` module to avoid errors if the module is not present on a JVM.
+
+### 21. January 2020: version 1.10.7
+
+- Correct discovery of old J9 VMs.
+- Correct invocation of `AgentBuilder.Listener` during retransformation.
+- Allow forbidding self-attachment using own artifact.
+- Add possibility to patch class file transformers.
+- Fix equality check for float and double primitives.
+- Add guards for annotation API to handle buggy reflection API with mandated parameters.
+- Update ASM.
+
+### 19. December 2019: version 1.10.6
+
+- Add experimental support for Java 15.
+- Allow `AndroidClassLoadingStrategy` to work with newer API level.
+
+### 11. December 2019: version 1.10.5
+
+- Fixes Gradle plugin release to include correct dependency.
+- Fixes source jar release for shaded *byte-buddy* artifact.
+
+### 28. November 2019: version 1.10.4
+
+- Throw exception upon illegal creation of entry-only advice with local parameters to avoid verify error.
+- Remove escaping for execution path on Windows with spaces for Byte Buddy agent.
+- Fix J9 detection for older IBM-released versions of J9 in Byte Buddy agent.
+
+### 8. November 2019: version 1.10.3
+
+- Allow overriding the name of the native library for Windows attach emulation.
+- Use correct type pool in build plugin engine for decorators.
+- Fix attach emulation for OpenJ9 on MacOS.
+
+### 16. October 2019: version 1.10.2
+
+- Upgrade ASM to version 7.2.
+- Improve class file version detection for class files.
+- Check argument length of Windows attach emulation.
+
+### 9. August 2019: version 1.10.1
+
+- Extend `VirtualMachine` API emulation.
+- Reopen socket for POSIX-HotSpot connections after each command being sent to avoid broken pipe errors.
+- Only use JNA API that is available in JNA versions 4 and 5 for better compatibility.
+- Include correct license information in artifacts.
+- Add injection API based on `jdk.internal.misc.Unsafe` to support agents on platforms that do not include *jdk.unsupported*.
+- Add `AgentBuilder.InjectionStrategy` to allow usage of internal injection API.
+- Open package in `AgentBuilder` if from and to edges are added.
+
+### 3. August 2019: version 1.10.0
+
+- Add API for loading native agents from Byte Buddy agent.
+- Extend `VirtualMachine` API to include other methods.
+- Fix error handling in `VirtualMachine` API.
+- Fix temporary folder resolution for `VirtualMachine` API.
+- Add API for `MemberAttributeExtension`.
+- Rework of `AnnotationDescription` API to emulate JVM error handling for incorrect or inconsistent values.
+- Add generic type-aware `Assigner`.
+- Fix method handle-based injector for Java 14.
+
+### 27. July 2019: version 1.9.16
+
+- Add support for attach emulation on Solaris.
+- Fix JNA signatures for attach emulation on POSIX.
+- Add standard call conventions for Windows JNA calls.
+
+### 21. July 2019: version 1.9.15
+
+- Add emulated attach mechanism for HotSpot on Windows and for OpenJ9/J9 on POSIX and Windows (if JNA is present).
+- Reimplement POSIX attach mechanism for HotSpot to use JNA (if present).
+
+### 8. July 2019: version 1.9.14
+
+- Add Java 14 compatibility.
+- Refactor emulated attach mechanism and use JNA in order to prepare supporting other mechanisms in the future.
+- Reinterrupt threads if interruption exceptions are catched in threads not owned by Byte Buddy.
+- Refactor class file dumping.
+- Publish Gradle plugin to Gradle plugin repository.
+
+### 24. May 2019: version 1.9.13
+
+- Added matcher for super class hierarchy that ignores interfaces.
+- Extend API for member substitution.
+- Minor API extensions.
+
+### 26. March 2019: version 1.9.12
+
+- Fixed stack map frame generation during constructor advice.
+- Improves frame generation for cropping-capable frames.
+
+### 21. March 2019: version 1.9.11
+
+- Remove field reference in injected class due to possibility of loading Byte Buddy on the boot loader.
+- Updated to ASM 7.1.
+- Fix unsafe injection on Java 12/13.
+
+### 11. February 2019: version 1.9.10
+
+- Fixed `ByteArrayClassLoader` when used from boot class loader.
+- Fixed shading to include ASM class required during renaming.
+
+### 4. February 2019: version 1.9.9
+
+- Properly interrupt resubmission process in agent builder.
+- Fix visibility checks for nest mates.
+
+### 24. January 2019: version 1.9.8
+
+- Extend `MethodCall` to allow for loading target from `StackManipulation`.
+- Allow for injection into `MultipleParentClassLoader`.
+- Performance improvement on array creation.
+- Allow for custom strategy for visibility bridge creation.
+
+### 10. January 2019: version 1.9.7
+
+- Retain native modifier when defining a method without method body.
+- Allow appending class loader to multiple parent class loader with hierarchy check.
+- Add support for Java 13.
+- Extend experimental property to allow for detection of unknown versions.
+
+### 13. December 2018: version 1.9.6
+
+- Add the JVM extension / platform class loaders to the default excludes for the `AgentBuilder`.
+- Refactor `MethodCall` to better reuse intermediates. This implies some API changes in the customization API.
+- Add hook to `AgentBuilder` to customize class file transformer.
+
+### 22. November 2018: version 1.9.5
+
+- Fixed lookup injection for classes in the default package in Java 9.
+
+### 13. November 2018: version 1.9.4
+
+- Add API for explicit field access from `FieldAccessor`.
+- Fix stack size adjustment for custom `MemberSubstitution`s.
+- Performance improvement for classes with many methods.
+
+### 28. October 2018: version 1.9.3
+
+- Update to ASM 7.0 final
+- Improve field setting capabilities of `FieldAccessor` and `MethodCall`.
+
+### 15. October 2018: version 1.9.2
+
+- Allow for delegation to method result for `MethodDelegation`.
+- Extend `MemberSubstitution` to allow for delegating to matched member.
+- Create multi-release jar for module-info carrying artifacts.
+- Properly handle directory elements in plugin engine with in-memory or folder target.
+
+### 5. October 2018: version 1.9.1
+
+- Minor API change of `Plugin.Engine.Source` to allow for closing resources that need to be opened.
+- Reinstantiate class injection on Java 12 with new Unsafe use.
+- Allow for disabling use of Unsafe alltogether.
+- Adjust Gradle build plugin to use closure for argument instantiation.
+- Prepare method arguments on `MethodCall`.
+
+### 29. September 2018: version 1.9.0
+
+- Update to ASM 7 for non-experimental Java 11 support.
+- Reduce byte code level to Java 5.
+- Add *module-info.class* for *byte-buddy* and *byte-buddy-agent* artifacts.
+- Extend `ClassInjector` API to allow supplying string to byte array mappings.
+- Add visitor to allow adjustment of inner class attribute.
+- Refactor agent builder API to use decoration by default and rather require explicit termination.
+- Add `Plugin.Engine` to allow simple static enhancements and rework build plugins for Maven and Gradle to use it.
+- Refactor `AsmVisitorWrapper.ForDeclaredMethods` to only instrument methods on `.method` but offer `.invokable` for anthing.
+
+### 8. September 2018: version 1.8.22
+
+- Add guard to `EnclosedMethod` property upon redefinition to avoid error with Groovy which often gets the propery wrong.
+- Add possibility to sort fields in plugin-generated equals method.
+- Add class file locator for URL instances.
+
+### 3. September 2018: version 1.8.21
+
+- Added caching for expensive methods of reflection API.
+- Fix treatment of inner class attributes for redefinition and rebasement.
+- Extend build plugin API to achieve better Java agent compatibility.
+- Add convenience API for creating lambda expressions.
+
+### 29. August 2018: version 1.8.20
+
+- Fix decoration to include non-virtual methods.
+- Add build plugin for caching the return value of a method.
+
+### 28. August 2018: version 1.8.19
+
+- Fix annotation handling in decorator strategy.
+- Several minor bug fixes for `MethodCall`.
+- Fix shading for signature remapper.
+
+### 27. August 2018: version 1.8.18
+
+- Add API for defining inner types and nest mate groups.
+- Add decoration transformer for more efficient application of ASM visitors.
+- Allow chaining of `MethodCall`s.
+- Prohibit illegal constructor invocation from `MethodCall`s.
+
+### 6. August 2018: version 1.8.17
+
+- Fix class loader injection using `putBoolean`.
+- Do not set timeout for Unix attach simulation if value is `0`.
+- Avoid incorrect lookup of `getDefinedPackage` on Java 8 IBM VMs.
+- Fix type checks on constantdynamic support.
+
+### 3. August 2018: version 1.8.16
+
+- Add support for dynamic class file constants for Java 11+.
+- Suppress lazy resolution errors within `MemberSubstitution::relaxed`.
+- Generalize method matcher for `clone` method.
+- Add `toString` method to `ClassFileVersion`.
+- Reenable `ClassFileInjection.Default.INJECTION` in Java 11+ via fallback onto `Unsafe::putBoolean`.
+
+### 26. July 2018: version 1.8.15
+
+- Add preliminary support for Java 12.
+
+### 24. July 2018: version 1.8.14
+
+- Query explicitly added class loaders before the instrumented class's class loader in advice transformer for an agent builder.
+- Add nullcheck for `Instrumentation::getAllLoadedClasses`.
+- Allow for access controller-based lookups for `Method` constants.
+- Use `getMethod` instead of `getDeclaredMethod` for method lookup if possible.
+
+### 5. July 2018: version 1.8.13
+
+- Update to ASM 6.2
+- Reinstate support for latest Java 11 EA if `net.bytebuddy.experimental` is set.
+- Fix edge completion for `AgentBuilder`.
+- Dump input class file if the `net.bytebuddy.dump` is set.
+- Add convenience chaining methods to `Implementation.Compound`.
+- Fix nestmate changes in method invocation.
+
+### 25. May 2018: version 1.8.12
+
+- Fix misrepresentation of default package as `null`.
+- Add `Advice.Exit` annotation and allow for method repetition based on exit advice value.
+- Add `Advice.Local` annotation to allow for stack allocation of additional variables.
+- Improve advice's method size handler.
+
+### 4. May 2018: version 1.8.11
+
+- Avoid shading unused ASM classes with incomplete links what breaks lint on Android and JPMS module generation.
+
+### 28. April 2018: version 1.8.10
+
+- Extended support for self-attachment by using current jar file for Java 9+.
+- Minor performance improvements.
+
+### 27. April 2018: version 1.8.9
+
+- Several performance improvements.
+- Adjust `toString` implementation for parameterized types to the changed OpenJDK 8+ behavior.
+- Attempt self-attachment using the current jar file.
+
+### 20. April 2018: version 1.8.8
+
+- Use cache for loaded `TypeDescription` to avoid overallocation.
+- Generalize exception handler API for `Advice`.
+
+### 19. April 2018: version 1.8.7
+
+- Added `ClassWriterStrategy` that allows controlling how the constant pool is copied.
+
+### 18. April 2018: version 1.8.6
+
+- Introduced concept of sealing the `InjectionClassLoader` to avoid abuse.
+- Avoid class loader leak by not storing exceptions thrown in class initializers which can keep references to their first loading class in their backtrace.
+- Add `ClassFileBufferStrategy` to agent builder.
+- Retain deprecation modifier on intercepted methods and fields on class files prior to Java 5.
+
+### 15. April 2018: version 1.8.5
+
+- Release with `equals` and `hashCode` methods being generated based on the fixes in the previous version.
+
+### 15. April 2018: version 1.8.4
+
+- Only open ASM if this is specified via the boolean property `net.bytebuddy.experimental`.
+- Fix resolution of invoking methods of `Object` on interfaces to not specialize on the interface type. The latter is also failing verification on Android.
+- Several performance improvements.
+- Do no longer use unsafe injection as a default class loading strategy.
+
+### 31. March 2018: version 1.8.3
+
+- Allow Java 11 classes by opening ASM.
+- Remove Lombok and add methods using Byte Buddy plugin.
+
+### 31. March 2018: version 1.8.2
+
+- Reduce log output for Gradle and Maven plugin.
+- Fix class check in `EqualsMethod`.
+
 ### 28. March 2018: version 1.8.1
 
 - Add implementations for `HashCodeMethod`, `EqualsMethod` and `ToStringMethod` including build tool plugins.
 - Refactor handling of stack map frame translation within `Advice` to allow for handling of methods with inconsistent stack map frames if the method arguments are copied.
-- Make argument copying the default choice if exit advice is enabled. 
+- Make argument copying the default choice if exit advice is enabled.
 - Fix a bug in parameter annotation computation within `Advice`.
-- Update to ASM 6.1.1.  
+- Update to ASM 6.1.1.
 
 ### 13. March 2018: version 1.8.0
 
-- Refactored `Advice` argument handling to be controlled by a decicated structure.
+- Refactored `Advice` argument handling to be controlled by a dedicated structure.
 - Added basic logic for argument copying in `Advice`.
 - Fix performance degradation for cached fields.
 - Add support for Java 10 and preliminary support for Java 11.
@@ -26,10 +713,10 @@ Byte Buddy release notes
 ### 2. February 2018: version 1.7.10
 
 - Fixes self-attachment on Java 9+ on Windows.
-- Check for non-accessability on `MethodCall`.
+- Check for non-accessibility on `MethodCall`.
 - Change static proxy fields to be `volatile`.
 - Do not copy security-related meta-data on jar file copying.
-- Guard resolution of annotations for methods with syntetic parameters.
+- Guard resolution of annotations for methods with synthetic parameters.
 - Forbid skipping code in constructors for `Advice`.
 - Added constructor strategy for defining a default constructor that invokes a non-default constructor.
 - Improve performance of accessor methods and cache fields by reducing use of `String::format`.
@@ -82,7 +769,7 @@ Byte Buddy release notes
 - Added global circularity lock.
 - Removed sporadic use of Java util logging API.
 
-### 14. Mai 2017: version 1.7.0
+### 14. May 2017: version 1.7.0
 
 - Define names for automatic modules in Java 9.
 - Introduce property `net.bytebuddy.nexus.disabled` to allow disabling `Nexus` mechanism.
@@ -173,7 +860,7 @@ Byte Buddy release notes
 - Added check to `@Pipe` for method invokability.
 - Added unsafe `ClassInjector` and class loading strategy.
 - Improved reflection-based class injector on Java 9.
-- Removed uneccessary class file location using modules on Java 9.
+- Removed unnecessary class file location using modules on Java 9.
 - Improved fail-safety for type variable resolution to allow processing incorrectly declared type variables.
 
 ### 2. January 2017: version 1.6.0
@@ -184,7 +871,7 @@ Byte Buddy release notes
 - Added `@SuperMethod` and `@DefaultMethod` annotations for `MethodDelegation`.
 - Refactored `AsmVisitorWrapper` to accept a list of fields and methods that are intercepted. This allows to use the wrapper also for methods that are overridden.
 - Added a `MethodGraph.Compiler.ForDeclaredMethods` to avoid processing full type hierarchy if only type enhancement should be done without declaring new methods on a type. This should be used in combination with `Advice` instead of `MethodGraph.Empty` as those methods are supplied to the ASM visitor wrappers.
-- Refactored `MethodDelegation` to precomile records for all candidates to avoid duplicate annotation processing.
+- Refactored `MethodDelegation` to precompile records for all candidates to avoid duplicate annotation processing.
 
 ### 29. December 2016: version 1.5.13
 
@@ -204,7 +891,7 @@ Byte Buddy release notes
 
 ### 20. December 2016: version 1.5.11
 
-- Resolved compound components to linerarize nested collections for vastly improved performance with large structures.
+- Resolved compound components to linearize nested collections for vastly improved performance with large structures.
 - Added `TypeCache`.
 - Added fallback to assign `null` to `SuperCall` and `DefaultCall` if assignment is impossible.
 - Deprecated `Forwarding` in favor of `MethodCall`.
@@ -269,7 +956,7 @@ Byte Buddy release notes
 
 ### 25. October 2016: version 1.5.0
 
-- Refactor `Instrumentation`s to only delegate to fields instead of requireing their definition. The `defineField` API should be generally preferred for defining fields as it is much richer and therefore easier to extend.
+- Refactor `Instrumentation`s to only delegate to fields instead of requiring their definition. The `defineField` API should be generally preferred for defining fields as it is much richer and therefore easier to extend.
 - Made type annotation reader more robust towards older versions of Java 8.
 - Refactored lazy type resolution for generic types to no longer eagerly load generic types when navigating through a type hierarchy.
 - Unified several implementation APIs and added better abstractions.
@@ -366,17 +1053,17 @@ Byte Buddy release notes
 ### 9. August 2016: version 1.4.18
 
 - Added automatic support for Java 9 class file location for boot modules.
-- Improvided `FieldProxy.Binder` to allow for a single accessor interface.
+- Improved `FieldProxy.Binder` to allow for a single accessor interface.
 - Fixed counting problem in `Advice` component.
 
 ### 1. August 2016: version 1.4.17
 
-- Fixed annotation resolution for Java 9 to exlude the `jdk.internal` namespace by default.
+- Fixed annotation resolution for Java 9 to exclude the `jdk.internal` namespace by default.
 - Do not copy annotations for default constructor strategies but allow configuring annotation strategy.
 - Added file-system class file locators for modules in Java 9.
 - Added convenience methods to default location strategies.
 - Exclude `sun.reflect` namespace by default from `AgentBuilder` to avoid error messages.
-- Fixed resolution of type varibales for transformed methods and fields.
+- Fixed resolution of type variables for transformed methods and fields.
 - Fixed stack-aware method visitor when encountering exchanging duplication instructions.
 
 ### 28. July 2016: version 1.4.16
@@ -422,7 +1109,7 @@ Byte Buddy release notes
 ### 11. July 2016: version 1.4.9
 
 - Added additional implementations of a `DescriptionStrategy` for `POOL_LAST` and `POOL_FIRST` resolution.
- 
+
 ### 6. July 2016: version 1.4.8
 
 - Allow to skip execution of instrumented method from `Advice` via entry advice indicated by return value.
@@ -443,7 +1130,7 @@ Byte Buddy release notes
 ### 30. June 2016: version 1.4.6
 
 - Added a `ClassFileLocator` for a class loader that only references it weakly.
-- Allow to supply `TypePool` and `ClassFileLocator` seperatly within an `AgentBuilder`.
+- Allow to supply `TypePool` and `ClassFileLocator` separately within an `AgentBuilder`.
 - Made `MethodPool` sensitive to bridge methods which should only be added to classes of a version older than Java 4.
 - Fixed creation of Java 9 aware `ClassFileTransformer` to only apply on Java 9 VMs.
 - Added matcher for the type of a class loader.
@@ -457,7 +1144,7 @@ Byte Buddy release notes
 ### 23. June 2016: version 1.4.4
 
 - Added `net.bytebuddy` qualifier when logging.
-- Added `net.bytebuddy.dump` system property for specifing a location for writing all created class files.
+- Added `net.bytebuddy.dump` system property for specifying a location for writing all created class files.
 
 ### 17. June 2016: version 1.4.3
 
@@ -554,9 +1241,9 @@ Byte Buddy release notes
 ### 6. April 2016: version 1.3.8
 
 - Fixed frame computation for the `Advice`.
-- Optimized frame computation to emitt frames of the minimal, possible size when using `Advice`.
-- Only add exit `Advice` once to reduce amound of added bytes to avoid size explosion when a method supplied several exits.
-- Optimized `Advice` injection to only add advice infrastucture if entry/exit advice is supplied.
+- Optimized frame computation to emit frames of the minimal, possible size when using `Advice`.
+- Only add exit `Advice` once to reduce amount of added bytes to avoid size explosion when a method supplied several exits.
+- Optimized `Advice` injection to only add advice infrastructure if entry/exit advice is supplied.
 - Optimized exception handling infrastructure for exit `Advice` to only be applied when exceptions are catched.
 - Added mapping for the *IINC* instruction which was missing from before.
 - Added possibility to propagate AMS reader and writer flags for `AsmVisitorWrapper`.
@@ -588,7 +1275,7 @@ Byte Buddy release notes
 ### 10. March 2016: version 1.3.2
 
 - Added possibility to suppress `Throwable` from advice methods when using the `Advice` instrumentation.
- 
+
 ### 9. March 2016: version 1.3.1
 
 - Added possibility to use contravariant parameters within the `Advice` adapter for ASM.
@@ -623,7 +1310,7 @@ Byte Buddy release notes
 
 - Fixed interface assertion of the custom binder types to accept default methods.
 - Improved documentation.
- 
+
 ### 26. January 2016: version 1.1.0
 
 - Refactored `AgentBuilder` API to be more streamlined with the general API and improved documentation.
@@ -822,7 +1509,7 @@ Corrected incorrect deployment of version 0.6.7 which does not use a dependency 
 
 - Made the `TypeDescription.ForLoadedType` class loader agnostic. Before, a class that was loaded by multiple class
   loaders would have been considered inequal what is not true for the byte code level.
-  
+
 ### 23. April 2015: version 0.6.2
 
 - Added additional class validation such that it becomes impossible to define members on classes that do not fit
@@ -880,7 +1567,7 @@ Corrected incorrect deployment of version 0.6.7 which does not use a dependency 
 
 ### 5. December 2014: version 0.5.1
 
-Added the `andThen` method to the `SuperMethodCall` instrumentation in order to allow for a more convenient 
+Added the `andThen` method to the `SuperMethodCall` instrumentation in order to allow for a more convenient
 executingTransformer interception where a hard-coded super method call is required by the Java verifier.
 
 ### 3. December 2014: version 0.5
@@ -894,7 +1581,7 @@ executingTransformer interception where a hard-coded super method call is requir
 
 ### 26. November 2014: version 0.4.1
 
-- Refactored the implementation of the `VoidAwareAssigner` which would otherwise cause unexpected behavior in its 
+- Refactored the implementation of the `VoidAwareAssigner` which would otherwise cause unexpected behavior in its
   default state.
 - Added a missing boxing instruction to the `InvocationHandlerAdapter`.
 
@@ -902,9 +1589,9 @@ executingTransformer interception where a hard-coded super method call is requir
 
 - Extended `Instrumentation.Context` to support field accessors.
 - Added the `TypePool` abstraction and added a default implementation.
-- Refactored annotations to have an intermediate form as `AnnotationDescription` which does not need to 
+- Refactored annotations to have an intermediate form as `AnnotationDescription` which does not need to
   represent loaded values.
-- Refactored several built-in `Instrumentation`, among others, all implementations now support `TypeDescription` 
+- Refactored several built-in `Instrumentation`, among others, all implementations now support `TypeDescription`
   in addition to loaded `Class` as their arguments
 - Added several annotations that apply to the `MethodDelegation`.
 
@@ -920,12 +1607,12 @@ executingTransformer interception where a hard-coded super method call is requir
 - Added support for accessing a JVM's HotSwap features and a Java agent.
 - Added latent a child-first `ClassLoadingStrategy` and manifest versions of the `WRAPPER` and `CHILD_FIRST` default
   class loading strategies.
-  
+
 ### 20. June 2014: version 0.2.1
 
 - Added proper support for defining class initializers. Added support for field caching from method instrumentations,
 mainly for allowing the reuse of `Method` instances for the `@Origin` annotation and the `InvocationHandlerAdapter`.
-  
+
 ### 16. June 2014: version 0.2
 
  - Changed the semantics of the `@SuperCall` to be only bindable, if a super method can be invoked. Before, an
@@ -935,7 +1622,7 @@ mainly for allowing the reuse of `Method` instances for the `@Origin` annotation
  - Refactored the invocation of super methods to be created by an `Instrumentation.Target`. For a future release,
    this hopefully allows for class redefinitions using today's API for creating subclasses.
  - Upgraded to ASM 5.0.3.
- 
+
 ### 02. May 2014: version 0.1
 
 - First general release.

@@ -5,13 +5,12 @@ import net.bytebuddy.description.method.ParameterDescription;
 import net.bytebuddy.description.method.ParameterList;
 import net.bytebuddy.description.type.TypeDefinition;
 import net.bytebuddy.description.type.TypeDescription;
+import net.bytebuddy.description.type.TypeList;
 import net.bytebuddy.dynamic.scaffold.MethodGraph;
 import net.bytebuddy.implementation.AbstractImplementationTargetTest;
 import net.bytebuddy.implementation.Implementation;
 import net.bytebuddy.implementation.bytecode.StackManipulation;
-import net.bytebuddy.implementation.bytecode.constant.NullConstant;
 import net.bytebuddy.matcher.ElementMatchers;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.Mock;
@@ -47,7 +46,6 @@ public class RebaseImplementationTargetTest extends AbstractImplementationTarget
     @Mock
     private TypeDescription.Generic superClass;
 
-    @Override
     @Before
     public void setUp() throws Exception {
         when(methodGraph.locate(Mockito.any(MethodDescription.SignatureToken.class))).thenReturn(MethodGraph.Node.Unresolved.INSTANCE);
@@ -65,7 +63,6 @@ public class RebaseImplementationTargetTest extends AbstractImplementationTarget
         super.setUp();
     }
 
-    @Override
     protected Implementation.Target makeImplementationTarget() {
         return new RebaseImplementationTarget(instrumentedType, methodGraph, defaultMethodInvocation, Collections.singletonMap(rebasedSignatureToken, resolution));
     }
@@ -85,7 +82,7 @@ public class RebaseImplementationTargetTest extends AbstractImplementationTarget
         StackManipulation.Size size = specialMethodInvocation.apply(methodVisitor, implementationContext);
         verify(methodVisitor).visitMethodInsn(Opcodes.INVOKESPECIAL, BAZ, FOO, QUX, false);
         verifyNoMoreInteractions(methodVisitor);
-        verifyZeroInteractions(implementationContext);
+        verifyNoMoreInteractions(implementationContext);
         assertThat(size.getSizeImpact(), is(0));
         assertThat(size.getMaximalSize(), is(0));
     }
@@ -95,7 +92,7 @@ public class RebaseImplementationTargetTest extends AbstractImplementationTarget
         when(invokableMethod.getDeclaringType()).thenReturn(instrumentedType);
         when(resolution.isRebased()).thenReturn(true);
         when(resolution.getResolvedMethod()).thenReturn(rebasedMethod);
-        when(resolution.getAdditionalArguments()).thenReturn(StackManipulation.Trivial.INSTANCE);
+        when(resolution.getAppendedParameters()).thenReturn(new TypeList.Empty());
         when(rebasedMethod.isSpecializableFor(instrumentedType)).thenReturn(true);
         Implementation.SpecialMethodInvocation specialMethodInvocation = makeImplementationTarget().invokeSuper(rebasedSignatureToken);
         assertThat(specialMethodInvocation.isValid(), is(true));
@@ -106,7 +103,7 @@ public class RebaseImplementationTargetTest extends AbstractImplementationTarget
         StackManipulation.Size size = specialMethodInvocation.apply(methodVisitor, implementationContext);
         verify(methodVisitor).visitMethodInsn(Opcodes.INVOKESPECIAL, BAZ, QUX, FOO, false);
         verifyNoMoreInteractions(methodVisitor);
-        verifyZeroInteractions(implementationContext);
+        verifyNoMoreInteractions(implementationContext);
         assertThat(size.getSizeImpact(), is(0));
         assertThat(size.getMaximalSize(), is(0));
     }
@@ -117,7 +114,7 @@ public class RebaseImplementationTargetTest extends AbstractImplementationTarget
         when(invokableMethod.getDeclaringType()).thenReturn(instrumentedType);
         when(resolution.isRebased()).thenReturn(true);
         when(resolution.getResolvedMethod()).thenReturn(rebasedMethod);
-        when(resolution.getAdditionalArguments()).thenReturn(NullConstant.INSTANCE);
+        when(resolution.getAppendedParameters()).thenReturn(new TypeList.Explicit(TypeDescription.ForLoadedType.of(Object.class)));
         when(rebasedMethod.isSpecializableFor(instrumentedType)).thenReturn(true);
         Implementation.SpecialMethodInvocation specialMethodInvocation = makeImplementationTarget().invokeSuper(rebasedSignatureToken);
         assertThat(specialMethodInvocation.isValid(), is(true));
@@ -129,7 +126,7 @@ public class RebaseImplementationTargetTest extends AbstractImplementationTarget
         verify(methodVisitor).visitInsn(Opcodes.ACONST_NULL);
         verify(methodVisitor).visitMethodInsn(Opcodes.INVOKESPECIAL, BAZ, QUX, FOO, false);
         verifyNoMoreInteractions(methodVisitor);
-        verifyZeroInteractions(implementationContext);
+        verifyNoMoreInteractions(implementationContext);
         assertThat(size.getSizeImpact(), is(1));
         assertThat(size.getMaximalSize(), is(1));
     }
@@ -139,7 +136,7 @@ public class RebaseImplementationTargetTest extends AbstractImplementationTarget
         when(invokableMethod.getDeclaringType()).thenReturn(instrumentedType);
         when(resolution.isRebased()).thenReturn(true);
         when(resolution.getResolvedMethod()).thenReturn(rebasedMethod);
-        when(resolution.getAdditionalArguments()).thenReturn(StackManipulation.Trivial.INSTANCE);
+        when(resolution.getAppendedParameters()).thenReturn(new TypeList.Empty());
         when(rebasedMethod.isSpecializableFor(instrumentedType)).thenReturn(false);
         Implementation.SpecialMethodInvocation specialMethodInvocation = makeImplementationTarget().invokeSuper(rebasedSignatureToken);
         assertThat(specialMethodInvocation.isValid(), is(false));
@@ -157,7 +154,7 @@ public class RebaseImplementationTargetTest extends AbstractImplementationTarget
         StackManipulation.Size size = specialMethodInvocation.apply(methodVisitor, implementationContext);
         verify(methodVisitor).visitMethodInsn(Opcodes.INVOKESPECIAL, BAR, FOO, QUX, false);
         verifyNoMoreInteractions(methodVisitor);
-        verifyZeroInteractions(implementationContext);
+        verifyNoMoreInteractions(implementationContext);
         assertThat(size.getSizeImpact(), is(0));
         assertThat(size.getMaximalSize(), is(0));
     }
@@ -174,11 +171,5 @@ public class RebaseImplementationTargetTest extends AbstractImplementationTarget
     @Test
     public void testOriginType() throws Exception {
         assertThat(makeImplementationTarget().getOriginType(), is((TypeDefinition) instrumentedType));
-    }
-
-    @Test
-    @SuppressWarnings("unchecked")
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(RebaseImplementationTarget.class).apply();
     }
 }

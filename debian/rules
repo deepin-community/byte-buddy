@@ -2,3 +2,25 @@
 
 %:
 	dh $@
+
+override_dh_auto_configure:
+	dh_auto_configure
+
+	# Create a copy of the byte-buddy-maven-plugin to break the circular dependency
+	mkdir -p debian/plugin/
+	cd debian/plugin/ && jar -xf /usr/share/java/byte-buddy-maven-plugin.jar
+
+	mkdir -p debian/maven-repo/net/bytebuddy/byte-buddy-previous-maven-plugin/previous
+	cp debian/plugin/META-INF/maven/net.bytebuddy/byte-buddy-maven-plugin/pom.xml debian/maven-repo/net/bytebuddy/byte-buddy-previous-maven-plugin/previous/byte-buddy-previous-maven-plugin-previous.pom
+	sed -i 's/byte-buddy-maven-plugin/byte-buddy-previous-maven-plugin/g'         debian/maven-repo/net/bytebuddy/byte-buddy-previous-maven-plugin/previous/byte-buddy-previous-maven-plugin-previous.pom
+
+	sed -i 's/byte-buddy-maven-plugin/byte-buddy-previous-maven-plugin/g'    debian/plugin/META-INF/maven/plugin.xml
+	sed -i -r 's/^  <version>.*<\/version>/  <version>previous<\/version>/g' debian/plugin/META-INF/maven/plugin.xml
+	jar -cvf debian/maven-repo/net/bytebuddy/byte-buddy-previous-maven-plugin/previous/byte-buddy-previous-maven-plugin-previous.jar -C debian/plugin/ .
+
+	mkdir -p byte-buddy-dep/target/test-classes
+
+override_dh_auto_test:
+	# Do not run 'mvn test', even if the tests are disabled in debian/maven.properties
+	# it performs a second bytecode transformation and the build break due to duplicate
+	# fields introduced by net.bytebuddy.build.CachedReturnPlugin

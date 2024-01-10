@@ -1,6 +1,21 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.matcher;
 
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.ByteCodeElement;
 
 /**
@@ -9,9 +24,9 @@ import net.bytebuddy.description.ByteCodeElement;
  * @param <T> The type of the matched entity.
  * @param <S> The type of the defined shape of the matched entity.
  */
-@EqualsAndHashCode(callSuper = false)
+@HashCodeAndEqualsPlugin.Enhance
 public class DefinedShapeMatcher<T extends ByteCodeElement.TypeDependant<S, ?>, S extends ByteCodeElement.TypeDependant<?, ?>>
-        extends ElementMatcher.Junction.AbstractBase<T> {
+        extends ElementMatcher.Junction.ForNonNullValues<T> {
 
     /**
      * The matcher to apply onto the defined shape of the matched entity.
@@ -27,8 +42,10 @@ public class DefinedShapeMatcher<T extends ByteCodeElement.TypeDependant<S, ?>, 
         this.matcher = matcher;
     }
 
-    @Override
-    public boolean matches(T target) {
+    /**
+     * {@inheritDoc}
+     */
+    protected boolean doMatch(T target) {
         return matcher.matches(target.asDefined());
     }
 

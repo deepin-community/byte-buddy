@@ -5,7 +5,6 @@ import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.dynamic.loading.ClassLoadingStrategy;
 import net.bytebuddy.implementation.MethodDelegation;
 import net.bytebuddy.test.utility.JavaVersionRule;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import net.bytebuddy.utility.JavaConstant;
 import net.bytebuddy.utility.JavaType;
 import org.junit.Rule;
@@ -15,8 +14,6 @@ import org.junit.rules.MethodRule;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.reflect.Method;
-import java.util.Arrays;
-import java.util.Iterator;
 
 import static net.bytebuddy.matcher.ElementMatchers.named;
 import static org.hamcrest.CoreMatchers.is;
@@ -36,7 +33,7 @@ public class TargetMethodAnnotationDriverBinderParameterBinderForFixedValueOfCon
                 .subclass(Foo.class)
                 .method(named(FOO))
                 .intercept(MethodDelegation.withDefaultConfiguration()
-                        .withBinders(TargetMethodAnnotationDrivenBinder.ParameterBinder.ForFixedValue.OfConstant.of(Bar.class, TypeDescription.OBJECT))
+                        .withBinders(TargetMethodAnnotationDrivenBinder.ParameterBinder.ForFixedValue.OfConstant.of(Bar.class, TypeDescription.ForLoadedType.of(Object.class)))
                         .to(Foo.class))
                 .make()
                 .load(Foo.class.getClassLoader(), ClassLoadingStrategy.Default.WRAPPER)
@@ -151,17 +148,6 @@ public class TargetMethodAnnotationDriverBinderParameterBinderForFixedValueOfCon
                         .withBinders(TargetMethodAnnotationDrivenBinder.ParameterBinder.ForFixedValue.OfConstant.of(Bar.class, new Object()))
                         .to(Foo.class))
                 .make();
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        final Iterator<Class<?>> iterator = Arrays.<Class<?>>asList(Object.class, String.class, int.class, float.class).iterator();
-        ObjectPropertyAssertion.of(TargetMethodAnnotationDrivenBinder.ParameterBinder.ForFixedValue.OfConstant.class).create(new ObjectPropertyAssertion.Creator<Class<?>>() {
-            @Override
-            public Class<?> create() {
-                return iterator.next();
-            }
-        }).apply();
     }
 
     public static class Foo {

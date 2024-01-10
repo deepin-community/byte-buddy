@@ -11,11 +11,10 @@ public class AttacherTest {
 
     private static final String FOO = "foo", BAR = "bar", QUX = "qux", BAZ = "baz";
 
-
     @Test
     public void testPseudoAttachment() throws Exception {
         PseudoAttacher.ERROR.set(null);
-        Attacher.main(new String[]{PseudoAttacher.class.getName(), FOO, BAR, "=" + QUX, BAZ});
+        Attacher.main(new String[]{PseudoAttacher.class.getName(), FOO, BAR, Boolean.FALSE.toString(), "=" + QUX, BAZ});
         if (PseudoAttacher.ERROR.get() != null) {
             throw new AssertionError(PseudoAttacher.ERROR.get());
         }
@@ -24,7 +23,7 @@ public class AttacherTest {
     @Test
     public void testPseudoAttachmentEmptyArgument() throws Exception {
         PseudoAttacherNoArgument.ERROR.set(null);
-        Attacher.main(new String[]{PseudoAttacherNoArgument.class.getName(), FOO, BAR, ""});
+        Attacher.main(new String[]{PseudoAttacherNoArgument.class.getName(), FOO, BAR, Boolean.FALSE.toString(), ""});
         if (PseudoAttacherNoArgument.ERROR.get() != null) {
             throw new AssertionError(PseudoAttacherNoArgument.ERROR.get());
         }
@@ -33,7 +32,7 @@ public class AttacherTest {
     @Test
     public void testPseudoAttachmentMissingArgument() throws Exception {
         PseudoAttacherNoArgument.ERROR.set(null);
-        Attacher.main(new String[]{PseudoAttacherNoArgument.class.getName(), FOO, BAR});
+        Attacher.main(new String[]{PseudoAttacherNoArgument.class.getName(), FOO, BAR, Boolean.FALSE.toString()});
         if (PseudoAttacherNoArgument.ERROR.get() != null) {
             throw new AssertionError(PseudoAttacherNoArgument.ERROR.get());
         }
@@ -47,7 +46,7 @@ public class AttacherTest {
             constructor.newInstance();
             fail();
         } catch (InvocationTargetException exception) {
-            throw (Exception) exception.getCause();
+            throw (Exception) exception.getTargetException();
         }
     }
 

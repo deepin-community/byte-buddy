@@ -1,46 +1,80 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.utility;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.ClassFileVersion;
+import net.bytebuddy.build.AccessControllerPlugin;
 import net.bytebuddy.description.NamedElement;
+import net.bytebuddy.description.annotation.AnnotationList;
+import net.bytebuddy.description.annotation.AnnotationSource;
+import net.bytebuddy.description.type.PackageDescription;
+import net.bytebuddy.utility.dispatcher.JavaDispatcher;
+import net.bytebuddy.utility.nullability.AlwaysNull;
+import net.bytebuddy.utility.nullability.MaybeNull;
 
+import java.io.IOException;
 import java.io.InputStream;
-import java.lang.instrument.Instrumentation;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-import java.security.AccessController;
+import java.lang.reflect.AnnotatedElement;
 import java.security.PrivilegedAction;
-import java.util.Collections;
-import java.util.Map;
-import java.util.Set;
 
 /**
  * Type-safe representation of a {@code java.lang.Module}. On platforms that do not support the module API, modules are represented by {@code null}.
  */
-public class JavaModule implements NamedElement.WithOptionalName {
+public class JavaModule implements NamedElement.WithOptionalName, AnnotationSource {
 
     /**
      * Canonical representation of a Java module on a JVM that does not support the module API.
      */
+    @AlwaysNull
     public static final JavaModule UNSUPPORTED = null;
 
     /**
-     * The dispatcher to use for accessing Java modules, if available.
+     * A dispatcher to resolve a {@link Class}'s {@code java.lang.Module}.
      */
-    private static final Dispatcher DISPATCHER = AccessController.doPrivileged(Dispatcher.CreationAction.INSTANCE);
+    protected static final Resolver RESOLVER = doPrivileged(JavaDispatcher.of(Resolver.class));
+
+    /**
+     * A dispatcher to interact with {@code java.lang.Module}.
+     */
+    protected static final Module MODULE = doPrivileged(JavaDispatcher.of(Module.class));
 
     /**
      * The {@code java.lang.Module} instance this wrapper represents.
      */
-    private final Object module;
+    private final AnnotatedElement module;
 
     /**
      * Creates a new Java module representation.
      *
      * @param module The {@code java.lang.Module} instance this wrapper represents.
      */
-    protected JavaModule(Object module) {
+    protected JavaModule(AnnotatedElement module) {
         this.module = module;
+    }
+
+    /**
+     * A proxy for {@code java.security.AccessController#doPrivileged} that is activated if available.
+     *
+     * @param action The action to execute from a privileged context.
+     * @param <T>    The type of the action's resolved value.
+     * @return The action's resolved value.
+     */
+    @AccessControllerPlugin.Enhance
+    private static <T> T doPrivileged(PrivilegedAction<T> action) {
+        return action.run();
     }
 
     /**
@@ -49,8 +83,12 @@ public class JavaModule implements NamedElement.WithOptionalName {
      * @param type The type for which to describe the module.
      * @return A representation of the type's module or {@code null} if the current VM does not support modules.
      */
+    @MaybeNull
     public static JavaModule ofType(Class<?> type) {
-        return DISPATCHER.moduleOf(type);
+        Object module = RESOLVER.getModule(type);
+        return module == null
+                ? UNSUPPORTED
+                : new JavaModule((AnnotatedElement) module);
     }
 
     /**
@@ -61,10 +99,10 @@ public class JavaModule implements NamedElement.WithOptionalName {
      * @return A representation of the supplied Java module.
      */
     public static JavaModule of(Object module) {
-        if (!JavaType.MODULE.getTypeStub().isInstance(module)) {
+        if (!MODULE.isInstance(module)) {
             throw new IllegalArgumentException("Not a Java module: " + module);
         }
-        return new JavaModule(module);
+        return new JavaModule((AnnotatedElement) module);
     }
 
     /**
@@ -73,17 +111,21 @@ public class JavaModule implements NamedElement.WithOptionalName {
      * @return {@code true} if the current VM supports modules.
      */
     public static boolean isSupported() {
-        return DISPATCHER.isAlive();
+        return ClassFileVersion.ofThisVm(ClassFileVersion.JAVA_V5).isAtLeast(ClassFileVersion.JAVA_V9);
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public boolean isNamed() {
-        return DISPATCHER.isNamed(module);
+        return MODULE.isNamed(module);
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public String getActualName() {
-        return DISPATCHER.getName(module);
+        return MODULE.getName(module);
     }
 
     /**
@@ -91,9 +133,11 @@ public class JavaModule implements NamedElement.WithOptionalName {
      *
      * @param name The name of the resource.
      * @return An input stream for the resource or {@code null} if it does not exist.
+     * @throws IOException If an I/O exception occurs.
      */
-    public InputStream getResourceAsStream(String name) {
-        return DISPATCHER.getResourceAsStream(module, name);
+    @MaybeNull
+    public InputStream getResourceAsStream(String name) throws IOException {
+        return MODULE.getResourceAsStream(module, name);
     }
 
     /**
@@ -101,8 +145,9 @@ public class JavaModule implements NamedElement.WithOptionalName {
      *
      * @return The class loader of the represented module.
      */
+    @MaybeNull
     public ClassLoader getClassLoader() {
-        return DISPATCHER.getClassLoader(module);
+        return MODULE.getClassLoader(module);
     }
 
     /**
@@ -121,25 +166,40 @@ public class JavaModule implements NamedElement.WithOptionalName {
      * @return {@code true} if this module can read the supplied module.
      */
     public boolean canRead(JavaModule module) {
-        return DISPATCHER.canRead(this.module, module.unwrap());
+        return MODULE.canRead(this.module, module.unwrap());
     }
 
     /**
-     * Adds a read-edge to this module to the supplied module using the instrumentation API.
+     * Returns {@code true} if this module exports the supplied package to this module.
      *
-     * @param instrumentation The instrumentation instance to use for adding the edge.
-     * @param module          The module to add as a read dependency to this module.
+     * @param packageDescription The package to check for
+     * @param module             The target module.
+     * @return {@code true} if this module exports the supplied package to this module.
      */
-    public void addReads(Instrumentation instrumentation, JavaModule module) {
-        DISPATCHER.addReads(instrumentation, this.module, module.unwrap());
+    public boolean isExported(@MaybeNull PackageDescription packageDescription, JavaModule module) {
+        return packageDescription == null
+                || packageDescription.isDefault()
+                || MODULE.isExported(this.module, packageDescription.getName(), module.unwrap());
     }
 
-    @Override
-    public boolean equals(Object other) {
-        if (this == other) return true;
-        if (!(other instanceof JavaModule)) return false;
-        JavaModule that = (JavaModule) other;
-        return module.equals(that.module);
+    /**
+     * Returns {@code true} if this module opens the supplied package to this module.
+     *
+     * @param packageDescription The package to check for.
+     * @param module             The target module.
+     * @return {@code true} if this module opens the supplied package to this module.
+     */
+    public boolean isOpened(@MaybeNull PackageDescription packageDescription, JavaModule module) {
+        return packageDescription == null
+                || packageDescription.isDefault()
+                || MODULE.isOpen(this.module, packageDescription.getName(), module.unwrap());
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public AnnotationList getDeclaredAnnotations() {
+        return new AnnotationList.ForLoadedAnnotations(module.getDeclaredAnnotations());
     }
 
     @Override
@@ -148,332 +208,116 @@ public class JavaModule implements NamedElement.WithOptionalName {
     }
 
     @Override
+    public boolean equals(@MaybeNull Object other) {
+        if (this == other) {
+            return true;
+        } else if (!(other instanceof JavaModule)) {
+            return false;
+        }
+        JavaModule javaModule = (JavaModule) other;
+        return module.equals(javaModule.module);
+    }
+
+    @Override
     public String toString() {
         return module.toString();
     }
 
     /**
-     * A dispatcher for accessing the {@code java.lang.Module} API if it is available on the current VM.
+     * A proxy for resolving a {@link Class}'s {@code java.lang.Module}.
      */
-    protected interface Dispatcher {
+    @JavaDispatcher.Proxied("java.lang.Class")
+    protected interface Resolver {
 
         /**
-         * Checks if this dispatcher is alive, i.e. supports modules.
+         * Resolves the {@code java.lang.Module} of the supplied type.
          *
-         * @return {@code true} if modules are supported on the current VM.
+         * @param type The type for which to resolve the module.
+         * @return The type's module or {@code null} if the module system is not supported.
          */
-        boolean isAlive();
+        @MaybeNull
+        @JavaDispatcher.Defaults
+        Object getModule(Class<?> type);
+    }
+
+    /**
+     * A proxy for interacting with {@code java.lang.Module}.
+     */
+    @JavaDispatcher.Proxied("java.lang.Module")
+    protected interface Module {
 
         /**
-         * Extracts the Java {@code Module} for the provided class or returns {@code null} if the current VM does not support modules.
+         * Returns {@code true} if the supplied instance is of type {@code java.lang.Module}.
          *
-         * @param type The type for which to extract the module.
-         * @return The class's {@code Module} or {@code null} if the current VM does not support modules.
+         * @param value The instance to investigate.
+         * @return {@code true} if the supplied value is a {@code java.lang.Module}.
          */
-        JavaModule moduleOf(Class<?> type);
+        @JavaDispatcher.Instance
+        boolean isInstance(Object value);
 
         /**
          * Returns {@code true} if the supplied module is named.
          *
-         * @param module The {@code java.lang.Module} to check for the existence of a name.
+         * @param value The {@code java.lang.Module} to check for the existence of a name.
          * @return {@code true} if the supplied module is named.
          */
-        boolean isNamed(Object module);
+        boolean isNamed(Object value);
 
         /**
          * Returns the module's name.
          *
-         * @param module The {@code java.lang.Module} to check for its name.
+         * @param value The {@code java.lang.Module} to check for its name.
          * @return The module's (implicit or explicit) name.
          */
-        String getName(Object module);
+        String getName(Object value);
+
+        /**
+         * Returns the class loader of a module.
+         *
+         * @param value The {@code java.lang.Module} for which to return a class loader.
+         * @return The module's class loader.
+         */
+        @MaybeNull
+        ClassLoader getClassLoader(Object value);
 
         /**
          * Returns a resource stream for this module for a resource of the given name or {@code null} if such a resource does not exist.
          *
-         * @param module The {@code java.lang.Module} instance to apply this method upon.
-         * @param name   The name of the resource.
+         * @param value The {@code java.lang.Module} instance to apply this method upon.
+         * @param name  The name of the resource.
          * @return An input stream for the resource or {@code null} if it does not exist.
+         * @throws IOException If an I/O exception occurs.
          */
-        InputStream getResourceAsStream(Object module, String name);
+        @MaybeNull
+        InputStream getResourceAsStream(Object value, String name) throws IOException;
 
         /**
-         * Returns the module's class loader.
+         * Returns {@code true} if the source module exports the supplied package to the target module.
          *
-         * @param module The {@code java.lang.Module}
-         * @return The module's class loader.
+         * @param value    The source module.
+         * @param aPackage The name of the package to check.
+         * @param target   The target module.
+         * @return {@code true} if the source module exports the supplied package to the target module.
          */
-        ClassLoader getClassLoader(Object module);
+        boolean isExported(Object value, String aPackage, @JavaDispatcher.Proxied("java.lang.Module") Object target);
+
+        /**
+         * Returns {@code true} if the source module opens the supplied package to the target module.
+         *
+         * @param value    The source module.
+         * @param aPackage The name of the package to check.
+         * @param target   The target module.
+         * @return {@code true} if the source module opens the supplied package to the target module.
+         */
+        boolean isOpen(Object value, String aPackage, @JavaDispatcher.Proxied("java.lang.Module") Object target);
 
         /**
          * Checks if the source module can read the target module.
          *
-         * @param source The source module.
+         * @param value  The source module.
          * @param target The target module.
          * @return {@code true} if the source module can read the target module.
          */
-        boolean canRead(Object source, Object target);
-
-        /**
-         * Adds a read-edge from the source to the target module.
-         *
-         * @param instrumentation The instrumentation instance to use for adding the edge.
-         * @param source          The source module.
-         * @param target          The target module.
-         */
-        void addReads(Instrumentation instrumentation, Object source, Object target);
-
-        /**
-         * A creation action for a dispatcher.
-         */
-        enum CreationAction implements PrivilegedAction<Dispatcher> {
-
-            /**
-             * The singleton instance.
-             */
-            INSTANCE;
-
-            @Override
-            @SuppressFBWarnings(value = "REC_CATCH_EXCEPTION", justification = "Exception should not be rethrown but trigger a fallback")
-            public Dispatcher run() {
-                try {
-                    Class<?> module = Class.forName("java.lang.Module");
-                    return new Dispatcher.Enabled(Class.class.getMethod("getModule"),
-                            module.getMethod("getClassLoader"),
-                            module.getMethod("isNamed"),
-                            module.getMethod("getName"),
-                            module.getMethod("getResourceAsStream", String.class),
-                            module.getMethod("canRead", module),
-                            Instrumentation.class.getMethod("isModifiableModule", module),
-                            Instrumentation.class.getMethod("redefineModule", module, Set.class, Map.class, Map.class, Set.class, Map.class));
-                } catch (Exception ignored) {
-                    return Dispatcher.Disabled.INSTANCE;
-                }
-            }
-        }
-
-        /**
-         * A dispatcher for a VM that does support the {@code java.lang.Module} API.
-         */
-        @EqualsAndHashCode
-        class Enabled implements Dispatcher {
-
-            /**
-             * The {@code java.lang.Class#getModule()} method.
-             */
-            private final Method getModule;
-
-            /**
-             * The {@code java.lang.Module#getClassLoader()} method.
-             */
-            private final Method getClassLoader;
-
-            /**
-             * The {@code java.lang.Module#isNamed()} method.
-             */
-            private final Method isNamed;
-
-            /**
-             * The {@code java.lang.Module#getName()} method.
-             */
-            private final Method getName;
-
-            /**
-             * The {@code java.lang.Module#getResourceAsStream(String)} method.
-             */
-            private final Method getResourceAsStream;
-
-            /**
-             * The {@code java.lang.Module#canRead(Module)} method.
-             */
-            private final Method canRead;
-
-            /**
-             * The {@code java.lang.instrument.Instrumentation#isModifiableModule} method.
-             */
-            private final Method isModifiableModule;
-
-            /**
-             * The {@code java.lang.instrument.Instrumentation#redefineModule} method.
-             */
-            private final Method redefineModule;
-
-            /**
-             * Creates an enabled dispatcher.
-             *
-             * @param getModule           The {@code java.lang.Class#getModule()} method.
-             * @param getClassLoader      The {@code java.lang.Module#getClassLoader()} method.
-             * @param isNamed             The {@code java.lang.Module#isNamed()} method.
-             * @param getName             The {@code java.lang.Module#getName()} method.
-             * @param getResourceAsStream The {@code java.lang.Module#getResourceAsStream(String)} method.
-             * @param canRead             The {@code java.lang.Module#canRead(Module)} method.
-             * @param isModifiableModule  The {@code java.lang.instrument.Instrumentation#isModifiableModule} method.
-             * @param redefineModule      The {@code java.lang.instrument.Instrumentation#redefineModule} method.
-             */
-            protected Enabled(Method getModule,
-                              Method getClassLoader,
-                              Method isNamed,
-                              Method getName,
-                              Method getResourceAsStream,
-                              Method canRead,
-                              Method isModifiableModule,
-                              Method redefineModule) {
-                this.getModule = getModule;
-                this.getClassLoader = getClassLoader;
-                this.isNamed = isNamed;
-                this.getName = getName;
-                this.getResourceAsStream = getResourceAsStream;
-                this.canRead = canRead;
-                this.isModifiableModule = isModifiableModule;
-                this.redefineModule = redefineModule;
-            }
-
-            @Override
-            public boolean isAlive() {
-                return true;
-            }
-
-            @Override
-            public JavaModule moduleOf(Class<?> type) {
-                try {
-                    return new JavaModule(getModule.invoke(type));
-                } catch (IllegalAccessException exception) {
-                    throw new IllegalStateException("Cannot access " + getModule, exception);
-                } catch (InvocationTargetException exception) {
-                    throw new IllegalStateException("Cannot invoke " + getModule, exception.getCause());
-                }
-            }
-
-            @Override
-            public InputStream getResourceAsStream(Object module, String name) {
-                try {
-                    return (InputStream) getResourceAsStream.invoke(module, name);
-                } catch (IllegalAccessException exception) {
-                    throw new IllegalStateException("Cannot access " + getResourceAsStream, exception);
-                } catch (InvocationTargetException exception) {
-                    throw new IllegalStateException("Cannot invoke " + getResourceAsStream, exception.getCause());
-                }
-            }
-
-            @Override
-            public ClassLoader getClassLoader(Object module) {
-                try {
-                    return (ClassLoader) getClassLoader.invoke(module);
-                } catch (IllegalAccessException exception) {
-                    throw new IllegalStateException("Cannot access " + getClassLoader, exception);
-                } catch (InvocationTargetException exception) {
-                    throw new IllegalStateException("Cannot invoke " + getClassLoader, exception.getCause());
-                }
-            }
-
-            @Override
-            public boolean isNamed(Object module) {
-                try {
-                    return (Boolean) isNamed.invoke(module);
-                } catch (IllegalAccessException exception) {
-                    throw new IllegalStateException("Cannot access " + isNamed, exception);
-                } catch (InvocationTargetException exception) {
-                    throw new IllegalStateException("Cannot invoke " + isNamed, exception.getCause());
-                }
-            }
-
-            @Override
-            public String getName(Object module) {
-                try {
-                    return (String) getName.invoke(module);
-                } catch (IllegalAccessException exception) {
-                    throw new IllegalStateException("Cannot access " + getName, exception);
-                } catch (InvocationTargetException exception) {
-                    throw new IllegalStateException("Cannot invoke " + getName, exception.getCause());
-                }
-            }
-
-            @Override
-            public boolean canRead(Object source, Object target) {
-                try {
-                    return (Boolean) canRead.invoke(source, target);
-                } catch (IllegalAccessException exception) {
-                    throw new IllegalStateException("Cannot access " + canRead, exception);
-                } catch (InvocationTargetException exception) {
-                    throw new IllegalStateException("Cannot invoke " + canRead, exception.getCause());
-                }
-            }
-
-            @Override
-            public void addReads(Instrumentation instrumentation, Object source, Object target) {
-                try {
-                    if (!(Boolean) isModifiableModule.invoke(instrumentation, source)) {
-                        throw new IllegalStateException(source + " is not modifable");
-                    }
-                } catch (IllegalAccessException exception) {
-                    throw new IllegalStateException("Cannot access " + redefineModule, exception);
-                } catch (InvocationTargetException exception) {
-                    throw new IllegalStateException("Cannot invoke " + redefineModule, exception.getCause());
-                }
-                try {
-                    redefineModule.invoke(instrumentation, source,
-                            Collections.singleton(target),
-                            Collections.emptyMap(),
-                            Collections.emptyMap(),
-                            Collections.emptySet(),
-                            Collections.emptyMap());
-                } catch (IllegalAccessException exception) {
-                    throw new IllegalStateException("Cannot access " + redefineModule, exception);
-                } catch (InvocationTargetException exception) {
-                    throw new IllegalStateException("Cannot invoke " + redefineModule, exception.getCause());
-                }
-            }
-        }
-
-        /**
-         * A disabled dispatcher for a VM that does not support the {@code java.lang.Module} API.
-         */
-        enum Disabled implements Dispatcher {
-
-            /**
-             * The singleton instance.
-             */
-            INSTANCE;
-
-            @Override
-            public boolean isAlive() {
-                return false;
-            }
-
-            @Override
-            public JavaModule moduleOf(Class<?> type) {
-                return UNSUPPORTED;
-            }
-
-            @Override
-            public ClassLoader getClassLoader(Object module) {
-                throw new IllegalStateException("Current VM does not support modules");
-            }
-
-            @Override
-            public boolean isNamed(Object module) {
-                throw new IllegalStateException("Current VM does not support modules");
-            }
-
-            @Override
-            public String getName(Object module) {
-                throw new IllegalStateException("Current VM does not support modules");
-            }
-
-            @Override
-            public InputStream getResourceAsStream(Object module, String name) {
-                throw new IllegalStateException("Current VM does not support modules");
-            }
-
-            @Override
-            public boolean canRead(Object source, Object target) {
-                throw new IllegalStateException("Current VM does not support modules");
-            }
-
-            @Override
-            public void addReads(Instrumentation instrumentation, Object source, Object target) {
-                throw new IllegalStateException("Current VM does not support modules");
-            }
-        }
+        boolean canRead(Object value, @JavaDispatcher.Proxied("java.lang.Module") Object target);
     }
 }

@@ -1,6 +1,21 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation;
 
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.dynamic.scaffold.InstrumentedType;
 import net.bytebuddy.implementation.bytecode.ByteCodeAppender;
@@ -27,19 +42,32 @@ public enum SuperMethodCall implements Implementation.Composable {
      */
     INSTANCE;
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public InstrumentedType prepare(InstrumentedType instrumentedType) {
         return instrumentedType;
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public ByteCodeAppender appender(Target implementationTarget) {
         return new Appender(implementationTarget, Appender.TerminationHandler.RETURNING);
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public Implementation andThen(Implementation implementation) {
         return new Compound(WithoutReturn.INSTANCE, implementation);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public Composable andThen(Composable implementation) {
+        return new Compound.Composable(WithoutReturn.INSTANCE, implementation);
     }
 
     /**
@@ -52,12 +80,16 @@ public enum SuperMethodCall implements Implementation.Composable {
          */
         INSTANCE;
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public InstrumentedType prepare(InstrumentedType instrumentedType) {
             return instrumentedType;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public ByteCodeAppender appender(Target implementationTarget) {
             return new Appender(implementationTarget, Appender.TerminationHandler.DROPPING);
         }
@@ -66,7 +98,7 @@ public enum SuperMethodCall implements Implementation.Composable {
     /**
      * An appender for implementing a {@link net.bytebuddy.implementation.SuperMethodCall}.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     protected static class Appender implements ByteCodeAppender {
 
         /**
@@ -90,18 +122,22 @@ public enum SuperMethodCall implements Implementation.Composable {
             this.terminationHandler = terminationHandler;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext, MethodDescription instrumentedMethod) {
-            StackManipulation superMethodCall = implementationTarget.invokeDominant(instrumentedMethod.asSignatureToken());
+            StackManipulation superMethodCall = implementationTarget
+                    .invokeDominant(instrumentedMethod.asSignatureToken())
+                    .withCheckedCompatibilityTo(instrumentedMethod.asTypeToken());
             if (!superMethodCall.isValid()) {
                 throw new IllegalStateException("Cannot call super (or default) method for " + instrumentedMethod);
             }
-            StackManipulation.Size stackSize = new StackManipulation.Compound(
+            StackManipulation.Size size = new StackManipulation.Compound(
                     MethodVariableAccess.allArgumentsOf(instrumentedMethod).prependThisReference(),
                     superMethodCall,
                     terminationHandler.of(instrumentedMethod)
             ).apply(methodVisitor, implementationContext);
-            return new Size(stackSize.getMaximalSize(), instrumentedMethod.getStackSize());
+            return new Size(size.getMaximalSize(), instrumentedMethod.getStackSize());
         }
 
         /**

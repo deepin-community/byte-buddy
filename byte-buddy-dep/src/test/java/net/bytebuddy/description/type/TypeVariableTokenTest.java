@@ -1,13 +1,12 @@
 package net.bytebuddy.description.type;
 
 import net.bytebuddy.description.annotation.AnnotationDescription;
-import net.bytebuddy.test.utility.MockitoRule;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 
 import java.util.Collections;
 
@@ -20,7 +19,7 @@ public class TypeVariableTokenTest {
     private static final String FOO = "foo";
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     @Mock
     private TypeDescription.Generic bound, visitedBound;
@@ -58,10 +57,5 @@ public class TypeVariableTokenTest {
     @Test
     public void testVisitor() throws Exception {
         assertThat(new TypeVariableToken(FOO, Collections.singletonList(bound)).accept(visitor), is(new TypeVariableToken(FOO, Collections.singletonList(visitedBound))));
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(TypeVariableToken.class).apply();
     }
 }

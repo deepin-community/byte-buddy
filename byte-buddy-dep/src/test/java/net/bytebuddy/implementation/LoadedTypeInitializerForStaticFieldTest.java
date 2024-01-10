@@ -1,14 +1,20 @@
 package net.bytebuddy.implementation;
 
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Test;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
+
+import static net.bytebuddy.test.utility.FieldByFieldComparison.hasPrototype;
+import static org.hamcrest.CoreMatchers.instanceOf;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
 
 public class LoadedTypeInitializerForStaticFieldTest {
 
-    private static final String FOO = "foo";
+    private static final String FOO = "foo", BAR = "bar";
 
     @Test
     public void testAccessibleField() throws Exception {
@@ -43,8 +49,23 @@ public class LoadedTypeInitializerForStaticFieldTest {
     }
 
     @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(LoadedTypeInitializer.ForStaticField.class).apply();
+    public void testDeserialization() throws Exception {
+        LoadedTypeInitializer.ForStaticField original = new LoadedTypeInitializer.ForStaticField(FOO, BAR);
+        ByteArrayOutputStream serialization = new ByteArrayOutputStream();
+        ObjectOutputStream outputStream = new ObjectOutputStream(serialization);
+        try {
+            outputStream.writeObject(original);
+        } finally {
+            outputStream.close();
+        }
+        ObjectInputStream inputStream = new ObjectInputStream(new ByteArrayInputStream(serialization.toByteArray()));
+        try {
+            Object loadedTypeInitializer = inputStream.readObject();
+            assertThat(loadedTypeInitializer, instanceOf(LoadedTypeInitializer.ForStaticField.class));
+            assertThat(loadedTypeInitializer, hasPrototype((Object) original));
+        } finally {
+            inputStream.close();
+        }
     }
 
     @SuppressWarnings("unused")

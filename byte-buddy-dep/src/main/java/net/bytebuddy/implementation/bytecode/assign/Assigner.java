@@ -1,3 +1,18 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation.bytecode.assign;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -5,6 +20,7 @@ import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.implementation.bytecode.StackManipulation;
 import net.bytebuddy.implementation.bytecode.assign.primitive.PrimitiveTypeAwareAssigner;
 import net.bytebuddy.implementation.bytecode.assign.primitive.VoidAwareAssigner;
+import net.bytebuddy.implementation.bytecode.assign.reference.GenericTypeAwareAssigner;
 import net.bytebuddy.implementation.bytecode.assign.reference.ReferenceTypeAwareAssigner;
 
 /**
@@ -13,20 +29,25 @@ import net.bytebuddy.implementation.bytecode.assign.reference.ReferenceTypeAware
  * An assigner is for example responsible for type casting, auto boxing or unboxing or for the widening of primitive
  * types.
  */
-@SuppressFBWarnings(value = "IC_SUPERCLASS_USES_SUBCLASS_DURING_INITIALIZATION", justification = "Safe initialization is implied")
+@SuppressFBWarnings(value = "IC_SUPERCLASS_USES_SUBCLASS_DURING_INITIALIZATION", justification = "Safe initialization is implied.")
 public interface Assigner {
 
     /**
-     * A default assigner that can handle {@code void}, primitive types and references.
+     * A default assigner that can handle {@code void}, primitive types and reference types which considers generic types as raw types.
      */
     Assigner DEFAULT = new VoidAwareAssigner(new PrimitiveTypeAwareAssigner(ReferenceTypeAwareAssigner.INSTANCE));
 
     /**
+     * A generics-aware assigner that can handle {@code void}, primitive types which reference types.
+     */
+    Assigner GENERICS_AWARE = new VoidAwareAssigner(new PrimitiveTypeAwareAssigner(GenericTypeAwareAssigner.INSTANCE));
+
+    /**
      * @param source The original type that is to be transformed into the {@code targetType}.
      * @param target The target type into which the {@code sourceType} is to be converted.
-     * @param typing     A hint whether the assignment should consider the runtime type of the source type,
-     *                   i.e. if type down or cross castings are allowed. If this hint is set, this is
-     *                   also an indication that {@code void} to non-{@code void} assignments are permitted.
+     * @param typing A hint whether the assignment should consider the runtime type of the source type,
+     *               i.e. if type down or cross castings are allowed. If this hint is set, this is
+     *               also an indication that {@code void} to non-{@code void} assignments are permitted.
      * @return A stack manipulation that transforms the {@code sourceType} into the {@code targetType} if this
      * is possible. An illegal stack manipulation otherwise.
      */
@@ -93,7 +114,7 @@ public interface Assigner {
          * An type assigner that only considers equal generic types to be assignable.
          */
         GENERIC {
-            @Override
+            /** {@inheritDoc} */
             public StackManipulation assign(TypeDescription.Generic source, TypeDescription.Generic target, Typing typing) {
                 return source.equals(target)
                         ? StackManipulation.Trivial.INSTANCE
@@ -105,13 +126,13 @@ public interface Assigner {
          * A type assigner that considers two generic types to be equal if their erasure is equal.
          */
         ERASURE {
-            @Override
+            /** {@inheritDoc} */
             public StackManipulation assign(TypeDescription.Generic source, TypeDescription.Generic target, Typing typing) {
                 return source.asErasure().equals(target.asErasure())
                         ? StackManipulation.Trivial.INSTANCE
                         : StackManipulation.Illegal.INSTANCE;
             }
-        };
+        }
     }
 
     /**
@@ -124,7 +145,9 @@ public interface Assigner {
          */
         INSTANCE;
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public StackManipulation assign(TypeDescription.Generic source, TypeDescription.Generic target, Typing typing) {
             return StackManipulation.Illegal.INSTANCE;
         }

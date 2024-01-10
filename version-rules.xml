@@ -1,0 +1,58 @@
+<ruleset xmlns="http://mojo.codehaus.org/versions-maven-plugin/rule/2.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" comparisonMethod="maven"
+         xsi:schemaLocation="http://mojo.codehaus.org/versions-maven-plugin/rule/2.0.0 https://mojo.codehaus.org/versions-maven-plugin/xsd/rule-2.0.0.xsd">
+    <ignoreVersions>
+        <ignoreVersion type="regex">[0-9]+\.[0-9]+\.[0-9]+-M[1-9]+</ignoreVersion>
+    </ignoreVersions>
+    <rules>
+        <!-- Mockito version is fixed to latest known version to work with Java 6. -->
+        <rule groupId="org.mockito">
+            <ignoreVersions>
+                <ignoreVersion type="regex">.*</ignoreVersion>
+            </ignoreVersions>
+        </rule>
+        <!-- Alpha and beta versions are not considered. -->
+        <rule groupId="org.slf4j">
+            <ignoreVersions>
+                <ignoreVersion type="regex">.*-alpha[0-9]?</ignoreVersion>
+                <ignoreVersion type="regex">.*-beta[0-9]?</ignoreVersion>
+            </ignoreVersions>
+        </rule>
+        <!-- Maven versions after 3.2.5 require Java 7. -->
+        <rule groupId="org.apache.maven">
+            <ignoreVersions>
+                <ignoreVersion type="regex">.*</ignoreVersion>
+            </ignoreVersions>
+        </rule>
+        <!-- Maven plugin tools versions after 3.5.2 require Java 7. -->
+        <rule groupId="org.apache.maven.plugin-tools">
+            <ignoreVersions>
+                <ignoreVersion type="regex">.*</ignoreVersion>
+            </ignoreVersions>
+        </rule>
+        <!-- Spotbugs after version 4.2.3 is not compatible with Maven version 3.2.5. -->
+        <rule groupId="com.github.spotbugs" artifactId="spotbugs-maven-plugin" comparisonMethod="maven">
+            <ignoreVersions>
+                <ignoreVersion type="regex">.*</ignoreVersion>
+            </ignoreVersions>
+        </rule>
+        <!-- The license plugin after version 3.0 is not compatible with Maven version 3.2.5. -->
+        <rule groupId="com.mycila" artifactId="license-maven-plugin" comparisonMethod="maven">
+            <ignoreVersions>
+                <ignoreVersion type="regex">.*</ignoreVersion>
+            </ignoreVersions>
+        </rule>
+        <!-- The Plexus archiver is pinned to a secure version that is compatible to the plugin version. -->
+        <rule groupId="org.codehaus.plexus" artifactId="plexus-archiver" comparisonMethod="maven">
+            <ignoreVersions>
+                <ignoreVersion type="regex">.*</ignoreVersion>
+            </ignoreVersions>
+        </rule>
+        <!-- Checkstyle versions after version 9.3 require Java 11. -->
+        <rule groupId="com.puppycrawl.tools" artifactId="checkstyle" comparisonMethod="maven">
+            <ignoreVersions>
+                <ignoreVersion>.*</ignoreVersion>
+            </ignoreVersions>
+        </rule>
+    </rules>
+</ruleset>

@@ -1,9 +1,24 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation.bind;
 
-import lombok.EqualsAndHashCode;
 import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.method.ParameterList;
 import net.bytebuddy.description.type.TypeDescription;
+import net.bytebuddy.utility.nullability.MaybeNull;
 
 /**
  * Implementation of an
@@ -53,8 +68,7 @@ public enum ArgumentTypeResolver implements MethodDelegationBinder.AmbiguityReso
         TypeDescription rightParameterType = right.getTarget().getParameters().get(rightParameterIndex).getType().asErasure();
         if (!leftParameterType.equals(rightParameterType)) {
             if (leftParameterType.isPrimitive() && rightParameterType.isPrimitive()) {
-                return PrimitiveTypePrecedence.forPrimitive(leftParameterType)
-                        .resolve(PrimitiveTypePrecedence.forPrimitive(rightParameterType));
+                return PrimitiveTypePrecedence.forPrimitive(leftParameterType).resolve(PrimitiveTypePrecedence.forPrimitive(rightParameterType));
             } else if (leftParameterType.isPrimitive() /* && !rightParameterType.isPrimitive() */) {
                 return sourceParameterType.isPrimitive() ? Resolution.LEFT : Resolution.RIGHT;
             } else if (/* !leftParameterType.isPrimitive() && */ rightParameterType.isPrimitive()) {
@@ -92,7 +106,9 @@ public enum ArgumentTypeResolver implements MethodDelegationBinder.AmbiguityReso
         }
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public Resolution resolve(MethodDescription source,
                               MethodDelegationBinder.MethodBinding left,
                               MethodDelegationBinder.MethodBinding right) {
@@ -233,12 +249,12 @@ public enum ArgumentTypeResolver implements MethodDelegationBinder.AmbiguityReso
      *
      * @see net.bytebuddy.implementation.bind.MethodDelegationBinder.MethodBinding#getTargetParameterIndex(Object)
      */
-    @EqualsAndHashCode
     public static class ParameterIndexToken {
 
         /**
          * The parameter index that is represented by this token.
          */
+        @SuppressWarnings("unused")
         private final int parameterIndex;
 
         /**
@@ -248,6 +264,22 @@ public enum ArgumentTypeResolver implements MethodDelegationBinder.AmbiguityReso
          */
         public ParameterIndexToken(int parameterIndex) {
             this.parameterIndex = parameterIndex;
+        }
+
+        @Override
+        public int hashCode() {
+            return parameterIndex;
+        }
+
+        @Override
+        public boolean equals(@MaybeNull Object other) {
+            if (this == other) {
+                return true;
+            } else if (other == null || getClass() != other.getClass()) {
+                return false;
+            }
+            ParameterIndexToken parameterIndexToken = (ParameterIndexToken) other;
+            return parameterIndex == parameterIndexToken.parameterIndex;
         }
     }
 }

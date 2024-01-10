@@ -1,10 +1,10 @@
 package net.bytebuddy.utility;
 
-import net.bytebuddy.test.utility.MockitoRule;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
@@ -14,12 +14,12 @@ import java.util.List;
 
 import static junit.framework.TestCase.fail;
 import static org.hamcrest.CoreMatchers.is;
-import static org.junit.Assert.*;
+import static org.hamcrest.MatcherAssert.assertThat;
 
 public class CompoundListTest {
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     @Mock
     private Object first, second, third, forth;
@@ -32,7 +32,7 @@ public class CompoundListTest {
             constructor.newInstance();
             fail();
         } catch (InvocationTargetException exception) {
-            throw exception.getCause();
+            throw exception.getTargetException();
         }
     }
 
@@ -64,5 +64,14 @@ public class CompoundListTest {
         assertThat(list.get(1), is(second));
         assertThat(list.get(2), is(third));
         assertThat(list.get(3), is(forth));
+    }
+
+    @Test
+    public void testListAndListAndList() throws Exception {
+        List<Object> list = CompoundList.of(Collections.singletonList(first), Collections.singletonList(second), Collections.singletonList(third));
+        assertThat(list.size(), is(3));
+        assertThat(list.get(0), is(first));
+        assertThat(list.get(1), is(second));
+        assertThat(list.get(2), is(third));
     }
 }

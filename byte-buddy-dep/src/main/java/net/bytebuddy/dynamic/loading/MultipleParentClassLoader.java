@@ -1,10 +1,28 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.dynamic.loading;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.matcher.ElementMatcher;
+import net.bytebuddy.utility.nullability.MaybeNull;
+import net.bytebuddy.utility.nullability.UnknownNull;
 
 import java.io.IOException;
+import java.lang.reflect.Method;
 import java.net.URL;
 import java.util.*;
 
@@ -31,7 +49,28 @@ import static net.bytebuddy.matcher.ElementMatchers.not;
  * by loading classes with child class loaders of this class loader.
  * </p>
  */
-public class MultipleParentClassLoader extends ClassLoader {
+public class MultipleParentClassLoader extends InjectionClassLoader {
+
+    /*
+     * Register class loader as parallel capable if the current VM supports it.
+     */
+    static {
+        doRegisterAsParallelCapable();
+    }
+
+    /**
+     * Registers class loader as parallel capable if possible.
+     */
+    @SuppressFBWarnings(value = "DP_DO_INSIDE_DO_PRIVILEGED", justification = "Must be invoked from targeting class loader type.")
+    private static void doRegisterAsParallelCapable() {
+        try {
+            Method method = ClassLoader.class.getDeclaredMethod("registerAsParallelCapable");
+            method.setAccessible(true);
+            method.invoke(null);
+        } catch (Throwable ignored) {
+            /* do nothing */
+        }
+    }
 
     /**
      * The parents of this class loader in their application order.
@@ -56,12 +95,27 @@ public class MultipleParentClassLoader extends ClassLoader {
      * @param parents The parents of this class loader in their application order. This list must not contain {@code null},
      *                i.e. the bootstrap class loader which is an implicit parent of any class loader.
      */
-    public MultipleParentClassLoader(ClassLoader parent, List<? extends ClassLoader> parents) {
-        super(parent);
+    public MultipleParentClassLoader(@MaybeNull ClassLoader parent, List<? extends ClassLoader> parents) {
+        this(parent, parents, true);
+    }
+
+    /**
+     * Creates a new class loader with multiple parents.
+     *
+     * @param parent  An explicit parent in compliance with the class loader API. This explicit parent should only be set if
+     *                the current platform does not allow creating a class loader that extends the bootstrap loader.
+     * @param parents The parents of this class loader in their application order. This list must not contain {@code null},
+     *                i.e. the bootstrap class loader which is an implicit parent of any class loader.
+     * @param sealed  {@code true} if the class loader is sealed for injection of additional classes.
+     */
+    public MultipleParentClassLoader(@MaybeNull ClassLoader parent, List<? extends ClassLoader> parents, boolean sealed) {
+        super(parent, sealed);
         this.parents = parents;
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
         for (ClassLoader parent : parents) {
             try {
@@ -77,7 +131,9 @@ public class MultipleParentClassLoader extends ClassLoader {
         return super.loadClass(name, resolve);
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public URL getResource(String name) {
         for (ClassLoader parent : parents) {
             URL url = parent.getResource(name);
@@ -88,7 +144,9 @@ public class MultipleParentClassLoader extends ClassLoader {
         return super.getResource(name);
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public Enumeration<URL> getResources(String name) throws IOException {
         List<Enumeration<URL>> enumerations = new ArrayList<Enumeration<URL>>(parents.size() + 1);
         for (ClassLoader parent : parents) {
@@ -96,6 +154,15 @@ public class MultipleParentClassLoader extends ClassLoader {
         }
         enumerations.add(super.getResources(name));
         return new CompoundEnumeration(enumerations);
+    }
+
+    @Override
+    protected Map<String, Class<?>> doDefineClasses(Map<String, byte[]> typeDefinitions) {
+        Map<String, Class<?>> types = new HashMap<String, Class<?>>();
+        for (Map.Entry<String, byte[]> entry : typeDefinitions.entrySet()) {
+            types.put(entry.getKey(), defineClass(entry.getKey(), entry.getValue(), 0, entry.getValue().length));
+        }
+        return types;
     }
 
     /**
@@ -116,7 +183,8 @@ public class MultipleParentClassLoader extends ClassLoader {
         /**
          * The currently represented enumeration or {@code null} if no such enumeration is currently selected.
          */
-        private Enumeration<URL> currentEnumeration;
+        @UnknownNull
+        private Enumeration<URL> current;
 
         /**
          * Creates a compound enumeration.
@@ -127,23 +195,27 @@ public class MultipleParentClassLoader extends ClassLoader {
             this.enumerations = enumerations;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public boolean hasMoreElements() {
-            if (currentEnumeration != null && currentEnumeration.hasMoreElements()) {
+            if (current != null && current.hasMoreElements()) {
                 return true;
             } else if (!enumerations.isEmpty()) {
-                currentEnumeration = enumerations.remove(FIRST);
+                current = enumerations.remove(FIRST);
                 return hasMoreElements();
             } else {
                 return false;
             }
         }
 
-        @Override
-        @SuppressFBWarnings(value = "UWF_FIELD_NOT_INITIALIZED_IN_CONSTRUCTOR", justification = "Null reference is impossible due to element check")
+        /**
+         * {@inheritDoc}
+         */
+        @SuppressFBWarnings(value = "UWF_FIELD_NOT_INITIALIZED_IN_CONSTRUCTOR", justification = "Null reference is avoided by element check.")
         public URL nextElement() {
             if (hasMoreElements()) {
-                return currentEnumeration.nextElement();
+                return current.nextElement();
             } else {
                 throw new NoSuchElementException();
             }
@@ -158,13 +230,13 @@ public class MultipleParentClassLoader extends ClassLoader {
      * of the bootstrap class loader which is represented by {@code null} and which is an implicit parent of any
      * class loader.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     public static class Builder {
 
         /**
-         * Indicates the first index of a list.
+         * {@code true} if the created class loader is sealed.
          */
-        private static final int ONLY = 0;
+        private final boolean sealed;
 
         /**
          * The class loaders that were collected.
@@ -175,16 +247,27 @@ public class MultipleParentClassLoader extends ClassLoader {
          * Creates a new builder without any class loaders.
          */
         public Builder() {
-            this(Collections.<ClassLoader>emptyList());
+            this(true);
+        }
+
+        /**
+         * Creates a new builder without any class loaders.
+         *
+         * @param sealed {@code true} if the created class loader is sealed.
+         */
+        public Builder(boolean sealed) {
+            this(Collections.<ClassLoader>emptyList(), sealed);
         }
 
         /**
          * Creates a new builder.
          *
          * @param classLoaders The class loaders that were collected until now.
+         * @param sealed       {@code true} if the created class loader is sealed.
          */
-        private Builder(List<? extends ClassLoader> classLoaders) {
+        private Builder(List<? extends ClassLoader> classLoaders, boolean sealed) {
             this.classLoaders = classLoaders;
+            this.sealed = sealed;
         }
 
         /**
@@ -234,14 +317,91 @@ public class MultipleParentClassLoader extends ClassLoader {
          */
         public Builder append(List<? extends ClassLoader> classLoaders) {
             List<ClassLoader> filtered = new ArrayList<ClassLoader>(this.classLoaders.size() + classLoaders.size());
-            Set<ClassLoader> registered = new HashSet<ClassLoader>(this.classLoaders);
             filtered.addAll(this.classLoaders);
+            Set<ClassLoader> registered = new HashSet<ClassLoader>(this.classLoaders);
             for (ClassLoader classLoader : classLoaders) {
                 if (classLoader != null && registered.add(classLoader)) {
                     filtered.add(classLoader);
                 }
             }
-            return new Builder(filtered);
+            return new Builder(filtered, sealed);
+        }
+
+        /**
+         * Appends the class loaders of the given types but filters any duplicates within the hierarchy of class loaders.
+         * The bootstrap class loader is implicitly skipped as it is an implicit parent of any class loader. Class loaders
+         * are prepended to the list of class loaders.
+         *
+         * @param type The types of which to collect the class loaders.
+         * @return A new builder instance with the additional class loaders of the provided types if they were not
+         * yet collected.
+         */
+        public Builder appendMostSpecific(Class<?>... type) {
+            return appendMostSpecific(Arrays.asList(type));
+        }
+
+        /**
+         * Appends the class loaders of the given types but filters any duplicates within the hierarchy of class loaders.
+         * The bootstrap class loader is implicitly skipped as it is an implicit parent of any class loader. Class loaders
+         * are prepended to the list of class loaders.
+         *
+         * @param types The types of which to collect the class loaders.
+         * @return A new builder instance with the additional class loaders.
+         */
+        public Builder appendMostSpecific(Collection<? extends Class<?>> types) {
+            List<ClassLoader> classLoaders = new ArrayList<ClassLoader>(types.size());
+            for (Class<?> type : types) {
+                classLoaders.add(type.getClassLoader());
+            }
+            return appendMostSpecific(classLoaders);
+        }
+
+        /**
+         * Appends the given class loaders but removes any class loaders that are the parent of any previously registered class loader.
+         * The bootstrap class loader is implicitly skipped as it is an implicit parent of any class loader.
+         *
+         * @param classLoader The class loaders to be collected.
+         * @return A new builder instance with the additional class loaders.
+         */
+        public Builder appendMostSpecific(ClassLoader... classLoader) {
+            return appendMostSpecific(Arrays.asList(classLoader));
+        }
+
+        /**
+         * Appends the given class loaders but removes any class loaders that are the parent of any previously registered class loader.
+         * The bootstrap class loader is implicitly skipped as it is an implicit parent of any class loader.
+         *
+         * @param classLoaders The class loaders to collected.
+         * @return A new builder instance with the additional class loaders.
+         */
+        public Builder appendMostSpecific(List<? extends ClassLoader> classLoaders) {
+            List<ClassLoader> filtered = new ArrayList<ClassLoader>(this.classLoaders.size() + classLoaders.size());
+            filtered.addAll(this.classLoaders);
+            consideration:
+            for (ClassLoader classLoader : classLoaders) {
+                if (classLoader == null) {
+                    continue;
+                }
+                ClassLoader candidate = classLoader;
+                do {
+                    Iterator<ClassLoader> iterator = filtered.iterator();
+                    while (iterator.hasNext()) {
+                        ClassLoader previous = iterator.next();
+                        if (previous.equals(candidate)) {
+                            iterator.remove();
+                        }
+                    }
+                } while ((candidate = candidate.getParent()) != null);
+                for (ClassLoader previous : filtered) {
+                    do {
+                        if (previous.equals(classLoader)) {
+                            continue consideration;
+                        }
+                    } while ((previous = previous.getParent()) != null);
+                }
+                filtered.add(classLoader);
+            }
+            return new Builder(filtered, sealed);
         }
 
         /**
@@ -257,7 +417,7 @@ public class MultipleParentClassLoader extends ClassLoader {
                     classLoaders.add(classLoader);
                 }
             }
-            return new Builder(classLoaders);
+            return new Builder(classLoaders, sealed);
         }
 
         /**
@@ -274,11 +434,10 @@ public class MultipleParentClassLoader extends ClassLoader {
          *
          * @return A suitable class loader.
          */
-        @SuppressFBWarnings(value = "DP_CREATE_CLASSLOADER_INSIDE_DO_PRIVILEGED", justification = "Privilege is explicit user responsibility")
         public ClassLoader build() {
             return classLoaders.size() == 1
-                    ? classLoaders.get(ONLY)
-                    : new MultipleParentClassLoader(classLoaders);
+                    ? classLoaders.get(0)
+                    : doBuild(ClassLoadingStrategy.BOOTSTRAP_LOADER);
         }
 
         /**
@@ -297,7 +456,7 @@ public class MultipleParentClassLoader extends ClassLoader {
          * @return A suitable class loader.
          */
         public ClassLoader build(ClassLoader parent) {
-            return classLoaders.isEmpty() || (classLoaders.size() == 1 && classLoaders.contains(parent))
+            return classLoaders.isEmpty() || classLoaders.size() == 1 && classLoaders.contains(parent)
                     ? parent
                     : filter(not(is(parent))).doBuild(parent);
         }
@@ -308,9 +467,9 @@ public class MultipleParentClassLoader extends ClassLoader {
          * @param parent The explicit parent class loader.
          * @return A multiple parent class loader that includes all collected class loaders and the explicit parent.
          */
-        @SuppressFBWarnings(value = "DP_CREATE_CLASSLOADER_INSIDE_DO_PRIVILEGED", justification = "Privilege is explicit user responsibility")
-        private ClassLoader doBuild(ClassLoader parent) {
-            return new MultipleParentClassLoader(parent, classLoaders);
+        @SuppressFBWarnings(value = "DP_CREATE_CLASSLOADER_INSIDE_DO_PRIVILEGED", justification = "Assuring privilege is explicit user responsibility.")
+        private ClassLoader doBuild(@MaybeNull ClassLoader parent) {
+            return new MultipleParentClassLoader(parent, classLoaders, sealed);
         }
     }
 }

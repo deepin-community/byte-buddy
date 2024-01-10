@@ -1,12 +1,30 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.dynamic.loading;
 
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.type.TypeDescription;
+import net.bytebuddy.utility.nullability.AlwaysNull;
+import net.bytebuddy.utility.nullability.MaybeNull;
 
 import java.io.File;
 import java.lang.instrument.Instrumentation;
 import java.security.ProtectionDomain;
 import java.util.Map;
+import java.util.concurrent.Callable;
 
 /**
  * A strategy for loading a collection of types.
@@ -18,11 +36,13 @@ public interface ClassLoadingStrategy<T extends ClassLoader> {
     /**
      * A type-safe constant representing the bootstrap class loader which is represented by {@code null} within Java.
      */
+    @AlwaysNull
     ClassLoader BOOTSTRAP_LOADER = null;
 
     /**
      * An undefined protection domain.
      */
+    @AlwaysNull
     ProtectionDomain NO_PROTECTION_DOMAIN = null;
 
     /**
@@ -35,7 +55,7 @@ public interface ClassLoadingStrategy<T extends ClassLoader> {
      * @return A collection of the loaded classes which will be initialized in the iteration order of the
      * returned collection.
      */
-    Map<TypeDescription, Class<?>> load(T classLoader, Map<TypeDescription, byte[]> types);
+    Map<TypeDescription, Class<?>> load(@MaybeNull T classLoader, Map<TypeDescription, byte[]> types);
 
     /**
      * This class contains implementations of default class loading strategies.
@@ -90,8 +110,14 @@ public interface ClassLoadingStrategy<T extends ClassLoader> {
          * a better runtime performance.
          * </p>
          * <p>
-         * <b>Important</b>: This class loader does not define packages for injected classes by default. Therefore, calls to
-         * {@link Class#getPackage()} might return {@code null}. Packages are only defined
+         * <b>Important</b>: Class injection requires access to JVM internal methods that are sealed by security managers and the
+         * Java Platform module system. Since Java 11, access to these methods is no longer feasible unless those packages
+         * are explicitly opened.
+         * </p>
+         * <p>
+         * <b>Note</b>: This class loader does not define packages for injected classes by default. Therefore, calls to
+         * {@link Class#getPackage()} might return {@code null}. Packages are only defined manually by a class loader prior to
+         * Java 9.
          * </p>
          */
         INJECTION(new InjectionDispatcher());
@@ -115,36 +141,59 @@ public interface ClassLoadingStrategy<T extends ClassLoader> {
             this.dispatcher = dispatcher;
         }
 
-        @Override
-        public Map<TypeDescription, Class<?>> load(ClassLoader classLoader, Map<TypeDescription, byte[]> types) {
+        /**
+         * {@inheritDoc}
+         */
+        public Map<TypeDescription, Class<?>> load(@MaybeNull ClassLoader classLoader, Map<TypeDescription, byte[]> types) {
             return dispatcher.load(classLoader, types);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Configurable<ClassLoader> with(ProtectionDomain protectionDomain) {
             return dispatcher.with(protectionDomain);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Configurable<ClassLoader> with(PackageDefinitionStrategy packageDefinitionStrategy) {
             return dispatcher.with(packageDefinitionStrategy);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Configurable<ClassLoader> allowExistingTypes() {
             return dispatcher.allowExistingTypes();
         }
 
         /**
-         * A class loading strategy which applies a class loader injection while applying a given
-         * {@link java.security.ProtectionDomain} on class injection.
+         * {@inheritDoc}
          */
-        @EqualsAndHashCode
+        public Configurable<ClassLoader> opened() {
+            return dispatcher.opened();
+        }
+
+        /**
+         * <p>
+         * A class loading strategy which applies a class loader injection while applying a given {@link java.security.ProtectionDomain} on class injection.
+         * </p>
+         * <p>
+         * <b>Important</b>: Class injection requires access to JVM internal methods that are sealed by security managers and the
+         * Java Platform module system. Since Java 11, access to these methods is no longer feasible unless those packages
+         * are explicitly opened.
+         * </p>
+         */
+        @HashCodeAndEqualsPlugin.Enhance
         protected static class InjectionDispatcher implements ClassLoadingStrategy.Configurable<ClassLoader> {
 
             /**
-             * The protection domain to apply.
+             * The protection domain to apply or {@code null} if no protection domain is set.
              */
+            @MaybeNull
+            @HashCodeAndEqualsPlugin.ValueHandling(HashCodeAndEqualsPlugin.ValueHandling.Sort.REVERSE_NULLABILITY)
             private final ProtectionDomain protectionDomain;
 
             /**
@@ -167,11 +216,11 @@ public interface ClassLoadingStrategy<T extends ClassLoader> {
             /**
              * Creates a new injection dispatcher.
              *
-             * @param protectionDomain          The protection domain to apply.
+             * @param protectionDomain          The protection domain to apply or {@code null} if no protection domain is set.
              * @param packageDefinitionStrategy The package definer to be used for querying information on package information.
              * @param forbidExisting            Determines if an exception should be thrown when attempting to load a type that already exists.
              */
-            private InjectionDispatcher(ProtectionDomain protectionDomain,
+            private InjectionDispatcher(@MaybeNull ProtectionDomain protectionDomain,
                                         PackageDefinitionStrategy packageDefinitionStrategy,
                                         boolean forbidExisting) {
                 this.protectionDomain = protectionDomain;
@@ -179,27 +228,45 @@ public interface ClassLoadingStrategy<T extends ClassLoader> {
                 this.forbidExisting = forbidExisting;
             }
 
-            @Override
-            public Map<TypeDescription, Class<?>> load(ClassLoader classLoader, Map<TypeDescription, byte[]> types) {
+            /**
+             * {@inheritDoc}
+             */
+            public Map<TypeDescription, Class<?>> load(@MaybeNull ClassLoader classLoader, Map<TypeDescription, byte[]> types) {
+                if (classLoader == null) {
+                    throw new IllegalArgumentException("Cannot inject classes into the bootstrap class loader");
+                }
                 return new ClassInjector.UsingReflection(classLoader,
                         protectionDomain,
                         packageDefinitionStrategy,
                         forbidExisting).inject(types);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Configurable<ClassLoader> with(ProtectionDomain protectionDomain) {
                 return new InjectionDispatcher(protectionDomain, packageDefinitionStrategy, forbidExisting);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Configurable<ClassLoader> with(PackageDefinitionStrategy packageDefinitionStrategy) {
                 return new InjectionDispatcher(protectionDomain, packageDefinitionStrategy, forbidExisting);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Configurable<ClassLoader> allowExistingTypes() {
                 return new InjectionDispatcher(protectionDomain, packageDefinitionStrategy, false);
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public Configurable<ClassLoader> opened() {
+                return this;
             }
         }
 
@@ -207,7 +274,7 @@ public interface ClassLoadingStrategy<T extends ClassLoader> {
          * A class loading strategy which creates a wrapping class loader while applying a given
          * {@link java.security.ProtectionDomain} on class loading.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         protected static class WrappingDispatcher implements ClassLoadingStrategy.Configurable<ClassLoader> {
 
             /**
@@ -221,8 +288,10 @@ public interface ClassLoadingStrategy<T extends ClassLoader> {
             private static final boolean PARENT_FIRST = false;
 
             /**
-             * The protection domain to apply.
+             * The protection domain to apply or {@code null} if no protection domain is set.
              */
+            @MaybeNull
+            @HashCodeAndEqualsPlugin.ValueHandling(HashCodeAndEqualsPlugin.ValueHandling.Sort.REVERSE_NULLABILITY)
             private final ProtectionDomain protectionDomain;
 
             /**
@@ -246,6 +315,11 @@ public interface ClassLoadingStrategy<T extends ClassLoader> {
             private final boolean forbidExisting;
 
             /**
+             * {@code true} if the class loader should be sealed.
+             */
+            private final boolean sealed;
+
+            /**
              * Creates a new wrapping dispatcher with a default protection domain and a default access control context.
              *
              * @param persistenceHandler The persistence handler to apply.
@@ -256,54 +330,69 @@ public interface ClassLoadingStrategy<T extends ClassLoader> {
                         PackageDefinitionStrategy.Trivial.INSTANCE,
                         persistenceHandler,
                         childFirst,
-                        DEFAULT_FORBID_EXISTING);
+                        DEFAULT_FORBID_EXISTING,
+                        true);
             }
 
             /**
              * Creates a new protection domain specific class loading wrapper.
              *
-             * @param protectionDomain          The protection domain to apply.
+             * @param protectionDomain          The protection domain to apply or {@code null} if no protection domain is set.
              * @param packageDefinitionStrategy The package definer to be used for querying information on package information.
              * @param persistenceHandler        The persistence handler to apply.
              * @param childFirst                {@code true} if the created class loader should apply child-first semantics.
              * @param forbidExisting            Determines if an exception should be thrown when attempting to load a type that already exists.
+             * @param sealed                    {@code true} if the class loader should be sealed.
              */
-            private WrappingDispatcher(ProtectionDomain protectionDomain,
+            private WrappingDispatcher(@MaybeNull ProtectionDomain protectionDomain,
                                        PackageDefinitionStrategy packageDefinitionStrategy,
                                        ByteArrayClassLoader.PersistenceHandler persistenceHandler,
                                        boolean childFirst,
-                                       boolean forbidExisting) {
+                                       boolean forbidExisting,
+                                       boolean sealed) {
                 this.protectionDomain = protectionDomain;
                 this.packageDefinitionStrategy = packageDefinitionStrategy;
                 this.persistenceHandler = persistenceHandler;
                 this.childFirst = childFirst;
                 this.forbidExisting = forbidExisting;
+                this.sealed = sealed;
             }
 
-            @Override
-            public Map<TypeDescription, Class<?>> load(ClassLoader classLoader, Map<TypeDescription, byte[]> types) {
-                return ByteArrayClassLoader.load(classLoader,
-                        types,
-                        protectionDomain,
-                        persistenceHandler,
-                        packageDefinitionStrategy,
-                        childFirst,
-                        forbidExisting);
+            /**
+             * {@inheritDoc}
+             */
+            public Map<TypeDescription, Class<?>> load(@MaybeNull ClassLoader classLoader, Map<TypeDescription, byte[]> types) {
+                return childFirst
+                        ? ByteArrayClassLoader.ChildFirst.load(classLoader, types, protectionDomain, persistenceHandler, packageDefinitionStrategy, forbidExisting, sealed)
+                        : ByteArrayClassLoader.load(classLoader, types, protectionDomain, persistenceHandler, packageDefinitionStrategy, forbidExisting, sealed);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Configurable<ClassLoader> with(ProtectionDomain protectionDomain) {
-                return new WrappingDispatcher(protectionDomain, packageDefinitionStrategy, persistenceHandler, childFirst, forbidExisting);
+                return new WrappingDispatcher(protectionDomain, packageDefinitionStrategy, persistenceHandler, childFirst, forbidExisting, sealed);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Configurable<ClassLoader> with(PackageDefinitionStrategy packageDefinitionStrategy) {
-                return new WrappingDispatcher(protectionDomain, packageDefinitionStrategy, persistenceHandler, childFirst, forbidExisting);
+                return new WrappingDispatcher(protectionDomain, packageDefinitionStrategy, persistenceHandler, childFirst, forbidExisting, sealed);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Configurable<ClassLoader> allowExistingTypes() {
-                return new InjectionDispatcher(protectionDomain, packageDefinitionStrategy, false);
+                return new WrappingDispatcher(protectionDomain, packageDefinitionStrategy, persistenceHandler, childFirst, false, sealed);
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            public Configurable<ClassLoader> opened() {
+                return new WrappingDispatcher(protectionDomain, packageDefinitionStrategy, persistenceHandler, childFirst, forbidExisting, false);
             }
         }
     }
@@ -318,7 +407,7 @@ public interface ClassLoadingStrategy<T extends ClassLoader> {
         /**
          * Overrides the implicitly set default {@link java.security.ProtectionDomain} with an explicit one.
          *
-         * @param protectionDomain The protection domain to apply.
+         * @param protectionDomain The protection domain to apply or {@code null} if no protection domain is set.
          * @return This class loading strategy with an explicitly set {@link java.security.ProtectionDomain}.
          */
         Configurable<S> with(ProtectionDomain protectionDomain);
@@ -338,6 +427,14 @@ public interface ClassLoadingStrategy<T extends ClassLoader> {
          * @return A version of this class loading strategy that does not throw an exception when a class is already loaded.
          */
         Configurable<S> allowExistingTypes();
+
+        /**
+         * With an opened class loading strategy, it is assured that types can be added to the class loader, either by
+         * indirect injection using this strategy or by creating a class loader that explicitly supports injection.
+         *
+         * @return A version of this class loading strategy that opens for future injections into a class loader.
+         */
+        Configurable<S> opened();
     }
 
     /**
@@ -345,7 +442,7 @@ public interface ClassLoadingStrategy<T extends ClassLoader> {
      * A lookup instance can define types only in the same class loader and in the same package as the type within which
      * it was created. The supplied lookup must have package privileges, i.e. it must not be a public lookup.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class UsingLookup implements ClassLoadingStrategy<ClassLoader> {
 
         /**
@@ -354,19 +451,12 @@ public interface ClassLoadingStrategy<T extends ClassLoader> {
         private final ClassInjector classInjector;
 
         /**
-         * The class loader in the supplied class injector defines classes.
-         */
-        private final ClassLoader classLoader;
-
-        /**
          * Creates a new class loading strategy that uses a lookup type.
          *
          * @param classInjector The class injector to use.
-         * @param classLoader   The class loader in the supplied class injector defines classes.
          */
-        protected UsingLookup(ClassInjector classInjector, ClassLoader classLoader) {
+        protected UsingLookup(ClassInjector classInjector) {
             this.classInjector = classInjector;
-            this.classLoader = classLoader;
         }
 
         /**
@@ -376,15 +466,56 @@ public interface ClassLoadingStrategy<T extends ClassLoader> {
          * @return A suitable class loading strategy.
          */
         public static ClassLoadingStrategy<ClassLoader> of(Object lookup) {
-            ClassInjector.UsingLookup classInjector = ClassInjector.UsingLookup.of(lookup);
-            return new UsingLookup(classInjector, classInjector.lookupType().getClassLoader());
+            return new UsingLookup(ClassInjector.UsingLookup.of(lookup));
         }
 
-        @Override
-        public Map<TypeDescription, Class<?>> load(ClassLoader classLoader, Map<TypeDescription, byte[]> types) {
-            if (classLoader != this.classLoader) {
-                throw new IllegalStateException("Cannot define a type in " + classLoader + " with lookup based on " + this.classLoader);
+        /**
+         * Resolves a class loading strategy using a lookup if available on the current JVM. If the current JVM supports method handles
+         * lookups, a lookup instance will be used. Alternatively, unsafe class definition is used, if supported. If neither strategy is
+         * supported, an exception is thrown. A common use case would be calling this method as in
+         * {@code ClassLoadingStrategy.UsingLookup.withFallback(MethodHandles::lookup)}. Note that the invocation of
+         * {@code MethodHandles.lookup()} is call site sensitive such that it cannot be invoked within Byte Buddy what requires this
+         * external invocation.
+         *
+         * @param lookup A resolver for a lookup instance if the current JVM allows for lookup-based class injection.
+         * @return An appropriate class loading strategy for the current JVM that uses a method handles lookup if available.
+         */
+        public static ClassLoadingStrategy<ClassLoader> withFallback(Callable<?> lookup) {
+            return withFallback(lookup, false);
+        }
+
+        /**
+         * Resolves a class loading strategy using a lookup if available on the current JVM. If the current JVM supports method handles
+         * lookups, a lookup instance will be used. Alternatively, unsafe class definition is used, if supported. If neither strategy is
+         * supported, an exception is thrown. A common use case would be calling this method as in
+         * {@code ClassLoadingStrategy.UsingLookup.withFallback(MethodHandles::lookup)}. Note that the invocation of
+         * {@code MethodHandles.lookup()} is call site sensitive such that it cannot be invoked within Byte Buddy what requires this
+         * external invocation.
+         *
+         * @param lookup  A resolver for a lookup instance if the current JVM allows for lookup-based class injection.
+         * @param wrapper {@code true} if a {@link Default#WRAPPER} strategy should be used as a fallback in case that no injection strategy is available.
+         * @return An appropriate class loading strategy for the current JVM that uses a method handles lookup if available.
+         */
+        public static ClassLoadingStrategy<ClassLoader> withFallback(Callable<?> lookup, boolean wrapper) {
+            if (ClassInjector.UsingLookup.isAvailable()) {
+                try {
+                    return of(lookup.call());
+                } catch (Exception exception) {
+                    throw new IllegalStateException(exception);
+                }
+            } else if (ClassInjector.UsingUnsafe.isAvailable()) {
+                return new ClassLoadingStrategy.ForUnsafeInjection();
+            } else if (wrapper) {
+                return Default.WRAPPER;
+            } else {
+                throw new IllegalStateException("Neither lookup or unsafe class injection is available");
             }
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public Map<TypeDescription, Class<?>> load(@MaybeNull ClassLoader classLoader, Map<TypeDescription, byte[]> types) {
             return classInjector.inject(types);
         }
     }
@@ -393,7 +524,7 @@ public interface ClassLoadingStrategy<T extends ClassLoader> {
      * A class loading strategy which allows class injection into the bootstrap class loader if
      * appropriate.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class ForBootstrapInjection implements ClassLoadingStrategy<ClassLoader> {
 
         /**
@@ -417,8 +548,10 @@ public interface ClassLoadingStrategy<T extends ClassLoader> {
             this.folder = folder;
         }
 
-        @Override
-        public Map<TypeDescription, Class<?>> load(ClassLoader classLoader, Map<TypeDescription, byte[]> types) {
+        /**
+         * {@inheritDoc}
+         */
+        public Map<TypeDescription, Class<?>> load(@MaybeNull ClassLoader classLoader, Map<TypeDescription, byte[]> types) {
             ClassInjector classInjector = classLoader == null
                     ? ClassInjector.UsingInstrumentation.of(folder, ClassInjector.UsingInstrumentation.Target.BOOTSTRAP, instrumentation)
                     : new ClassInjector.UsingReflection(classLoader);
@@ -427,14 +560,16 @@ public interface ClassLoadingStrategy<T extends ClassLoader> {
     }
 
     /**
-     * A class loading strategy that injects a class using {@code sun.misc.Unsafe}.
+     * A class loading strategy that injects a class using {@code sun.misc.Unsafe} or {@code jdk.internal.misc.Unsafe}.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class ForUnsafeInjection implements ClassLoadingStrategy<ClassLoader> {
 
         /**
-         * The protection domain to use.
+         * The protection domain to use or {@code null} if no protection domain is set.
          */
+        @MaybeNull
+        @HashCodeAndEqualsPlugin.ValueHandling(HashCodeAndEqualsPlugin.ValueHandling.Sort.REVERSE_NULLABILITY)
         private final ProtectionDomain protectionDomain;
 
         /**
@@ -447,14 +582,54 @@ public interface ClassLoadingStrategy<T extends ClassLoader> {
         /**
          * Creates a new class loading strategy for unsafe injection.
          *
-         * @param protectionDomain The protection domain to use.
+         * @param protectionDomain The protection domain to use or {@code null} if no protection domain is set.
          */
-        public ForUnsafeInjection(ProtectionDomain protectionDomain) {
+        public ForUnsafeInjection(@MaybeNull ProtectionDomain protectionDomain) {
             this.protectionDomain = protectionDomain;
         }
 
-        @Override
-        public Map<TypeDescription, Class<?>> load(ClassLoader classLoader, Map<TypeDescription, byte[]> types) {
+        /**
+         * {@inheritDoc}
+         */
+        public Map<TypeDescription, Class<?>> load(@MaybeNull ClassLoader classLoader, Map<TypeDescription, byte[]> types) {
+            return new ClassInjector.UsingUnsafe(classLoader, protectionDomain).inject(types);
+        }
+    }
+
+    /**
+     * A class loading strategy that injects a class using JNA via the JNI <i>DefineClass</i> method. This strategy can
+     * only be used if JNA is explicitly added as a dependency. Some JVM implementations might not support this strategy.
+     */
+    @HashCodeAndEqualsPlugin.Enhance
+    class ForJnaInjection implements ClassLoadingStrategy<ClassLoader> {
+
+        /**
+         * The protection domain to use or {@code null} if no protection domain is set.
+         */
+        @MaybeNull
+        @HashCodeAndEqualsPlugin.ValueHandling(HashCodeAndEqualsPlugin.ValueHandling.Sort.REVERSE_NULLABILITY)
+        private final ProtectionDomain protectionDomain;
+
+        /**
+         * Creates a new class loading strategy for JNA-based injection with a default protection domain.
+         */
+        public ForJnaInjection() {
+            this(NO_PROTECTION_DOMAIN);
+        }
+
+        /**
+         * Creates a new class loading strategy for JNA-based injection.
+         *
+         * @param protectionDomain The protection domain to use or {@code null} if no protection domain is set.
+         */
+        public ForJnaInjection(@MaybeNull ProtectionDomain protectionDomain) {
+            this.protectionDomain = protectionDomain;
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public Map<TypeDescription, Class<?>> load(@MaybeNull ClassLoader classLoader, Map<TypeDescription, byte[]> types) {
             return new ClassInjector.UsingUnsafe(classLoader, protectionDomain).inject(types);
         }
     }

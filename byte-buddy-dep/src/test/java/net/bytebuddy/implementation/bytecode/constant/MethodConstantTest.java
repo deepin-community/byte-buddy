@@ -3,19 +3,21 @@ package net.bytebuddy.implementation.bytecode.constant;
 import net.bytebuddy.ClassFileVersion;
 import net.bytebuddy.description.field.FieldDescription;
 import net.bytebuddy.description.method.MethodDescription;
+import net.bytebuddy.description.method.MethodList;
 import net.bytebuddy.description.method.ParameterList;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.description.type.TypeList;
 import net.bytebuddy.implementation.Implementation;
+import net.bytebuddy.implementation.auxiliary.AuxiliaryType;
 import net.bytebuddy.implementation.bytecode.StackManipulation;
 import net.bytebuddy.implementation.bytecode.StackSize;
-import net.bytebuddy.test.utility.MockitoRule;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
+import net.bytebuddy.test.utility.AccessControllerRule;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
@@ -33,13 +35,16 @@ public class MethodConstantTest {
     private static final String FOO = "foo", BAR = "bar", QUX = "qux", BAZ = "baz";
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
+
+    @Rule
+    public MethodRule accessControllerRule = new AccessControllerRule();
 
     @Mock
-    private MethodDescription.InDefinedShape methodDescription;
+    private MethodDescription.InDefinedShape methodDescription, auxiliaryConstructor;
 
     @Mock
-    private TypeDescription declaringType, parameterType, fieldType, instrumentedType;
+    private TypeDescription declaringType, parameterType, fieldType, instrumentedType, auxiliaryType;
 
     @Mock
     private ClassFileVersion classFileVersion;
@@ -88,11 +93,17 @@ public class MethodConstantTest {
         when(fieldDescription.asDefined()).thenReturn(fieldDescription);
         when(implementationContext.getClassFileVersion()).thenReturn(classFileVersion);
         when(implementationContext.getInstrumentedType()).thenReturn(instrumentedType);
+        when(auxiliaryConstructor.isConstructor()).thenReturn(true);
+        when(auxiliaryConstructor.getDeclaringType()).thenReturn(auxiliaryType);
+        when(auxiliaryConstructor.getReturnType()).thenReturn(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(void.class));
+        when(auxiliaryConstructor.getDescriptor()).thenReturn(FOO);
+        when(auxiliaryConstructor.getInternalName()).thenReturn(BAR);
+        when(auxiliaryType.getInternalName()).thenReturn(QUX);
     }
 
     @Test
     public void testMethod() throws Exception {
-        StackManipulation.Size size = MethodConstant.forMethod(methodDescription).apply(methodVisitor, implementationContext);
+        StackManipulation.Size size = MethodConstant.of(methodDescription).apply(methodVisitor, implementationContext);
         assertThat(size.getSizeImpact(), is(1));
         assertThat(size.getMaximalSize(), is(6));
         verify(methodVisitor).visitMethodInsn(Opcodes.INVOKEVIRTUAL,
@@ -103,21 +114,63 @@ public class MethodConstantTest {
     }
 
     @Test
+    public void testMethodPublic() throws Exception {
+        when(methodDescription.isPublic()).thenReturn(true);
+        StackManipulation.Size size = MethodConstant.of(methodDescription).apply(methodVisitor, implementationContext);
+        assertThat(size.getSizeImpact(), is(1));
+        assertThat(size.getMaximalSize(), is(6));
+        verify(methodVisitor).visitMethodInsn(Opcodes.INVOKEVIRTUAL,
+                Type.getInternalName(Class.class),
+                "getMethod",
+                "(Ljava/lang/String;[Ljava/lang/Class;)Ljava/lang/reflect/Method;",
+                false);
+    }
+
+    @Test
     public void testMethodCached() throws Exception {
         when(implementationContext.cache(any(StackManipulation.class), any(TypeDescription.class))).thenReturn(fieldDescription);
-        StackManipulation.Size size = MethodConstant.forMethod(methodDescription).cached().apply(methodVisitor, implementationContext);
+        StackManipulation.Size size = MethodConstant.of(methodDescription).cached().apply(methodVisitor, implementationContext);
         assertThat(size.getSizeImpact(), is(1));
         assertThat(size.getMaximalSize(), is(1));
         verify(methodVisitor).visitFieldInsn(Opcodes.GETSTATIC, BAZ, FOO, QUX);
         verifyNoMoreInteractions(methodVisitor);
-        verify(implementationContext).cache(MethodConstant.forMethod(methodDescription), new TypeDescription.ForLoadedType(Method.class));
+        verify(implementationContext).cache(MethodConstant.of(methodDescription), TypeDescription.ForLoadedType.of(Method.class));
+        verifyNoMoreInteractions(implementationContext);
+    }
+
+    @Test
+    @AccessControllerRule.Enforce
+    public void testMethodPrivileged() throws Exception {
+        when(methodDescription.isMethod()).thenReturn(true);
+        when(implementationContext.register(any(AuxiliaryType.class))).thenReturn(auxiliaryType);
+        when(auxiliaryType.getDeclaredMethods()).thenReturn(new MethodList.Explicit<MethodDescription.InDefinedShape>(auxiliaryConstructor));
+        StackManipulation.Size size = MethodConstant.ofPrivileged(methodDescription).apply(methodVisitor, implementationContext);
+        assertThat(size.getSizeImpact(), is(5));
+        assertThat(size.getMaximalSize(), is(8));
+        verify(methodVisitor).visitMethodInsn(Opcodes.INVOKESPECIAL,
+                QUX,
+                BAR,
+                FOO,
+                false);
+    }
+
+    @Test
+    @AccessControllerRule.Enforce
+    public void testMethodPrivilegedCached() throws Exception {
+        when(implementationContext.cache(any(StackManipulation.class), any(TypeDescription.class))).thenReturn(fieldDescription);
+        StackManipulation.Size size = MethodConstant.ofPrivileged(methodDescription).cached().apply(methodVisitor, implementationContext);
+        assertThat(size.getSizeImpact(), is(1));
+        assertThat(size.getMaximalSize(), is(1));
+        verify(methodVisitor).visitFieldInsn(Opcodes.GETSTATIC, BAZ, FOO, QUX);
+        verifyNoMoreInteractions(methodVisitor);
+        verify(implementationContext).cache(MethodConstant.ofPrivileged(methodDescription), TypeDescription.ForLoadedType.of(Method.class));
         verifyNoMoreInteractions(implementationContext);
     }
 
     @Test
     public void testConstructor() throws Exception {
         when(methodDescription.isConstructor()).thenReturn(true);
-        StackManipulation.Size size = MethodConstant.forMethod(methodDescription).apply(methodVisitor, implementationContext);
+        StackManipulation.Size size = MethodConstant.of(methodDescription).apply(methodVisitor, implementationContext);
         assertThat(size.getSizeImpact(), is(1));
         assertThat(size.getMaximalSize(), is(5));
         verify(methodVisitor).visitMethodInsn(Opcodes.INVOKEVIRTUAL,
@@ -128,33 +181,68 @@ public class MethodConstantTest {
     }
 
     @Test
+    public void testConstructorPublic() {
+        when(methodDescription.isConstructor()).thenReturn(true);
+        when(methodDescription.isPublic()).thenReturn(true);
+        StackManipulation.Size size = MethodConstant.of(methodDescription).apply(methodVisitor, implementationContext);
+        assertThat(size.getSizeImpact(), is(1));
+        assertThat(size.getMaximalSize(), is(5));
+        verify(methodVisitor).visitMethodInsn(Opcodes.INVOKEVIRTUAL,
+                Type.getInternalName(Class.class),
+                "getConstructor",
+                "([Ljava/lang/Class;)Ljava/lang/reflect/Constructor;",
+                false);
+    }
+
+    @Test
     public void testConstructorCached() throws Exception {
         when(methodDescription.isConstructor()).thenReturn(true);
         when(implementationContext.cache(any(StackManipulation.class), any(TypeDescription.class))).thenReturn(fieldDescription);
-        StackManipulation.Size size = MethodConstant.forMethod(methodDescription).cached().apply(methodVisitor, implementationContext);
+        StackManipulation.Size size = MethodConstant.of(methodDescription).cached().apply(methodVisitor, implementationContext);
         assertThat(size.getSizeImpact(), is(1));
         assertThat(size.getMaximalSize(), is(1));
         verify(methodVisitor).visitFieldInsn(Opcodes.GETSTATIC, BAZ, FOO, QUX);
         verifyNoMoreInteractions(methodVisitor);
-        verify(implementationContext).cache(MethodConstant.forMethod(methodDescription), new TypeDescription.ForLoadedType(Constructor.class));
+        verify(implementationContext).cache(MethodConstant.of(methodDescription), TypeDescription.ForLoadedType.of(Constructor.class));
+        verifyNoMoreInteractions(implementationContext);
+    }
+
+    @Test
+    @AccessControllerRule.Enforce
+    public void testConstructorPrivileged() throws Exception {
+        when(methodDescription.isConstructor()).thenReturn(true);
+        when(implementationContext.register(any(AuxiliaryType.class))).thenReturn(auxiliaryType);
+        when(auxiliaryType.getDeclaredMethods()).thenReturn(new MethodList.Explicit<MethodDescription.InDefinedShape>(auxiliaryConstructor));
+        StackManipulation.Size size = MethodConstant.ofPrivileged(methodDescription).apply(methodVisitor, implementationContext);
+        assertThat(size.getSizeImpact(), is(4));
+        assertThat(size.getMaximalSize(), is(7));
+        verify(methodVisitor).visitMethodInsn(Opcodes.INVOKESPECIAL,
+                QUX,
+                BAR,
+                FOO,
+                false);
+    }
+
+    @Test
+    @AccessControllerRule.Enforce
+    public void testConstructorPrivilegedCached() throws Exception {
+        when(methodDescription.isConstructor()).thenReturn(true);
+        when(implementationContext.cache(any(StackManipulation.class), any(TypeDescription.class))).thenReturn(fieldDescription);
+        StackManipulation.Size size = MethodConstant.ofPrivileged(methodDescription).cached().apply(methodVisitor, implementationContext);
+        assertThat(size.getSizeImpact(), is(1));
+        assertThat(size.getMaximalSize(), is(1));
+        verify(methodVisitor).visitFieldInsn(Opcodes.GETSTATIC, BAZ, FOO, QUX);
+        verifyNoMoreInteractions(methodVisitor);
+        verify(implementationContext).cache(MethodConstant.ofPrivileged(methodDescription), TypeDescription.ForLoadedType.of(Constructor.class));
         verifyNoMoreInteractions(implementationContext);
     }
 
     @Test(expected = IllegalStateException.class)
     public void testTypeInitializer() throws Exception {
         when(methodDescription.isTypeInitializer()).thenReturn(true);
-        MethodConstant.CanCache methodConstant = MethodConstant.forMethod(methodDescription);
+        MethodConstant.CanCache methodConstant = MethodConstant.of(methodDescription);
         assertThat(methodConstant.isValid(), is(false));
         assertThat(methodConstant.cached().isValid(), is(false));
         methodConstant.apply(methodVisitor, implementationContext);
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(MethodConstant.ForMethod.class).apply();
-        ObjectPropertyAssertion.of(MethodConstant.ForConstructor.class).apply();
-        ObjectPropertyAssertion.of(MethodConstant.CachedMethod.class).apply();
-        ObjectPropertyAssertion.of(MethodConstant.CachedConstructor.class).apply();
-        ObjectPropertyAssertion.of(MethodConstant.CanCacheIllegal.class).apply();
     }
 }

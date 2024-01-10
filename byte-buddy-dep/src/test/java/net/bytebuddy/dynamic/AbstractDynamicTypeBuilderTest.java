@@ -1,5 +1,7 @@
 package net.bytebuddy.dynamic;
 
+import net.bytebuddy.ByteBuddy;
+import net.bytebuddy.ClassFileVersion;
 import net.bytebuddy.asm.AsmVisitorWrapper;
 import net.bytebuddy.description.annotation.AnnotationDescription;
 import net.bytebuddy.description.annotation.AnnotationValue;
@@ -14,6 +16,7 @@ import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.description.type.TypeVariableToken;
 import net.bytebuddy.dynamic.loading.ByteArrayClassLoader;
 import net.bytebuddy.dynamic.loading.ClassLoadingStrategy;
+import net.bytebuddy.dynamic.loading.InjectionClassLoader;
 import net.bytebuddy.dynamic.scaffold.InstrumentedType;
 import net.bytebuddy.implementation.*;
 import net.bytebuddy.implementation.bind.annotation.SuperCall;
@@ -25,17 +28,16 @@ import net.bytebuddy.implementation.bytecode.member.FieldAccess;
 import net.bytebuddy.implementation.bytecode.member.MethodReturn;
 import net.bytebuddy.pool.TypePool;
 import net.bytebuddy.test.utility.CallTraceable;
-import net.bytebuddy.test.utility.ClassFileExtraction;
 import net.bytebuddy.test.utility.JavaVersionRule;
-import net.bytebuddy.test.utility.MockitoRule;
+import net.bytebuddy.utility.OpenedClassReader;
+import net.bytebuddy.utility.visitor.ContextClassVisitor;
 import org.hamcrest.CoreMatchers;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
-import org.mockito.Mockito;
+import org.junit.rules.MethodRule;
 import org.mockito.invocation.InvocationOnMock;
+import org.mockito.junit.MockitoJUnit;
 import org.mockito.stubbing.Answer;
 import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.ClassWriter;
@@ -46,11 +48,10 @@ import java.lang.annotation.Annotation;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.reflect.*;
-import java.net.URL;
-import java.net.URLClassLoader;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Callable;
 
 import static net.bytebuddy.matcher.ElementMatchers.isTypeInitializer;
@@ -64,7 +65,7 @@ public abstract class AbstractDynamicTypeBuilderTest {
 
     private static final String FOO = "foo", BAR = "bar", QUX = "qux", TO_STRING = "toString";
 
-    private static final String TYPE_VARIABLE_NAME = "net.bytebuddy.test.precompiled.TypeAnnotation", VALUE = "value";
+    private static final String TYPE_VARIABLE_NAME = "net.bytebuddy.test.precompiled.v8.TypeAnnotation", VALUE = "value";
 
     private static final int MODIFIERS = Opcodes.ACC_PUBLIC;
 
@@ -97,13 +98,15 @@ public abstract class AbstractDynamicTypeBuilderTest {
     private static final String STRING_FIELD = "stringField";
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     private Type list, fooVariable;
 
     protected abstract DynamicType.Builder<?> createPlain();
 
     protected abstract DynamicType.Builder<?> createPlainWithoutValidation();
+
+    protected abstract DynamicType.Builder<?> createPlainEmpty();
 
     @Before
     public void setUp() throws Exception {
@@ -118,7 +121,7 @@ public abstract class AbstractDynamicTypeBuilderTest {
                 .throwing(Exception.class)
                 .intercept(new Implementation.Simple(new TextConstant(FOO), MethodReturn.REFERENCE))
                 .make()
-                .load(new URLClassLoader(new URL[0], null), ClassLoadingStrategy.Default.WRAPPER)
+                .load(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassLoadingStrategy.Default.WRAPPER)
                 .getLoaded();
         Method method = type.getDeclaredMethod(FOO);
         assertThat(method.getReturnType(), CoreMatchers.<Class<?>>is(Object.class));
@@ -135,7 +138,7 @@ public abstract class AbstractDynamicTypeBuilderTest {
                 .throwing(Exception.class)
                 .withoutCode()
                 .make()
-                .load(new URLClassLoader(new URL[0], null), ClassLoadingStrategy.Default.WRAPPER)
+                .load(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassLoadingStrategy.Default.WRAPPER)
                 .getLoaded();
         Method method = type.getDeclaredMethod(FOO);
         assertThat(method.getReturnType(), CoreMatchers.<Class<?>>is(Object.class));
@@ -150,7 +153,7 @@ public abstract class AbstractDynamicTypeBuilderTest {
                 .throwing(Exception.class)
                 .intercept(MethodCall.invoke(Object.class.getDeclaredConstructor()))
                 .make()
-                .load(new URLClassLoader(new URL[0], null), ClassLoadingStrategy.Default.WRAPPER)
+                .load(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassLoadingStrategy.Default.WRAPPER)
                 .getLoaded();
         Constructor<?> constructor = type.getDeclaredConstructor(Void.class);
         assertThat(constructor.getExceptionTypes(), is(new Class<?>[]{Exception.class}));
@@ -163,7 +166,7 @@ public abstract class AbstractDynamicTypeBuilderTest {
         Class<?> type = createPlain()
                 .defineField(FOO, Void.class, Visibility.PUBLIC)
                 .make()
-                .load(new URLClassLoader(new URL[0], null), ClassLoadingStrategy.Default.WRAPPER)
+                .load(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassLoadingStrategy.Default.WRAPPER)
                 .getLoaded();
         Field field = type.getDeclaredField(FOO);
         assertThat(field.getType(), CoreMatchers.<Class<?>>is(Void.class));
@@ -183,7 +186,7 @@ public abstract class AbstractDynamicTypeBuilderTest {
                 .defineField(DOUBLE_FIELD, double.class, Visibility.PUBLIC, Ownership.STATIC).value(DOUBLE_VALUE)
                 .defineField(STRING_FIELD, String.class, Visibility.PUBLIC, Ownership.STATIC).value(FOO)
                 .make()
-                .load(new URLClassLoader(new URL[0], null), ClassLoadingStrategy.Default.WRAPPER)
+                .load(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassLoadingStrategy.Default.WRAPPER)
                 .getLoaded();
         assertThat(type.getDeclaredField(BOOLEAN_FIELD).get(null), is((Object) BOOLEAN_VALUE));
         assertThat(type.getDeclaredField(BYTE_FIELD).get(null), is((Object) (byte) INTEGER_VALUE));
@@ -202,7 +205,7 @@ public abstract class AbstractDynamicTypeBuilderTest {
                 .method(named(TO_STRING)).intercept(new Implementation.Simple(new TextConstant(FOO), MethodReturn.REFERENCE))
                 .method(named(TO_STRING)).intercept(new Implementation.Simple(new TextConstant(BAR), MethodReturn.REFERENCE))
                 .make()
-                .load(new URLClassLoader(new URL[0], null), ClassLoadingStrategy.Default.WRAPPER)
+                .load(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassLoadingStrategy.Default.WRAPPER)
                 .getLoaded()
                 .getDeclaredConstructor()
                 .newInstance()
@@ -211,7 +214,7 @@ public abstract class AbstractDynamicTypeBuilderTest {
 
     @Test
     public void testTypeInitializer() throws Exception {
-        ClassLoader classLoader = new ByteArrayClassLoader(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassFileExtraction.of(Bar.class));
+        ClassLoader classLoader = new ByteArrayClassLoader(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassFileLocator.ForClassLoader.readToNames(Bar.class));
         Class<?> type = createPlain()
                 .invokable(isTypeInitializer()).intercept(MethodCall.invoke(Bar.class.getDeclaredMethod("invoke")))
                 .make()
@@ -228,7 +231,7 @@ public abstract class AbstractDynamicTypeBuilderTest {
                 .defineMethod(FOO, Object.class, Visibility.PUBLIC)
                 .intercept(new Implementation.Simple(new TextConstant(FOO), MethodReturn.REFERENCE))
                 .make()
-                .load(new URLClassLoader(new URL[0], null), ClassLoadingStrategy.Default.WRAPPER)
+                .load(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassLoadingStrategy.Default.WRAPPER)
                 .getLoaded();
         Method method = type.getDeclaredMethod(FOO);
         assertThat(method.invoke(type.getDeclaredConstructor().newInstance()), is((Object) FOO));
@@ -241,7 +244,7 @@ public abstract class AbstractDynamicTypeBuilderTest {
                 .intercept(new Implementation.Simple(new TextConstant(FOO), MethodReturn.REFERENCE))
                 .transform(Transformer.ForMethod.withModifiers(MethodManifestation.FINAL))
                 .make()
-                .load(new URLClassLoader(new URL[0], null), ClassLoadingStrategy.Default.WRAPPER)
+                .load(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassLoadingStrategy.Default.WRAPPER)
                 .getLoaded();
         assertThat(type.getDeclaredConstructor().newInstance().toString(), is(FOO));
         assertThat(type.getDeclaredMethod(TO_STRING).getModifiers(), is(Opcodes.ACC_FINAL | Opcodes.ACC_PUBLIC));
@@ -254,7 +257,7 @@ public abstract class AbstractDynamicTypeBuilderTest {
                 .field(named(FOO))
                 .transform(Transformer.ForField.withModifiers(Visibility.PUBLIC))
                 .make()
-                .load(new URLClassLoader(new URL[0], null), ClassLoadingStrategy.Default.WRAPPER)
+                .load(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassLoadingStrategy.Default.WRAPPER)
                 .getLoaded();
         assertThat(type.getDeclaredField(FOO).getModifiers(), is(Opcodes.ACC_PUBLIC));
     }
@@ -266,7 +269,7 @@ public abstract class AbstractDynamicTypeBuilderTest {
                 .method(named(TO_STRING))
                 .intercept(new Implementation.Simple(new TextConstant(FOO), MethodReturn.REFERENCE))
                 .make()
-                .load(new URLClassLoader(new URL[0], null), ClassLoadingStrategy.Default.WRAPPER)
+                .load(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassLoadingStrategy.Default.WRAPPER)
                 .getLoaded();
         assertThat(type.getDeclaredConstructor().newInstance().toString(), CoreMatchers.not(FOO));
     }
@@ -278,14 +281,14 @@ public abstract class AbstractDynamicTypeBuilderTest {
                 .defineMethod(FOO, String.class, Visibility.PUBLIC)
                 .intercept(new Implementation.Simple(new TextConstant(FOO), MethodReturn.REFERENCE))
                 .make()
-                .load(new URLClassLoader(new URL[0], null), ClassLoadingStrategy.Default.WRAPPER)
+                .load(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassLoadingStrategy.Default.WRAPPER)
                 .getLoaded();
         assertThat(type.getDeclaredMethod(FOO).invoke(type.getDeclaredConstructor().newInstance()), is((Object) FOO));
     }
 
     @Test
     public void testPreparedField() throws Exception {
-        ClassLoader classLoader = new ByteArrayClassLoader(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassFileExtraction.of(SampleAnnotation.class));
+        ClassLoader classLoader = new ByteArrayClassLoader(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassFileLocator.ForClassLoader.readToNames(SampleAnnotation.class));
         Class<?> type = createPlain()
                 .defineMethod(BAR, String.class, Visibility.PUBLIC)
                 .intercept(new PreparedField())
@@ -305,7 +308,7 @@ public abstract class AbstractDynamicTypeBuilderTest {
 
     @Test
     public void testPreparedMethod() throws Exception {
-        ClassLoader classLoader = new ByteArrayClassLoader(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassFileExtraction.of(SampleAnnotation.class));
+        ClassLoader classLoader = new ByteArrayClassLoader(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassFileLocator.ForClassLoader.readToNames(SampleAnnotation.class));
         Class<?> type = createPlain()
                 .defineMethod(BAR, String.class, Visibility.PUBLIC)
                 .intercept(new PreparedMethod())
@@ -342,9 +345,8 @@ public abstract class AbstractDynamicTypeBuilderTest {
                 any(MethodList.class),
                 anyInt(),
                 anyInt())).then(new Answer<ClassVisitor>() {
-            @Override
             public ClassVisitor answer(InvocationOnMock invocationOnMock) throws Throwable {
-                return new ClassVisitor(Opcodes.ASM6, (ClassVisitor) invocationOnMock.getArguments()[1]) {
+                return new ClassVisitor(OpenedClassReader.ASM_API, (ClassVisitor) invocationOnMock.getArguments()[1]) {
                     @Override
                     public void visitEnd() {
                         MethodVisitor mv = visitMethod(Opcodes.ACC_PUBLIC, FOO, "()Ljava/lang/String;", null, null);
@@ -382,7 +384,6 @@ public abstract class AbstractDynamicTypeBuilderTest {
         assertThat(createPlain()
                 .defineField(FOO, String.class, Ownership.STATIC, Visibility.PUBLIC)
                 .initializer(new ByteCodeAppender() {
-                    @Override
                     public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext, MethodDescription instrumentedMethod) {
                         return new Size(new StackManipulation.Compound(
                                 new TextConstant(FOO),
@@ -416,7 +417,7 @@ public abstract class AbstractDynamicTypeBuilderTest {
                 .typeVariable(FOO)
                 .typeVariable(BAR, String.class)
                 .make()
-                .load(new URLClassLoader(new URL[0], null), ClassLoadingStrategy.Default.WRAPPER)
+                .load(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassLoadingStrategy.Default.WRAPPER)
                 .getLoaded();
         assertThat(type.getTypeParameters().length, is(2));
         assertThat(type.getTypeParameters()[0].getName(), is(FOO));
@@ -433,13 +434,12 @@ public abstract class AbstractDynamicTypeBuilderTest {
                 .typeVariable(FOO)
                 .typeVariable(BAR, String.class)
                 .transform(named(BAR), new Transformer<TypeVariableToken>() {
-                    @Override
                     public TypeVariableToken transform(TypeDescription instrumentedType, TypeVariableToken target) {
-                        return new TypeVariableToken(target.getSymbol(), Collections.singletonList(new TypeDescription.Generic.OfNonGenericType.ForLoadedType(Integer.class)));
+                        return new TypeVariableToken(target.getSymbol(), Collections.singletonList(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Integer.class)));
                     }
                 })
                 .make()
-                .load(new URLClassLoader(new URL[0], null), ClassLoadingStrategy.Default.WRAPPER)
+                .load(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassLoadingStrategy.Default.WRAPPER)
                 .getLoaded();
         assertThat(type.getTypeParameters().length, is(2));
         assertThat(type.getTypeParameters()[0].getName(), is(FOO));
@@ -455,7 +455,7 @@ public abstract class AbstractDynamicTypeBuilderTest {
         Class<?> type = createPlain()
                 .defineField(QUX, list)
                 .make()
-                .load(new URLClassLoader(new URL[0], null), ClassLoadingStrategy.Default.WRAPPER)
+                .load(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassLoadingStrategy.Default.WRAPPER)
                 .getLoaded();
         assertThat(type.getDeclaredField(QUX).getGenericType(), is(list));
     }
@@ -469,7 +469,7 @@ public abstract class AbstractDynamicTypeBuilderTest {
                 .typeVariable(FOO, Exception.class)
                 .intercept(StubMethod.INSTANCE)
                 .make()
-                .load(new URLClassLoader(new URL[0], null), ClassLoadingStrategy.Default.WRAPPER)
+                .load(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassLoadingStrategy.Default.WRAPPER)
                 .getLoaded();
         assertThat(type.getDeclaredMethod(QUX, List.class).getTypeParameters().length, is(1));
         assertThat(type.getDeclaredMethod(QUX, List.class).getTypeParameters()[0].getName(), is(FOO));
@@ -487,7 +487,7 @@ public abstract class AbstractDynamicTypeBuilderTest {
                 .defineField(FOO, String.class, Visibility.PUBLIC)
                 .withHashCodeEquals()
                 .make()
-                .load(new URLClassLoader(new URL[0], null), ClassLoadingStrategy.Default.WRAPPER)
+                .load(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassLoadingStrategy.Default.WRAPPER)
                 .getLoaded();
         Object left = type.getDeclaredConstructor().newInstance(), right = type.getDeclaredConstructor().newInstance();
         left.getClass().getDeclaredField(FOO).set(left, FOO);
@@ -502,7 +502,7 @@ public abstract class AbstractDynamicTypeBuilderTest {
                 .defineField(FOO, String.class, Visibility.PUBLIC)
                 .withToString()
                 .make()
-                .load(new URLClassLoader(new URL[0], null), ClassLoadingStrategy.Default.WRAPPER)
+                .load(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassLoadingStrategy.Default.WRAPPER)
                 .getLoaded();
         Object instance = type.getDeclaredConstructor().newInstance();
         instance.getClass().getDeclaredField(FOO).set(instance, BAR);
@@ -519,7 +519,7 @@ public abstract class AbstractDynamicTypeBuilderTest {
                 .typeVariable(FOO, Exception.class)
                 .intercept(StubMethod.INSTANCE)
                 .make()
-                .load(new URLClassLoader(new URL[0], null), ClassLoadingStrategy.Default.WRAPPER)
+                .load(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassLoadingStrategy.Default.WRAPPER)
                 .getLoaded();
         assertThat(TypeDefinition.Sort.describe(type).getDeclaredMethods().filter(named(QUX)).getOnly().getParameters().getOnly().getName(), is(BAR));
         assertThat(TypeDefinition.Sort.describe(type).getDeclaredMethods().filter(named(QUX)).getOnly().getParameters().getOnly().getModifiers(),
@@ -539,7 +539,7 @@ public abstract class AbstractDynamicTypeBuilderTest {
     @SuppressWarnings("unchecked")
     public void testTypeVariableOnTypeAnnotationClassBound() throws Exception {
         Class<? extends Annotation> typeAnnotationType = (Class<? extends Annotation>) Class.forName(TYPE_VARIABLE_NAME);
-        MethodDescription.InDefinedShape value = new TypeDescription.ForLoadedType(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
+        MethodDescription.InDefinedShape value = TypeDescription.ForLoadedType.of(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
         Class<?> type = createPlain()
                 .typeVariable(FOO, TypeDescription.Generic.Builder.rawType(Object.class)
                         .build(AnnotationDescription.Builder.ofType(typeAnnotationType).define(VALUE, INTEGER_VALUE * 2).build()))
@@ -550,12 +550,12 @@ public abstract class AbstractDynamicTypeBuilderTest {
         assertThat(type.getTypeParameters().length, is(1));
         assertThat(type.getTypeParameters()[0].getBounds().length, is(1));
         assertThat(type.getTypeParameters()[0].getBounds()[0], is((Object) Object.class));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveTypeVariable(type.getTypeParameters()[0]).asList().size(), is(1));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveTypeVariable(type.getTypeParameters()[0]).asList().ofType(typeAnnotationType)
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedTypeVariable(type.getTypeParameters()[0]).asList().size(), is(1));
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedTypeVariable(type.getTypeParameters()[0]).asList().ofType(typeAnnotationType)
                 .getValue(value).resolve(Integer.class), is(INTEGER_VALUE));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveTypeVariable(type.getTypeParameters()[0]).ofTypeVariableBoundType(0)
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedTypeVariable(type.getTypeParameters()[0]).ofTypeVariableBoundType(0)
                 .asList().size(), is(1));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveTypeVariable(type.getTypeParameters()[0]).ofTypeVariableBoundType(0)
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedTypeVariable(type.getTypeParameters()[0]).ofTypeVariableBoundType(0)
                 .asList().ofType(typeAnnotationType).getValue(value).resolve(Integer.class), is(INTEGER_VALUE * 2));
     }
 
@@ -564,7 +564,7 @@ public abstract class AbstractDynamicTypeBuilderTest {
     @SuppressWarnings("unchecked")
     public void testTypeVariableOnTypeAnnotationInterfaceBound() throws Exception {
         Class<? extends Annotation> typeAnnotationType = (Class<? extends Annotation>) Class.forName(TYPE_VARIABLE_NAME);
-        MethodDescription.InDefinedShape value = new TypeDescription.ForLoadedType(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
+        MethodDescription.InDefinedShape value = TypeDescription.ForLoadedType.of(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
         Class<?> type = createPlain()
                 .typeVariable(FOO, TypeDescription.Generic.Builder.rawType(Runnable.class)
                         .build(AnnotationDescription.Builder.ofType(typeAnnotationType).define(VALUE, INTEGER_VALUE * 2).build()))
@@ -575,12 +575,12 @@ public abstract class AbstractDynamicTypeBuilderTest {
         assertThat(type.getTypeParameters().length, is(1));
         assertThat(type.getTypeParameters()[0].getBounds().length, is(1));
         assertThat(type.getTypeParameters()[0].getBounds()[0], is((Object) Runnable.class));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveTypeVariable(type.getTypeParameters()[0]).asList().size(), is(1));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveTypeVariable(type.getTypeParameters()[0]).asList().ofType(typeAnnotationType)
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedTypeVariable(type.getTypeParameters()[0]).asList().size(), is(1));
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedTypeVariable(type.getTypeParameters()[0]).asList().ofType(typeAnnotationType)
                 .getValue(value).resolve(Integer.class), is(INTEGER_VALUE));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveTypeVariable(type.getTypeParameters()[0]).ofTypeVariableBoundType(0)
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedTypeVariable(type.getTypeParameters()[0]).ofTypeVariableBoundType(0)
                 .asList().size(), is(1));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveTypeVariable(type.getTypeParameters()[0]).ofTypeVariableBoundType(0)
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedTypeVariable(type.getTypeParameters()[0]).ofTypeVariableBoundType(0)
                 .asList().ofType(typeAnnotationType).getValue(value).resolve(Integer.class), is(INTEGER_VALUE * 2));
     }
 
@@ -589,7 +589,7 @@ public abstract class AbstractDynamicTypeBuilderTest {
     @SuppressWarnings("unchecked")
     public void testTypeVariableOnTypeAnnotationTypeVariableBound() throws Exception {
         Class<? extends Annotation> typeAnnotationType = (Class<? extends Annotation>) Class.forName(TYPE_VARIABLE_NAME);
-        MethodDescription.InDefinedShape value = new TypeDescription.ForLoadedType(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
+        MethodDescription.InDefinedShape value = TypeDescription.ForLoadedType.of(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
         Class<?> type = createPlain()
                 .typeVariable(FOO)
                 .annotateTypeVariable(AnnotationDescription.Builder.ofType(typeAnnotationType).define(VALUE, INTEGER_VALUE).build())
@@ -604,15 +604,15 @@ public abstract class AbstractDynamicTypeBuilderTest {
         assertThat(type.getTypeParameters()[0].getBounds()[0], is((Object) Object.class));
         assertThat(type.getTypeParameters()[1].getBounds().length, is(1));
         assertThat(type.getTypeParameters()[1].getBounds()[0], is((Object) Object.class));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveTypeVariable(type.getTypeParameters()[0]).asList().size(), is(1));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveTypeVariable(type.getTypeParameters()[0]).asList().ofType(typeAnnotationType)
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedTypeVariable(type.getTypeParameters()[0]).asList().size(), is(1));
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedTypeVariable(type.getTypeParameters()[0]).asList().ofType(typeAnnotationType)
                 .getValue(value).resolve(Integer.class), is(INTEGER_VALUE));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveTypeVariable(type.getTypeParameters()[1]).asList().size(), is(1));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveTypeVariable(type.getTypeParameters()[1]).asList().ofType(typeAnnotationType)
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedTypeVariable(type.getTypeParameters()[1]).asList().size(), is(1));
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedTypeVariable(type.getTypeParameters()[1]).asList().ofType(typeAnnotationType)
                 .getValue(value).resolve(Integer.class), is(INTEGER_VALUE * 2));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveTypeVariable(type.getTypeParameters()[1]).ofTypeVariableBoundType(0)
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedTypeVariable(type.getTypeParameters()[1]).ofTypeVariableBoundType(0)
                 .asList().size(), is(1));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveTypeVariable(type.getTypeParameters()[1]).ofTypeVariableBoundType(0)
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedTypeVariable(type.getTypeParameters()[1]).ofTypeVariableBoundType(0)
                 .asList().ofType(typeAnnotationType).getValue(value).resolve(Integer.class), is(INTEGER_VALUE * 3));
     }
 
@@ -621,7 +621,7 @@ public abstract class AbstractDynamicTypeBuilderTest {
     @SuppressWarnings("unchecked")
     public void testTypeAnnotationOnInterfaceType() throws Exception {
         Class<? extends Annotation> typeAnnotationType = (Class<? extends Annotation>) Class.forName(TYPE_VARIABLE_NAME);
-        MethodDescription.InDefinedShape value = new TypeDescription.ForLoadedType(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
+        MethodDescription.InDefinedShape value = TypeDescription.ForLoadedType.of(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
         Class<?> type = createPlain()
                 .merge(TypeManifestation.ABSTRACT)
                 .implement(TypeDescription.Generic.Builder.rawType(Runnable.class)
@@ -631,8 +631,8 @@ public abstract class AbstractDynamicTypeBuilderTest {
                 .getLoaded();
         assertThat(type.getInterfaces().length, is(1));
         assertThat(type.getInterfaces()[0], is((Object) Runnable.class));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveInterfaceType(type, 0).asList().size(), is(1));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveInterfaceType(type, 0).asList().ofType(typeAnnotationType)
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedInterface(type, 0).asList().size(), is(1));
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedInterface(type, 0).asList().ofType(typeAnnotationType)
                 .getValue(value).resolve(Integer.class), is(INTEGER_VALUE));
     }
 
@@ -641,7 +641,7 @@ public abstract class AbstractDynamicTypeBuilderTest {
     @SuppressWarnings("unchecked")
     public void testAnnotationTypeOnFieldType() throws Exception {
         Class<? extends Annotation> typeAnnotationType = (Class<? extends Annotation>) Class.forName(TYPE_VARIABLE_NAME);
-        MethodDescription.InDefinedShape value = new TypeDescription.ForLoadedType(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
+        MethodDescription.InDefinedShape value = TypeDescription.ForLoadedType.of(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
         Field field = createPlain()
                 .defineField(FOO, TypeDescription.Generic.Builder.rawType(Object.class)
                         .build(AnnotationDescription.Builder.ofType(typeAnnotationType).define(VALUE, INTEGER_VALUE).build()))
@@ -650,8 +650,8 @@ public abstract class AbstractDynamicTypeBuilderTest {
                 .getLoaded()
                 .getDeclaredField(FOO);
         assertThat(field.getType(), is((Object) Object.class));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveFieldType(field).asList().size(), is(1));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveFieldType(field).asList().ofType(typeAnnotationType)
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedField(field).asList().size(), is(1));
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedField(field).asList().ofType(typeAnnotationType)
                 .getValue(value).resolve(Integer.class), is(INTEGER_VALUE));
     }
 
@@ -660,7 +660,7 @@ public abstract class AbstractDynamicTypeBuilderTest {
     @SuppressWarnings("unchecked")
     public void testTypeVariableOnMethodAnnotationClassBound() throws Exception {
         Class<? extends Annotation> typeAnnotationType = (Class<? extends Annotation>) Class.forName(TYPE_VARIABLE_NAME);
-        MethodDescription.InDefinedShape value = new TypeDescription.ForLoadedType(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
+        MethodDescription.InDefinedShape value = TypeDescription.ForLoadedType.of(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
         Method method = createPlain()
                 .merge(TypeManifestation.ABSTRACT)
                 .defineMethod(FOO, void.class)
@@ -675,12 +675,12 @@ public abstract class AbstractDynamicTypeBuilderTest {
         assertThat(method.getTypeParameters().length, is(1));
         assertThat(method.getTypeParameters()[0].getBounds().length, is(1));
         assertThat(method.getTypeParameters()[0].getBounds()[0], is((Object) Object.class));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveTypeVariable(method.getTypeParameters()[0]).asList().size(), is(1));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveTypeVariable(method.getTypeParameters()[0]).asList().ofType(typeAnnotationType)
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedTypeVariable(method.getTypeParameters()[0]).asList().size(), is(1));
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedTypeVariable(method.getTypeParameters()[0]).asList().ofType(typeAnnotationType)
                 .getValue(value).resolve(Integer.class), is(INTEGER_VALUE));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveTypeVariable(method.getTypeParameters()[0]).ofTypeVariableBoundType(0)
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedTypeVariable(method.getTypeParameters()[0]).ofTypeVariableBoundType(0)
                 .asList().size(), is(1));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveTypeVariable(method.getTypeParameters()[0]).ofTypeVariableBoundType(0)
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedTypeVariable(method.getTypeParameters()[0]).ofTypeVariableBoundType(0)
                 .asList().ofType(typeAnnotationType).getValue(value).resolve(Integer.class), is(INTEGER_VALUE * 2));
     }
 
@@ -689,7 +689,7 @@ public abstract class AbstractDynamicTypeBuilderTest {
     @SuppressWarnings("unchecked")
     public void testTypeVariableOnMethodAnnotationInterfaceBound() throws Exception {
         Class<? extends Annotation> typeAnnotationType = (Class<? extends Annotation>) Class.forName(TYPE_VARIABLE_NAME);
-        MethodDescription.InDefinedShape value = new TypeDescription.ForLoadedType(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
+        MethodDescription.InDefinedShape value = TypeDescription.ForLoadedType.of(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
         Method method = createPlain()
                 .merge(TypeManifestation.ABSTRACT)
                 .defineMethod(FOO, void.class)
@@ -704,12 +704,12 @@ public abstract class AbstractDynamicTypeBuilderTest {
         assertThat(method.getTypeParameters().length, is(1));
         assertThat(method.getTypeParameters()[0].getBounds().length, is(1));
         assertThat(method.getTypeParameters()[0].getBounds()[0], is((Object) Runnable.class));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveTypeVariable(method.getTypeParameters()[0]).asList().size(), is(1));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveTypeVariable(method.getTypeParameters()[0]).asList().ofType(typeAnnotationType)
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedTypeVariable(method.getTypeParameters()[0]).asList().size(), is(1));
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedTypeVariable(method.getTypeParameters()[0]).asList().ofType(typeAnnotationType)
                 .getValue(value).resolve(Integer.class), is(INTEGER_VALUE));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveTypeVariable(method.getTypeParameters()[0]).ofTypeVariableBoundType(0)
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedTypeVariable(method.getTypeParameters()[0]).ofTypeVariableBoundType(0)
                 .asList().size(), is(1));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveTypeVariable(method.getTypeParameters()[0]).ofTypeVariableBoundType(0)
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedTypeVariable(method.getTypeParameters()[0]).ofTypeVariableBoundType(0)
                 .asList().ofType(typeAnnotationType).getValue(value).resolve(Integer.class), is(INTEGER_VALUE * 2));
     }
 
@@ -718,7 +718,7 @@ public abstract class AbstractDynamicTypeBuilderTest {
     @SuppressWarnings("unchecked")
     public void testTypeVariableOnMethodAnnotationTypeVariableBound() throws Exception {
         Class<? extends Annotation> typeAnnotationType = (Class<? extends Annotation>) Class.forName(TYPE_VARIABLE_NAME);
-        MethodDescription.InDefinedShape value = new TypeDescription.ForLoadedType(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
+        MethodDescription.InDefinedShape value = TypeDescription.ForLoadedType.of(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
         Method method = createPlain()
                 .merge(TypeManifestation.ABSTRACT)
                 .defineMethod(FOO, void.class)
@@ -736,15 +736,15 @@ public abstract class AbstractDynamicTypeBuilderTest {
         assertThat(method.getTypeParameters()[0].getBounds()[0], is((Object) Object.class));
         assertThat(method.getTypeParameters()[1].getBounds().length, is(1));
         assertThat(method.getTypeParameters()[1].getBounds()[0], is((Object) Object.class));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveTypeVariable(method.getTypeParameters()[0]).asList().size(), is(1));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveTypeVariable(method.getTypeParameters()[0]).asList().ofType(typeAnnotationType)
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedTypeVariable(method.getTypeParameters()[0]).asList().size(), is(1));
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedTypeVariable(method.getTypeParameters()[0]).asList().ofType(typeAnnotationType)
                 .getValue(value).resolve(Integer.class), is(INTEGER_VALUE));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveTypeVariable(method.getTypeParameters()[1]).asList().size(), is(1));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveTypeVariable(method.getTypeParameters()[1]).asList().ofType(typeAnnotationType)
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedTypeVariable(method.getTypeParameters()[1]).asList().size(), is(1));
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedTypeVariable(method.getTypeParameters()[1]).asList().ofType(typeAnnotationType)
                 .getValue(value).resolve(Integer.class), is(INTEGER_VALUE * 2));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveTypeVariable(method.getTypeParameters()[1]).ofTypeVariableBoundType(0)
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedTypeVariable(method.getTypeParameters()[1]).ofTypeVariableBoundType(0)
                 .asList().size(), is(1));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveTypeVariable(method.getTypeParameters()[1]).ofTypeVariableBoundType(0)
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedTypeVariable(method.getTypeParameters()[1]).ofTypeVariableBoundType(0)
                 .asList().ofType(typeAnnotationType).getValue(value).resolve(Integer.class), is(INTEGER_VALUE * 3));
     }
 
@@ -753,7 +753,7 @@ public abstract class AbstractDynamicTypeBuilderTest {
     @SuppressWarnings("unchecked")
     public void testAnnotationTypeOnMethodReturnType() throws Exception {
         Class<? extends Annotation> typeAnnotationType = (Class<? extends Annotation>) Class.forName(TYPE_VARIABLE_NAME);
-        MethodDescription.InDefinedShape value = new TypeDescription.ForLoadedType(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
+        MethodDescription.InDefinedShape value = TypeDescription.ForLoadedType.of(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
         Method method = createPlain()
                 .merge(TypeManifestation.ABSTRACT)
                 .defineMethod(FOO, TypeDescription.Generic.Builder.rawType(Object.class)
@@ -764,8 +764,8 @@ public abstract class AbstractDynamicTypeBuilderTest {
                 .getLoaded()
                 .getDeclaredMethod(FOO);
         assertThat(method.getReturnType(), is((Object) Object.class));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveReturnType(method).asList().size(), is(1));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveReturnType(method).asList().ofType(typeAnnotationType)
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedMethodReturnType(method).asList().size(), is(1));
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedMethodReturnType(method).asList().ofType(typeAnnotationType)
                 .getValue(value).resolve(Integer.class), is(INTEGER_VALUE));
     }
 
@@ -774,7 +774,7 @@ public abstract class AbstractDynamicTypeBuilderTest {
     @SuppressWarnings("unchecked")
     public void testAnnotationTypeOnMethodParameterType() throws Exception {
         Class<? extends Annotation> typeAnnotationType = (Class<? extends Annotation>) Class.forName(TYPE_VARIABLE_NAME);
-        MethodDescription.InDefinedShape value = new TypeDescription.ForLoadedType(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
+        MethodDescription.InDefinedShape value = TypeDescription.ForLoadedType.of(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
         Method method = createPlain()
                 .merge(TypeManifestation.ABSTRACT)
                 .defineMethod(FOO, void.class).withParameters(TypeDescription.Generic.Builder.rawType(Object.class)
@@ -786,8 +786,8 @@ public abstract class AbstractDynamicTypeBuilderTest {
                 .getDeclaredMethod(FOO, Object.class);
         assertThat(method.getParameterTypes().length, is(1));
         assertThat(method.getParameterTypes()[0], is((Object) Object.class));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveParameterType(method, 0).asList().size(), is(1));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveParameterType(method, 0).asList().ofType(typeAnnotationType)
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedExecutableParameterType(method, 0).asList().size(), is(1));
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedExecutableParameterType(method, 0).asList().ofType(typeAnnotationType)
                 .getValue(value).resolve(Integer.class), is(INTEGER_VALUE));
     }
 
@@ -796,7 +796,7 @@ public abstract class AbstractDynamicTypeBuilderTest {
     @SuppressWarnings("unchecked")
     public void testAnnotationTypeOnMethodExceptionType() throws Exception {
         Class<? extends Annotation> typeAnnotationType = (Class<? extends Annotation>) Class.forName(TYPE_VARIABLE_NAME);
-        MethodDescription.InDefinedShape value = new TypeDescription.ForLoadedType(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
+        MethodDescription.InDefinedShape value = TypeDescription.ForLoadedType.of(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
         Method method = createPlain()
                 .merge(TypeManifestation.ABSTRACT)
                 .defineMethod(FOO, void.class).throwing(TypeDescription.Generic.Builder.rawType(Exception.class)
@@ -808,8 +808,8 @@ public abstract class AbstractDynamicTypeBuilderTest {
                 .getDeclaredMethod(FOO);
         assertThat(method.getExceptionTypes().length, is(1));
         assertThat(method.getExceptionTypes()[0], is((Object) Exception.class));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveExceptionType(method, 0).asList().size(), is(1));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveExceptionType(method, 0).asList().ofType(typeAnnotationType)
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedExecutableExceptionType(method, 0).asList().size(), is(1));
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedExecutableExceptionType(method, 0).asList().ofType(typeAnnotationType)
                 .getValue(value).resolve(Integer.class), is(INTEGER_VALUE));
     }
 
@@ -818,17 +818,17 @@ public abstract class AbstractDynamicTypeBuilderTest {
     @SuppressWarnings("unchecked")
     public void testAnnotationTypeOnWildcardWithoutBound() throws Exception {
         Class<? extends Annotation> typeAnnotationType = (Class<? extends Annotation>) Class.forName(TYPE_VARIABLE_NAME);
-        MethodDescription.InDefinedShape value = new TypeDescription.ForLoadedType(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
+        MethodDescription.InDefinedShape value = TypeDescription.ForLoadedType.of(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
         Field field = createPlain()
-                .defineField(FOO, TypeDescription.Generic.Builder.parameterizedType(new TypeDescription.ForLoadedType(Collection.class),
+                .defineField(FOO, TypeDescription.Generic.Builder.parameterizedType(TypeDescription.ForLoadedType.of(Collection.class),
                         TypeDescription.Generic.Builder.unboundWildcard(AnnotationDescription.Builder.ofType(typeAnnotationType)
                                 .define(VALUE, INTEGER_VALUE).build())).build())
                 .make()
                 .load(typeAnnotationType.getClassLoader(), ClassLoadingStrategy.Default.CHILD_FIRST)
                 .getLoaded()
                 .getDeclaredField(FOO);
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveFieldType(field).ofTypeArgument(0).asList().size(), is(1));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveFieldType(field).ofTypeArgument(0).asList().ofType(typeAnnotationType)
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedField(field).ofTypeArgument(0).asList().size(), is(1));
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedField(field).ofTypeArgument(0).asList().ofType(typeAnnotationType)
                 .getValue(value).resolve(Integer.class), is(INTEGER_VALUE));
     }
 
@@ -837,9 +837,9 @@ public abstract class AbstractDynamicTypeBuilderTest {
     @SuppressWarnings("unchecked")
     public void testAnnotationTypeOnWildcardUpperBoundBound() throws Exception {
         Class<? extends Annotation> typeAnnotationType = (Class<? extends Annotation>) Class.forName(TYPE_VARIABLE_NAME);
-        MethodDescription.InDefinedShape value = new TypeDescription.ForLoadedType(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
+        MethodDescription.InDefinedShape value = TypeDescription.ForLoadedType.of(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
         Field field = createPlain()
-                .defineField(FOO, TypeDescription.Generic.Builder.parameterizedType(new TypeDescription.ForLoadedType(Collection.class),
+                .defineField(FOO, TypeDescription.Generic.Builder.parameterizedType(TypeDescription.ForLoadedType.of(Collection.class),
                         TypeDescription.Generic.Builder.rawType(Object.class)
                                 .annotate(AnnotationDescription.Builder.ofType(typeAnnotationType).define(VALUE, INTEGER_VALUE).build())
                                 .asWildcardUpperBound()).build())
@@ -847,8 +847,8 @@ public abstract class AbstractDynamicTypeBuilderTest {
                 .load(typeAnnotationType.getClassLoader(), ClassLoadingStrategy.Default.CHILD_FIRST)
                 .getLoaded()
                 .getDeclaredField(FOO);
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveFieldType(field).ofTypeArgument(0).ofWildcardUpperBoundType(0).asList().size(), is(1));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveFieldType(field).ofTypeArgument(0).ofWildcardUpperBoundType(0).asList()
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedField(field).ofTypeArgument(0).ofWildcardUpperBoundType(0).asList().size(), is(1));
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedField(field).ofTypeArgument(0).ofWildcardUpperBoundType(0).asList()
                 .ofType(typeAnnotationType).getValue(value).resolve(Integer.class), is(INTEGER_VALUE));
     }
 
@@ -857,9 +857,9 @@ public abstract class AbstractDynamicTypeBuilderTest {
     @SuppressWarnings("unchecked")
     public void testAnnotationTypeOnWildcardLowerBoundBound() throws Exception {
         Class<? extends Annotation> typeAnnotationType = (Class<? extends Annotation>) Class.forName(TYPE_VARIABLE_NAME);
-        MethodDescription.InDefinedShape value = new TypeDescription.ForLoadedType(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
+        MethodDescription.InDefinedShape value = TypeDescription.ForLoadedType.of(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
         Field field = createPlain()
-                .defineField(FOO, TypeDescription.Generic.Builder.parameterizedType(new TypeDescription.ForLoadedType(Collection.class),
+                .defineField(FOO, TypeDescription.Generic.Builder.parameterizedType(TypeDescription.ForLoadedType.of(Collection.class),
                         TypeDescription.Generic.Builder.rawType(Object.class)
                                 .annotate(AnnotationDescription.Builder.ofType(typeAnnotationType).define(VALUE, INTEGER_VALUE).build())
                                 .asWildcardLowerBound()).build())
@@ -867,8 +867,8 @@ public abstract class AbstractDynamicTypeBuilderTest {
                 .load(typeAnnotationType.getClassLoader(), ClassLoadingStrategy.Default.CHILD_FIRST)
                 .getLoaded()
                 .getDeclaredField(FOO);
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveFieldType(field).ofTypeArgument(0).ofWildcardLowerBoundType(0).asList().size(), is(1));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveFieldType(field).ofTypeArgument(0).ofWildcardLowerBoundType(0).asList()
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedField(field).ofTypeArgument(0).ofWildcardLowerBoundType(0).asList().size(), is(1));
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedField(field).ofTypeArgument(0).ofWildcardLowerBoundType(0).asList()
                 .ofType(typeAnnotationType).getValue(value).resolve(Integer.class), is(INTEGER_VALUE));
     }
 
@@ -877,10 +877,10 @@ public abstract class AbstractDynamicTypeBuilderTest {
     @SuppressWarnings("unchecked")
     public void testAnnotationTypeOnGenericComponentType() throws Exception {
         Class<? extends Annotation> typeAnnotationType = (Class<? extends Annotation>) Class.forName(TYPE_VARIABLE_NAME);
-        MethodDescription.InDefinedShape value = new TypeDescription.ForLoadedType(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
+        MethodDescription.InDefinedShape value = TypeDescription.ForLoadedType.of(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
         Field field = createPlain()
-                .defineField(FOO, TypeDescription.Generic.Builder.parameterizedType(new TypeDescription.ForLoadedType(Collection.class),
-                        TypeDescription.Generic.Builder.unboundWildcard())
+                .defineField(FOO, TypeDescription.Generic.Builder.parameterizedType(TypeDescription.ForLoadedType.of(Collection.class),
+                                TypeDescription.Generic.Builder.unboundWildcard())
                         .annotate(AnnotationDescription.Builder.ofType(typeAnnotationType).define(VALUE, INTEGER_VALUE).build())
                         .asArray()
                         .build())
@@ -888,8 +888,8 @@ public abstract class AbstractDynamicTypeBuilderTest {
                 .load(typeAnnotationType.getClassLoader(), ClassLoadingStrategy.Default.CHILD_FIRST)
                 .getLoaded()
                 .getDeclaredField(FOO);
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveFieldType(field).ofComponentType().asList().size(), is(1));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveFieldType(field).ofComponentType().asList()
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedField(field).ofComponentType().asList().size(), is(1));
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedField(field).ofComponentType().asList()
                 .ofType(typeAnnotationType).getValue(value).resolve(Integer.class), is(INTEGER_VALUE));
     }
 
@@ -898,7 +898,7 @@ public abstract class AbstractDynamicTypeBuilderTest {
     @SuppressWarnings("unchecked")
     public void testAnnotationTypeOnNonGenericComponentType() throws Exception {
         Class<? extends Annotation> typeAnnotationType = (Class<? extends Annotation>) Class.forName(TYPE_VARIABLE_NAME);
-        MethodDescription.InDefinedShape value = new TypeDescription.ForLoadedType(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
+        MethodDescription.InDefinedShape value = TypeDescription.ForLoadedType.of(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
         Field field = createPlain()
                 .defineField(FOO, TypeDescription.Generic.Builder.rawType(Object.class)
                         .annotate(AnnotationDescription.Builder.ofType(typeAnnotationType).define(VALUE, INTEGER_VALUE).build())
@@ -908,8 +908,8 @@ public abstract class AbstractDynamicTypeBuilderTest {
                 .load(typeAnnotationType.getClassLoader(), ClassLoadingStrategy.Default.CHILD_FIRST)
                 .getLoaded()
                 .getDeclaredField(FOO);
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveFieldType(field).ofComponentType().asList().size(), is(1));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveFieldType(field).ofComponentType().asList()
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedField(field).ofComponentType().asList().size(), is(1));
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedField(field).ofComponentType().asList()
                 .ofType(typeAnnotationType).getValue(value).resolve(Integer.class), is(INTEGER_VALUE));
     }
 
@@ -918,18 +918,18 @@ public abstract class AbstractDynamicTypeBuilderTest {
     @SuppressWarnings("unchecked")
     public void testAnnotationTypeOnParameterizedType() throws Exception {
         Class<? extends Annotation> typeAnnotationType = (Class<? extends Annotation>) Class.forName(TYPE_VARIABLE_NAME);
-        MethodDescription.InDefinedShape value = new TypeDescription.ForLoadedType(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
+        MethodDescription.InDefinedShape value = TypeDescription.ForLoadedType.of(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
         Field field = createPlain()
-                .defineField(FOO, TypeDescription.Generic.Builder.parameterizedType(new TypeDescription.ForLoadedType(Collection.class),
-                        TypeDescription.Generic.Builder.unboundWildcard(AnnotationDescription.Builder.ofType(typeAnnotationType)
-                                .define(VALUE, INTEGER_VALUE).build()))
+                .defineField(FOO, TypeDescription.Generic.Builder.parameterizedType(TypeDescription.ForLoadedType.of(Collection.class),
+                                TypeDescription.Generic.Builder.unboundWildcard(AnnotationDescription.Builder.ofType(typeAnnotationType)
+                                        .define(VALUE, INTEGER_VALUE).build()))
                         .build())
                 .make()
                 .load(typeAnnotationType.getClassLoader(), ClassLoadingStrategy.Default.CHILD_FIRST)
                 .getLoaded()
                 .getDeclaredField(FOO);
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveFieldType(field).ofTypeArgument(0).asList().size(), is(1));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveFieldType(field).ofTypeArgument(0).asList()
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedField(field).ofTypeArgument(0).asList().size(), is(1));
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedField(field).ofTypeArgument(0).asList()
                 .ofType(typeAnnotationType).getValue(value).resolve(Integer.class), is(INTEGER_VALUE));
     }
 
@@ -938,40 +938,39 @@ public abstract class AbstractDynamicTypeBuilderTest {
     @SuppressWarnings("unchecked")
     public void testAnnotationTypeOnNestedType() throws Exception {
         Class<? extends Annotation> typeAnnotationType = (Class<? extends Annotation>) Class.forName(TYPE_VARIABLE_NAME);
-        MethodDescription.InDefinedShape value = new TypeDescription.ForLoadedType(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
+        MethodDescription.InDefinedShape value = TypeDescription.ForLoadedType.of(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
         Field field = createPlain()
-                .defineField(FOO, TypeDescription.Generic.Builder.rawType(new TypeDescription.ForLoadedType(Nested.Inner.class),
-                        TypeDescription.Generic.Builder.rawType(Nested.class).build())
+                .defineField(FOO, TypeDescription.Generic.Builder.rawType(TypeDescription.ForLoadedType.of(Nested.Inner.class),
+                                TypeDescription.Generic.Builder.rawType(Nested.class).build())
                         .annotate(AnnotationDescription.Builder.ofType(typeAnnotationType).define(VALUE, INTEGER_VALUE).build())
                         .build())
                 .make()
                 .load(typeAnnotationType.getClassLoader(), ClassLoadingStrategy.Default.CHILD_FIRST)
                 .getLoaded()
                 .getDeclaredField(FOO);
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveFieldType(field).asList().size(), is(1));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveFieldType(field).asList()
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedField(field).asList().size(), is(1));
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedField(field).asList()
                 .ofType(typeAnnotationType).getValue(value).resolve(Integer.class), is(INTEGER_VALUE));
     }
 
     @Test
-    @JavaVersionRule.Enforce(8)
+    @JavaVersionRule.Enforce(15)
     @SuppressWarnings("unchecked")
-    @Ignore("The Java reflection API does not currently support nested generic types")
     public void testAnnotationTypeOnNestedParameterizedType() throws Exception {
         Class<? extends Annotation> typeAnnotationType = (Class<? extends Annotation>) Class.forName(TYPE_VARIABLE_NAME);
-        MethodDescription.InDefinedShape value = new TypeDescription.ForLoadedType(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
+        MethodDescription.InDefinedShape value = TypeDescription.ForLoadedType.of(typeAnnotationType).getDeclaredMethods().filter(named(VALUE)).getOnly();
         Field field = createPlain()
-                .defineField(FOO, TypeDescription.Generic.Builder.parameterizedType(new TypeDescription.ForLoadedType(GenericNested.Inner.class),
-                        TypeDescription.Generic.Builder.parameterizedType(GenericNested.class, Void.class).build(),
-                        Collections.<TypeDefinition>emptyList())
+                .defineField(FOO, TypeDescription.Generic.Builder.parameterizedType(TypeDescription.ForLoadedType.of(GenericNested.Inner.class),
+                                TypeDescription.Generic.Builder.parameterizedType(GenericNested.class, Void.class).build(),
+                                Collections.<TypeDefinition>emptyList())
                         .annotate(AnnotationDescription.Builder.ofType(typeAnnotationType).define(VALUE, INTEGER_VALUE).build())
                         .build())
                 .make()
                 .load(typeAnnotationType.getClassLoader(), ClassLoadingStrategy.Default.CHILD_FIRST)
                 .getLoaded()
                 .getDeclaredField(FOO);
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveFieldType(field).asList().size(), is(1));
-        assertThat(TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveFieldType(field).asList()
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedField(field).asList().size(), is(1));
+        assertThat(new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedField(field).asList()
                 .ofType(typeAnnotationType).getValue(value).resolve(Integer.class), is(INTEGER_VALUE));
     }
 
@@ -1113,6 +1112,441 @@ public abstract class AbstractDynamicTypeBuilderTest {
         assertThat(cloneable.clone(), sameInstance((Object) cloneable));
     }
 
+    @Test
+    public void testTopLevelType() throws Exception {
+        Class<?> type = createPlainWithoutValidation()
+                .topLevelType()
+                .make()
+                .load(getClass().getClassLoader(), ClassLoadingStrategy.Default.CHILD_FIRST)
+                .getLoaded();
+        assertThat(type.getDeclaringClass(), nullValue(Class.class));
+        assertThat(type.getEnclosingClass(), nullValue(Class.class));
+        assertThat(type.getEnclosingMethod(), nullValue(Method.class));
+        assertThat(type.getEnclosingConstructor(), nullValue(Constructor.class));
+        assertThat(type.isAnonymousClass(), is(false));
+        assertThat(type.isLocalClass(), is(false));
+        assertThat(type.isMemberClass(), is(false));
+    }
+
+    @Test
+    public void testDeclaredAsMemberType() throws Exception {
+        TypeDescription sample = new TypeDescription.Latent("foo.Bar$Qux", Opcodes.ACC_PUBLIC, TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class)) {
+            @Override
+            public String getSimpleName() {
+                return "Qux";
+            }
+
+            @Override
+            public boolean isAnonymousType() {
+                return false;
+            }
+
+            @Override
+            public boolean isMemberType() {
+                return true;
+            }
+        };
+        Class<?> outer = new ByteBuddy()
+                .subclass(Object.class)
+                .name("foo.Bar")
+                .declaredTypes(sample)
+                .make()
+                .load(getClass().getClassLoader(), ClassLoadingStrategy.Default.CHILD_FIRST.opened())
+                .getLoaded();
+        Class<?> type = createPlainWithoutValidation()
+                .name(sample.getName())
+                .innerTypeOf(outer).asMemberType()
+                .make()
+                .load((InjectionClassLoader) outer.getClassLoader(), InjectionClassLoader.Strategy.INSTANCE)
+                .getLoaded();
+        assertThat(type.getDeclaringClass(), is((Object) outer));
+        assertThat(type.getEnclosingClass(), is((Object) outer));
+        assertThat(type.getEnclosingMethod(), nullValue(Method.class));
+        assertThat(type.getEnclosingConstructor(), nullValue(Constructor.class));
+        assertThat(type.isAnonymousClass(), is(false));
+        assertThat(type.isLocalClass(), is(false));
+        assertThat(type.isMemberClass(), is(true));
+    }
+
+    @Test
+    public void testDeclaredAsAnonymousType() throws Exception {
+        // Older JVMs derive the anonymous class property from a naming convention.
+        TypeDescription sample = new TypeDescription.Latent("foo.Bar$1", Opcodes.ACC_PUBLIC, TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class)) {
+            @Override
+            public String getSimpleName() {
+                return "";
+            }
+
+            @Override
+            public boolean isAnonymousType() {
+                return true;
+            }
+
+            @Override
+            public boolean isMemberType() {
+                return false;
+            }
+        };
+        Class<?> outer = new ByteBuddy()
+                .subclass(Object.class)
+                .name("foo.Bar")
+                .declaredTypes(sample)
+                .make()
+                .load(getClass().getClassLoader(), ClassLoadingStrategy.Default.CHILD_FIRST.opened())
+                .getLoaded();
+        Class<?> type = createPlainWithoutValidation()
+                .name(sample.getName())
+                .innerTypeOf(outer).asAnonymousType()
+                .make()
+                .load((InjectionClassLoader) outer.getClassLoader(), InjectionClassLoader.Strategy.INSTANCE)
+                .getLoaded();
+        assertThat(type.getDeclaringClass(), nullValue(Class.class));
+        assertThat(type.getEnclosingClass(), is((Object) outer));
+        assertThat(type.getEnclosingMethod(), nullValue(Method.class));
+        assertThat(type.getEnclosingConstructor(), nullValue(Constructor.class));
+        assertThat(type.isAnonymousClass(), is(true));
+        assertThat(type.isLocalClass(), is(false));
+        assertThat(type.isMemberClass(), is(false));
+    }
+
+    @Test
+    public void testDeclaredAsLocalType() throws Exception {
+        TypeDescription sample = new TypeDescription.Latent("foo.Bar$Qux", Opcodes.ACC_PUBLIC, TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class)) {
+            @Override
+            public String getSimpleName() {
+                return "Qux";
+            }
+
+            @Override
+            public boolean isAnonymousType() {
+                return false;
+            }
+
+            @Override
+            public boolean isMemberType() {
+                return false;
+            }
+        };
+        Class<?> outer = new ByteBuddy()
+                .subclass(Object.class)
+                .name("foo.Bar")
+                .declaredTypes(sample)
+                .make()
+                .load(getClass().getClassLoader(), ClassLoadingStrategy.Default.CHILD_FIRST.opened())
+                .getLoaded();
+        Class<?> type = createPlainWithoutValidation()
+                .name(sample.getName())
+                .innerTypeOf(outer)
+                .make()
+                .load((InjectionClassLoader) outer.getClassLoader(), InjectionClassLoader.Strategy.INSTANCE)
+                .getLoaded();
+        assertThat(type.getDeclaringClass(), nullValue(Class.class));
+        assertThat(type.getEnclosingClass(), is((Object) outer));
+        assertThat(type.getEnclosingMethod(), nullValue(Method.class));
+        assertThat(type.getEnclosingConstructor(), nullValue(Constructor.class));
+        assertThat(type.isAnonymousClass(), is(false));
+        assertThat(type.isLocalClass(), is(true));
+        assertThat(type.isMemberClass(), is(false));
+    }
+
+    @Test
+    public void testDeclaredAsAnonymousTypeInMethod() throws Exception {
+        // Older JVMs derive the anonymous class property from a naming convention.
+        TypeDescription sample = new TypeDescription.Latent("foo.Bar$1", Opcodes.ACC_PUBLIC, TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class)) {
+            @Override
+            public String getSimpleName() {
+                return "";
+            }
+
+            @Override
+            public boolean isAnonymousType() {
+                return true;
+            }
+
+            @Override
+            public boolean isMemberType() {
+                return false;
+            }
+        };
+        Class<?> outer = new ByteBuddy()
+                .subclass(Object.class)
+                .name("foo.Bar")
+                .declaredTypes(sample)
+                .make()
+                .load(getClass().getClassLoader(), ClassLoadingStrategy.Default.CHILD_FIRST.opened())
+                .getLoaded();
+        Class<?> type = createPlainWithoutValidation()
+                .name(sample.getName())
+                .innerTypeOf(outer.getConstructor()).asAnonymousType()
+                .make()
+                .load((InjectionClassLoader) outer.getClassLoader(), InjectionClassLoader.Strategy.INSTANCE)
+                .getLoaded();
+        assertThat(type.getDeclaringClass(), nullValue(Class.class));
+        assertThat(type.getEnclosingClass(), is((Object) outer));
+        assertThat(type.getEnclosingMethod(), nullValue(Method.class));
+        assertThat(type.getEnclosingConstructor(), is((Object) outer.getConstructor()));
+        assertThat(type.isAnonymousClass(), is(true));
+        assertThat(type.isLocalClass(), is(false));
+        assertThat(type.isMemberClass(), is(false));
+    }
+
+    @Test
+    public void testDeclaredAsLocalTypeInInitializer() throws Exception {
+        // Older JVMs derive the anonymous class property from a naming convention.
+        TypeDescription sample = new TypeDescription.Latent("foo.Bar$Qux", Opcodes.ACC_PUBLIC, TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class)) {
+            @Override
+            public String getSimpleName() {
+                return "Qux";
+            }
+
+            @Override
+            public boolean isAnonymousType() {
+                return false;
+            }
+
+            @Override
+            public boolean isMemberType() {
+                return false;
+            }
+        };
+        Class<?> outer = new ByteBuddy()
+                .subclass(Object.class)
+                .name("foo.Bar")
+                .declaredTypes(sample)
+                .make()
+                .load(getClass().getClassLoader(), ClassLoadingStrategy.Default.CHILD_FIRST.opened())
+                .getLoaded();
+        Class<?> type = createPlainWithoutValidation()
+                .name(sample.getName())
+                .innerTypeOf(new MethodDescription.Latent.TypeInitializer(TypeDescription.ForLoadedType.of(outer)))
+                .make()
+                .load((InjectionClassLoader) outer.getClassLoader(), InjectionClassLoader.Strategy.INSTANCE)
+                .getLoaded();
+        assertThat(type.getDeclaringClass(), nullValue(Class.class));
+        assertThat(type.getEnclosingClass(), is((Object) outer));
+        assertThat(type.getEnclosingMethod(), nullValue(Method.class));
+        assertThat(type.getEnclosingConstructor(), nullValue(Constructor.class));
+        assertThat(type.isAnonymousClass(), is(false));
+        assertThat(type.isLocalClass(), is(true));
+        assertThat(type.isMemberClass(), is(false));
+    }
+
+    @Test
+    public void testDeclaredAsAnonymousTypeInInitializer() throws Exception {
+        // Older JVMs derive the anonymous class property from a naming convention.
+        TypeDescription sample = new TypeDescription.Latent("foo.Bar$1", Opcodes.ACC_PUBLIC, TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class)) {
+            @Override
+            public String getSimpleName() {
+                return "";
+            }
+
+            @Override
+            public boolean isAnonymousType() {
+                return true;
+            }
+
+            @Override
+            public boolean isMemberType() {
+                return false;
+            }
+        };
+        Class<?> outer = new ByteBuddy()
+                .subclass(Object.class)
+                .name("foo.Bar")
+                .declaredTypes(sample)
+                .make()
+                .load(getClass().getClassLoader(), ClassLoadingStrategy.Default.CHILD_FIRST.opened())
+                .getLoaded();
+        Class<?> type = createPlainWithoutValidation()
+                .name(sample.getName())
+                .innerTypeOf(new MethodDescription.Latent.TypeInitializer(TypeDescription.ForLoadedType.of(outer))).asAnonymousType()
+                .make()
+                .load((InjectionClassLoader) outer.getClassLoader(), InjectionClassLoader.Strategy.INSTANCE)
+                .getLoaded();
+        assertThat(type.getDeclaringClass(), nullValue(Class.class));
+        assertThat(type.getEnclosingClass(), is((Object) outer));
+        assertThat(type.getEnclosingMethod(), nullValue(Method.class));
+        assertThat(type.getEnclosingConstructor(), nullValue(Constructor.class));
+        assertThat(type.isAnonymousClass(), is(true));
+        assertThat(type.isLocalClass(), is(false));
+        assertThat(type.isMemberClass(), is(false));
+    }
+
+    @Test
+    public void testDeclaredAsLocalTypeInMethod() throws Exception {
+        TypeDescription sample = new TypeDescription.Latent("foo.Bar$Qux", Opcodes.ACC_PUBLIC, TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class)) {
+            @Override
+            public String getSimpleName() {
+                return "Qux";
+            }
+
+            @Override
+            public boolean isAnonymousType() {
+                return false;
+            }
+
+            @Override
+            public boolean isMemberType() {
+                return false;
+            }
+        };
+        Class<?> outer = new ByteBuddy()
+                .subclass(Object.class)
+                .name("foo.Bar")
+                .defineMethod("foo", void.class, Visibility.PUBLIC)
+                .intercept(StubMethod.INSTANCE)
+                .declaredTypes(sample)
+                .make()
+                .load(getClass().getClassLoader(), ClassLoadingStrategy.Default.CHILD_FIRST.opened())
+                .getLoaded();
+        Class<?> type = createPlainWithoutValidation()
+                .name(sample.getName())
+                .innerTypeOf(outer.getMethod(FOO))
+                .make()
+                .load((InjectionClassLoader) outer.getClassLoader(), InjectionClassLoader.Strategy.INSTANCE)
+                .getLoaded();
+        assertThat(type.getDeclaringClass(), nullValue(Class.class));
+        assertThat(type.getEnclosingClass(), is((Object) outer));
+        assertThat(type.getEnclosingMethod(), is(outer.getMethod(FOO)));
+        assertThat(type.getEnclosingConstructor(), nullValue(Constructor.class));
+        assertThat(type.isAnonymousClass(), is(false));
+        assertThat(type.isLocalClass(), is(true));
+        assertThat(type.isMemberClass(), is(false));
+    }
+
+    @Test
+    public void testDeclaredAsLocalTypeInConstructor() throws Exception {
+        TypeDescription sample = new TypeDescription.Latent("foo.Bar$Qux", Opcodes.ACC_PUBLIC, TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class)) {
+            @Override
+            public String getSimpleName() {
+                return "Qux";
+            }
+
+            @Override
+            public boolean isAnonymousType() {
+                return false;
+            }
+
+            @Override
+            public boolean isMemberType() {
+                return false;
+            }
+        };
+        Class<?> outer = new ByteBuddy()
+                .subclass(Object.class)
+                .name("foo.Bar")
+                .declaredTypes(sample)
+                .make()
+                .load(getClass().getClassLoader(), ClassLoadingStrategy.Default.CHILD_FIRST.opened())
+                .getLoaded();
+        Class<?> type = createPlainWithoutValidation()
+                .name(sample.getName())
+                .innerTypeOf(outer.getConstructor())
+                .make()
+                .load((InjectionClassLoader) outer.getClassLoader(), InjectionClassLoader.Strategy.INSTANCE)
+                .getLoaded();
+        assertThat(type.getDeclaringClass(), nullValue(Class.class));
+        assertThat(type.getEnclosingClass(), is((Object) outer));
+        assertThat(type.getEnclosingMethod(), nullValue(Method.class));
+        assertThat(type.getEnclosingConstructor(), is((Object) outer.getConstructor()));
+        assertThat(type.isAnonymousClass(), is(false));
+        assertThat(type.isLocalClass(), is(true));
+        assertThat(type.isMemberClass(), is(false));
+    }
+
+    @Test
+    @JavaVersionRule.Enforce(11)
+    public void testNestMates() throws Exception {
+        TypeDescription sample = new TypeDescription.Latent("foo.Bar", Opcodes.ACC_PUBLIC, TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class));
+        Class<?> outer = new ByteBuddy()
+                .subclass(Object.class)
+                .name("foo.Qux")
+                .nestMembers(sample)
+                .make()
+                .load(getClass().getClassLoader(), ClassLoadingStrategy.Default.CHILD_FIRST.opened())
+                .getLoaded();
+        Class<?> type = createPlainWithoutValidation()
+                .visit(new JavaVersionAdjustment())
+                .name(sample.getName())
+                .nestHost(outer)
+                .make()
+                .load((InjectionClassLoader) outer.getClassLoader(), InjectionClassLoader.Strategy.INSTANCE)
+                .getLoaded();
+        assertThat(Class.class.getMethod("getNestHost").invoke(outer), is((Object) outer));
+        assertThat(Class.class.getMethod("getNestMembers").invoke(outer), is((Object) new Class<?>[]{outer, type}));
+        assertThat(Class.class.getMethod("getNestHost").invoke(type), is((Object) outer));
+        assertThat(Class.class.getMethod("getNestMembers").invoke(type), is((Object) new Class<?>[]{outer, type}));
+    }
+
+    @Test
+    @JavaVersionRule.Enforce(17)
+    public void testPermittedSubclasses() throws Exception {
+        TypeDescription sample = new TypeDescription.Latent("foo.Qux",
+                Opcodes.ACC_PUBLIC,
+                new TypeDescription.Latent("foo.Bar", Opcodes.ACC_PUBLIC, TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class)).asGenericType());
+        Class<?> type = createPlainEmpty()
+                .visit(new JavaVersionAdjustment())
+                .permittedSubclass(sample)
+                .name("foo.Bar")
+                .make()
+                .load(getClass().getClassLoader(), ClassLoadingStrategy.Default.CHILD_FIRST.opened())
+                .getLoaded();
+        Class<?> subclass = new ByteBuddy()
+                .subclass(type)
+                .merge(TypeManifestation.FINAL)
+                .name("foo.Qux")
+                .make()
+                .load((InjectionClassLoader) type.getClassLoader(), InjectionClassLoader.Strategy.INSTANCE)
+                .getLoaded();
+        Class<?>[] permittedSubclass = (Class<?>[]) Class.class.getMethod("getPermittedSubclasses").invoke(type);
+        assertThat(permittedSubclass, notNullValue(Class[].class));
+        assertThat(permittedSubclass.length, is(1));
+        assertThat(permittedSubclass[0], is((Object) subclass));
+    }
+
+    @Test
+    public void testAuxiliaryTypes() throws Exception {
+        Map<TypeDescription, byte[]> auxiliaryTypes = createPlain()
+                .require(TypeDescription.ForLoadedType.of(void.class), new byte[]{1, 2, 3})
+                .make()
+                .getAuxiliaryTypes();
+        assertThat(auxiliaryTypes.size(), is(1));
+        assertThat(auxiliaryTypes.get(TypeDescription.ForLoadedType.of(void.class)).length, is(3));
+    }
+
+    @Test
+    public void testWrapClassVisitor() throws Exception {
+        TypeDescription typeDescription = createPlain()
+                .make()
+                .getTypeDescription();
+        ClassWriter classWriter = new ClassWriter(AsmVisitorWrapper.NO_FLAGS);
+        ContextClassVisitor classVisitor = createPlain()
+                .defineMethod(FOO, Object.class, Visibility.PUBLIC, Ownership.STATIC)
+                .throwing(Exception.class)
+                .intercept(new Implementation.Simple(new TextConstant(FOO), MethodReturn.REFERENCE))
+                .wrap(classWriter);
+        classVisitor.visit(ClassFileVersion.ofThisVm().getMinorMajorVersion(),
+                typeDescription.getActualModifiers(true),
+                typeDescription.getInternalName(),
+                typeDescription.getGenericSignature(),
+                typeDescription.getSuperClass().asErasure().getInternalName(),
+                typeDescription.getInterfaces().asErasures().toInternalNames());
+        classVisitor.visitEnd();
+        assertThat(classVisitor.getAuxiliaryTypes().size(), is(0));
+        assertThat(classVisitor.getLoadedTypeInitializer().isAlive(), is(false));
+        Class<?> type = new DynamicType.Default.Unloaded<Object>(typeDescription,
+                classWriter.toByteArray(),
+                LoadedTypeInitializer.NoOp.INSTANCE,
+                Collections.<DynamicType>emptyList(),
+                TypeResolutionStrategy.Passive.INSTANCE).load(ClassLoadingStrategy.BOOTSTRAP_LOADER, ClassLoadingStrategy.Default.WRAPPER).getLoaded();
+        assertThat(type.getName(), is(typeDescription.getName()));
+        Method method = type.getDeclaredMethod(FOO);
+        assertThat(method.getReturnType(), CoreMatchers.<Class<?>>is(Object.class));
+        assertThat(method.getExceptionTypes(), is(new Class<?>[]{Exception.class}));
+        assertThat(method.getModifiers(), is(Modifier.PUBLIC | Modifier.STATIC));
+        assertThat(method.invoke(null), is((Object) FOO));
+    }
+
     @Retention(RetentionPolicy.RUNTIME)
     public @interface SampleAnnotation {
 
@@ -1158,15 +1592,13 @@ public abstract class AbstractDynamicTypeBuilderTest {
 
     private static class PreparedField implements Implementation {
 
-        @Override
         public InstrumentedType prepare(InstrumentedType instrumentedType) {
             return instrumentedType.withField(new FieldDescription.Token(FOO,
                     MODIFIERS,
-                    TypeDescription.Generic.OBJECT,
+                    TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class),
                     Collections.singletonList(AnnotationDescription.Builder.ofType(SampleAnnotation.class).define(FOO, BAR).build())));
         }
 
-        @Override
         public ByteCodeAppender appender(Target implementationTarget) {
             return new ByteCodeAppender.Simple(NullConstant.INSTANCE, MethodReturn.REFERENCE);
         }
@@ -1174,21 +1606,19 @@ public abstract class AbstractDynamicTypeBuilderTest {
 
     private static class PreparedMethod implements Implementation {
 
-        @Override
         public InstrumentedType prepare(InstrumentedType instrumentedType) {
             return instrumentedType.withMethod(new MethodDescription.Token(FOO,
                     MODIFIERS,
                     Collections.<TypeVariableToken>emptyList(),
-                    TypeDescription.Generic.OBJECT,
-                    Collections.singletonList(new ParameterDescription.Token(TypeDescription.Generic.OBJECT,
+                    TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class),
+                    Collections.singletonList(new ParameterDescription.Token(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class),
                             Collections.singletonList(AnnotationDescription.Builder.ofType(SampleAnnotation.class).define(FOO, QUX).build()))),
-                    Collections.singletonList(new TypeDescription.Generic.OfNonGenericType.ForLoadedType(Exception.class)),
+                    Collections.singletonList(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Exception.class)),
                     Collections.singletonList(AnnotationDescription.Builder.ofType(SampleAnnotation.class).define(FOO, BAR).build()),
                     AnnotationValue.UNDEFINED,
                     TypeDescription.Generic.UNDEFINED));
         }
 
-        @Override
         public ByteCodeAppender appender(Target implementationTarget) {
             return new ByteCodeAppender.Simple(NullConstant.INSTANCE, MethodReturn.REFERENCE);
         }
@@ -1236,6 +1666,25 @@ public abstract class AbstractDynamicTypeBuilderTest {
 
         interface SubInterface extends SampleInterface {
 
+        }
+    }
+
+    private static class JavaVersionAdjustment extends AsmVisitorWrapper.AbstractBase {
+
+        public ClassVisitor wrap(TypeDescription instrumentedType,
+                                 ClassVisitor classVisitor,
+                                 Implementation.Context implementationContext,
+                                 TypePool typePool,
+                                 FieldList<FieldDescription.InDefinedShape> fields,
+                                 MethodList<?> methods,
+                                 int writerFlags,
+                                 int readerFlags) {
+            return new ClassVisitor(OpenedClassReader.ASM_API, classVisitor) {
+
+                public void visit(int version, int access, String name, String signature, String superName, String[] interfaces) {
+                    super.visit(Math.max(version, ClassFileVersion.ofThisVm().getMinorMajorVersion()), access, name, signature, superName, interfaces);
+                }
+            };
         }
     }
 }

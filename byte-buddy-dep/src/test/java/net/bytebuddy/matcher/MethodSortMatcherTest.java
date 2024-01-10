@@ -9,6 +9,7 @@ import org.mockito.Mock;
 import java.util.Arrays;
 import java.util.Collection;
 
+import static net.bytebuddy.test.utility.FieldByFieldComparison.hasPrototype;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.mockito.Mockito.when;
@@ -54,48 +55,43 @@ public class MethodSortMatcherTest extends AbstractElementMatcherTest<MethodSort
         assertThat(new MethodSortMatcher<MethodDescription>(sort).matches(methodDescription), is(false));
     }
 
-    @Override
-    protected String makeRegex(String startsWith) {
-        return null;
+    @Test
+    public void testStringRepresentation() throws Exception {
+        assertThat(new MethodSortMatcher<MethodDescription>(sort).toString(), is(sort.getDescription()));
     }
 
     @Test
-    public void testToString() throws Exception {
-        assertThat(new MethodSortMatcher<MethodDescription>(sort).toString(), is(sort.getDescription()));
+    public void testSingletonIsEquivalentToNewInstance() {
+        assertThat(MethodSortMatcher.of(sort), hasPrototype((ElementMatcher.Junction<MethodDescription>) new MethodSortMatcher<MethodDescription>(sort)));
     }
 
     private enum MockImplementation {
 
         CONSTRUCTOR {
-            @Override
             protected void prepare(MethodDescription target) {
                 when(target.isConstructor()).thenReturn(true);
             }
         },
 
         DEFAULT_METHOD {
-            @Override
             protected void prepare(MethodDescription target) {
                 when(target.isDefaultMethod()).thenReturn(true);
             }
         },
 
         METHOD {
-            @Override
             protected void prepare(MethodDescription target) {
                 when(target.isMethod()).thenReturn(true);
             }
         },
 
         VIRTUAL {
-            @Override
             protected void prepare(MethodDescription target) {
                 when(target.isVirtual()).thenReturn(true);
             }
         },
 
         TYPE_INITIALIZER {
-            @Override
             protected void prepare(MethodDescription target) {
                 when(target.isTypeInitializer()).thenReturn(true);
             }

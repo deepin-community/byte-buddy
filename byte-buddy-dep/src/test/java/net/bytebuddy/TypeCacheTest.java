@@ -1,28 +1,22 @@
 package net.bytebuddy;
 
 import net.bytebuddy.dynamic.loading.ClassLoadingStrategy;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Test;
 
 import java.lang.ref.Reference;
 import java.lang.ref.SoftReference;
 import java.lang.ref.WeakReference;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Iterator;
 import java.util.concurrent.Callable;
+import java.util.logging.Logger;
 
-import static org.hamcrest.CoreMatchers.instanceOf;
-import static org.hamcrest.CoreMatchers.nullValue;
+import static org.hamcrest.CoreMatchers.*;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.CoreMatchers.is;
 import static org.mockito.Mockito.*;
 
 public class TypeCacheTest {
 
     @Test
-    public void testCache() throws Exception {
+    public void testCacheWeak() throws Exception {
         TypeCache<Object> typeCache = new TypeCache<Object>(TypeCache.Sort.WEAK);
         Object key = new Object();
         assertThat(typeCache.find(ClassLoader.getSystemClassLoader(), key), nullValue(Class.class));
@@ -34,8 +28,56 @@ public class TypeCacheTest {
     }
 
     @Test
-    public void testCacheInline() throws Exception {
+    public void testCacheSoft() throws Exception {
+        TypeCache<Object> typeCache = new TypeCache<Object>(TypeCache.Sort.SOFT);
+        Object key = new Object();
+        assertThat(typeCache.find(ClassLoader.getSystemClassLoader(), key), nullValue(Class.class));
+        assertThat(typeCache.insert(ClassLoader.getSystemClassLoader(), key, Void.class), is((Object) Void.class));
+        assertThat(typeCache.find(ClassLoader.getSystemClassLoader(), key), is((Object) Void.class));
+        assertThat(typeCache.find(mock(ClassLoader.class), key), nullValue(Class.class));
+        typeCache.clear();
+        assertThat(typeCache.find(ClassLoader.getSystemClassLoader(), key), nullValue(Class.class));
+    }
+
+    @Test
+    public void testCacheStrong() throws Exception {
+        TypeCache<Object> typeCache = new TypeCache<Object>(TypeCache.Sort.STRONG);
+        Object key = new Object();
+        assertThat(typeCache.find(ClassLoader.getSystemClassLoader(), key), nullValue(Class.class));
+        assertThat(typeCache.insert(ClassLoader.getSystemClassLoader(), key, Void.class), is((Object) Void.class));
+        assertThat(typeCache.find(ClassLoader.getSystemClassLoader(), key), is((Object) Void.class));
+        assertThat(typeCache.find(mock(ClassLoader.class), key), nullValue(Class.class));
+        typeCache.clear();
+        assertThat(typeCache.find(ClassLoader.getSystemClassLoader(), key), nullValue(Class.class));
+    }
+
+    @Test
+    public void testCacheInlineWeak() throws Exception {
         TypeCache<Object> typeCache = new TypeCache.WithInlineExpunction<Object>(TypeCache.Sort.WEAK);
+        Object key = new Object();
+        assertThat(typeCache.find(ClassLoader.getSystemClassLoader(), key), nullValue(Class.class));
+        assertThat(typeCache.insert(ClassLoader.getSystemClassLoader(), key, Void.class), is((Object) Void.class));
+        assertThat(typeCache.find(ClassLoader.getSystemClassLoader(), key), is((Object) Void.class));
+        assertThat(typeCache.find(mock(ClassLoader.class), key), nullValue(Class.class));
+        typeCache.clear();
+        assertThat(typeCache.find(ClassLoader.getSystemClassLoader(), key), nullValue(Class.class));
+    }
+
+    @Test
+    public void testCacheInlineSoft() throws Exception {
+        TypeCache<Object> typeCache = new TypeCache.WithInlineExpunction<Object>(TypeCache.Sort.SOFT);
+        Object key = new Object();
+        assertThat(typeCache.find(ClassLoader.getSystemClassLoader(), key), nullValue(Class.class));
+        assertThat(typeCache.insert(ClassLoader.getSystemClassLoader(), key, Void.class), is((Object) Void.class));
+        assertThat(typeCache.find(ClassLoader.getSystemClassLoader(), key), is((Object) Void.class));
+        assertThat(typeCache.find(mock(ClassLoader.class), key), nullValue(Class.class));
+        typeCache.clear();
+        assertThat(typeCache.find(ClassLoader.getSystemClassLoader(), key), nullValue(Class.class));
+    }
+
+    @Test
+    public void testCacheInlineStrong() throws Exception {
+        TypeCache<Object> typeCache = new TypeCache.WithInlineExpunction<Object>(TypeCache.Sort.STRONG);
         Object key = new Object();
         assertThat(typeCache.find(ClassLoader.getSystemClassLoader(), key), nullValue(Class.class));
         assertThat(typeCache.insert(ClassLoader.getSystemClassLoader(), key, Void.class), is((Object) Void.class));
@@ -91,23 +133,40 @@ public class TypeCacheTest {
             System.gc();
             Thread.sleep(50L);
         }
-        assertThat(typeCache.find(classLoader, key), nullValue(Class.class));
-        assertThat(typeCache.insert(classLoader, key, Void.class), is((Object) Void.class));
-        assertThat(typeCache.find(classLoader, key), is((Object) Void.class));
+        try {
+            assertThat(typeCache.find(classLoader, key), nullValue(Class.class));
+            assertThat(typeCache.insert(classLoader, key, Void.class), is((Object) Void.class));
+            assertThat(typeCache.find(classLoader, key), is((Object) Void.class));
+        } catch (AssertionError ignored) {
+            Logger.getLogger("net.bytebuddy").info("Cache was not cleared, possibly due to weak references not being collected, retrying...");
+            for (int index = 0; index < 50; index++) {
+                System.gc();
+                Thread.sleep(50L);
+            }
+            assertThat(typeCache.find(classLoader, key), nullValue(Class.class));
+            assertThat(typeCache.insert(classLoader, key, Void.class), is((Object) Void.class));
+            assertThat(typeCache.find(classLoader, key), is((Object) Void.class));
+        }
     }
 
     @Test
     public void testWeakReference() throws Exception {
-        Reference<Class<?>> reference = TypeCache.Sort.WEAK.wrap(Void.class);
+        Reference<?> reference = (Reference<?>) TypeCache.Sort.WEAK.wrap(Void.class);
         assertThat(reference, instanceOf(WeakReference.class));
         assertThat(reference.get(), is((Object) Void.class));
     }
 
     @Test
     public void testSoftReference() throws Exception {
-        Reference<Class<?>> reference = TypeCache.Sort.SOFT.wrap(Void.class);
+        Reference<?> reference = (Reference<?>) TypeCache.Sort.SOFT.wrap(Void.class);
         assertThat(reference, instanceOf(SoftReference.class));
         assertThat(reference.get(), is((Object) Void.class));
+    }
+
+    @Test
+    public void testStrongReference() throws Exception {
+        Class<?> type = (Class<?>) TypeCache.Sort.STRONG.wrap(Void.class);
+        assertThat(type, is((Object) Void.class));
     }
 
     @Test
@@ -135,30 +194,16 @@ public class TypeCacheTest {
     }
 
     @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(TypeCache.Sort.class).apply();
-        final Iterator<Class<?>> iterator = Arrays.<Class<?>>asList(Object.class,
-                String.class,
-                Void.class,
-                Integer.class,
-                Long.class,
-                Byte.class,
-                Boolean.class,
-                Character.class,
-                Short.class,
-                Float.class,
-                Long.class).iterator();
-        ObjectPropertyAssertion.of(TypeCache.SimpleKey.class).create(new ObjectPropertyAssertion.Creator<Collection<Class<?>>>() {
-            @Override
-            public Collection<Class<?>> create() {
-                return Collections.<Class<?>>singleton(iterator.next());
-            }
-        }).create(new ObjectPropertyAssertion.Creator<Class<?>>() {
-            @Override
-            public Class<?> create() {
-                return iterator.next();
-            }
-        }).apply();
+    public void testSimpleKeyProperties() {
+        assertThat(new TypeCache.SimpleKey(Object.class).hashCode(), is(new TypeCache.SimpleKey(Object.class).hashCode()));
+        assertThat(new TypeCache.SimpleKey(Object.class), is(new TypeCache.SimpleKey(Object.class)));
+        assertThat(new TypeCache.SimpleKey(Object.class).hashCode(), not(new TypeCache.SimpleKey(Void.class).hashCode()));
+        assertThat(new TypeCache.SimpleKey(Object.class), not(new TypeCache.SimpleKey(Void.class)));
+    }
 
+    @Test
+    public void testDefaultStrongReferences() {
+        assertThat(new TypeCache<Object>().sort, is(TypeCache.Sort.STRONG));
+        assertThat(new TypeCache.WithInlineExpunction<Object>().sort, is(TypeCache.Sort.STRONG));
     }
 }

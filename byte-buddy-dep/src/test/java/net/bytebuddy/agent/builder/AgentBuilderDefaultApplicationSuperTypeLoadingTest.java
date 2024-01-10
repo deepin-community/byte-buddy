@@ -2,13 +2,13 @@ package net.bytebuddy.agent.builder;
 
 import net.bytebuddy.agent.ByteBuddyAgent;
 import net.bytebuddy.description.type.TypeDescription;
+import net.bytebuddy.dynamic.ClassFileLocator;
 import net.bytebuddy.dynamic.DynamicType;
 import net.bytebuddy.dynamic.loading.ByteArrayClassLoader;
 import net.bytebuddy.dynamic.loading.ClassLoadingStrategy;
 import net.bytebuddy.implementation.FixedValue;
 import net.bytebuddy.matcher.ElementMatchers;
 import net.bytebuddy.test.utility.AgentAttachmentRule;
-import net.bytebuddy.test.utility.ClassFileExtraction;
 import net.bytebuddy.test.utility.IntegrationRule;
 import net.bytebuddy.utility.JavaModule;
 import org.junit.After;
@@ -19,15 +19,13 @@ import org.junit.rules.MethodRule;
 
 import java.lang.instrument.ClassFileTransformer;
 import java.lang.instrument.Instrumentation;
+import java.security.ProtectionDomain;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-import static net.bytebuddy.matcher.ElementMatchers.isDeclaredBy;
-import static net.bytebuddy.matcher.ElementMatchers.named;
-import static net.bytebuddy.matcher.ElementMatchers.none;
-import static org.hamcrest.CoreMatchers.instanceOf;
+import static net.bytebuddy.matcher.ElementMatchers.*;
 import static org.hamcrest.CoreMatchers.is;
-import static org.hamcrest.CoreMatchers.nullValue;
+import static org.hamcrest.CoreMatchers.*;
 import static org.hamcrest.MatcherAssert.assertThat;
 
 public class AgentBuilderDefaultApplicationSuperTypeLoadingTest {
@@ -47,7 +45,7 @@ public class AgentBuilderDefaultApplicationSuperTypeLoadingTest {
     @Before
     public void setUp() throws Exception {
         classLoader = new ByteArrayClassLoader(ClassLoadingStrategy.BOOTSTRAP_LOADER,
-                ClassFileExtraction.of(Foo.class, Bar.class, AgentBuilderDefaultApplicationSuperTypeLoadingTest.class),
+                ClassFileLocator.ForClassLoader.readToNames(Foo.class, Bar.class, AgentBuilderDefaultApplicationSuperTypeLoadingTest.class),
                 ByteArrayClassLoader.PersistenceHandler.MANIFEST);
         executorService = Executors.newCachedThreadPool();
     }
@@ -73,7 +71,7 @@ public class AgentBuilderDefaultApplicationSuperTypeLoadingTest {
             assertThat(type.getDeclaredMethod(BAR).invoke(type.getDeclaredConstructor().newInstance()), is((Object) BAR));
             assertThat(type.getSuperclass().getDeclaredMethod(FOO).invoke(type.getDeclaredConstructor().newInstance()), nullValue(Object.class));
         } finally {
-            ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer);
+            assertThat(ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer), is(true));
         }
     }
 
@@ -93,7 +91,7 @@ public class AgentBuilderDefaultApplicationSuperTypeLoadingTest {
             assertThat(type.getDeclaredMethod(BAR).invoke(type.getDeclaredConstructor().newInstance()), is((Object) BAR));
             assertThat(type.getSuperclass().getDeclaredMethod(FOO).invoke(type.getDeclaredConstructor().newInstance()), is((Object) FOO));
         } finally {
-            ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer);
+            assertThat(ByteBuddyAgent.getInstrumentation().removeTransformer(classFileTransformer), is(true));
         }
     }
 
@@ -113,11 +111,11 @@ public class AgentBuilderDefaultApplicationSuperTypeLoadingTest {
 
     private static class ConstantTransformer implements AgentBuilder.Transformer {
 
-        @Override
         public DynamicType.Builder<?> transform(DynamicType.Builder<?> builder,
                                                 TypeDescription typeDescription,
                                                 ClassLoader classLoader,
-                                                JavaModule module) {
+                                                JavaModule module,
+                                                ProtectionDomain protectionDomain) {
             return builder
                     .method(isDeclaredBy(typeDescription).and(named(FOO))).intercept(FixedValue.value(FOO))
                     .method(isDeclaredBy(typeDescription).and(named(BAR))).intercept(FixedValue.value(BAR));

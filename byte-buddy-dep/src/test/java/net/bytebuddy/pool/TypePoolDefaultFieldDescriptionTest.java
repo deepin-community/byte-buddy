@@ -14,9 +14,10 @@ public class TypePoolDefaultFieldDescriptionTest extends AbstractFieldDescriptio
     private TypePool typePool;
 
     @Before
+    @Override
     public void setUp() throws Exception {
         super.setUp();
-        typePool = TypePool.Default.ofClassPath();
+        typePool = TypePool.Default.ofSystemLoader();
     }
 
     @After
@@ -24,7 +25,6 @@ public class TypePoolDefaultFieldDescriptionTest extends AbstractFieldDescriptio
         typePool.clear();
     }
 
-    @Override
     protected FieldDescription.InDefinedShape describe(Field field) {
         return typePool.describe(field.getDeclaringClass().getName())
                 .resolve()

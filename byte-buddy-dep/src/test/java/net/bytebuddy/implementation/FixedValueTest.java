@@ -5,16 +5,12 @@ import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.dynamic.loading.ClassLoadingStrategy;
 import net.bytebuddy.test.utility.CallTraceable;
 import net.bytebuddy.test.utility.JavaVersionRule;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import net.bytebuddy.utility.JavaConstant;
 import net.bytebuddy.utility.JavaType;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.MethodRule;
-
-import java.util.Arrays;
-import java.util.Iterator;
 
 import static net.bytebuddy.matcher.ElementMatchers.isDeclaredBy;
 import static net.bytebuddy.matcher.ElementMatchers.named;
@@ -50,7 +46,7 @@ public class FixedValueTest {
         Class<? extends Qux> qux = new ByteBuddy()
                 .subclass(Qux.class)
                 .method(isDeclaredBy(Qux.class))
-                .intercept(FixedValue.value(TypeDescription.OBJECT))
+                .intercept(FixedValue.value(TypeDescription.ForLoadedType.of(Object.class)))
                 .make()
                 .load(Qux.class.getClassLoader(), ClassLoadingStrategy.Default.WRAPPER)
                 .getLoaded();
@@ -100,7 +96,7 @@ public class FixedValueTest {
     }
 
     @Test
-    @JavaVersionRule.Enforce(value = 7, hotSpot = 7)
+    @JavaVersionRule.Enforce(value = 7, atMost = 7, j9 = false)
     public void testMethodHandleConstantPool() throws Exception {
         Class<? extends Qux> qux = new ByteBuddy()
                 .subclass(Qux.class)
@@ -114,7 +110,7 @@ public class FixedValueTest {
     }
 
     @Test
-    @JavaVersionRule.Enforce(value = 7, hotSpot = 7)
+    @JavaVersionRule.Enforce(value = 7, atMost = 7, j9 = false)
     public void testMethodHandleConstantPoolValue() throws Exception {
         Class<? extends Qux> qux = new ByteBuddy()
                 .subclass(Qux.class)
@@ -224,11 +220,9 @@ public class FixedValueTest {
                 .make()
                 .load(FooQux.class.getClassLoader(), ClassLoadingStrategy.Default.WRAPPER)
                 .getLoaded();
-
         assertThat(fooQux.getDeclaredFields().length, is(0));
         assertThat(fooQux.getDeclaredMethods().length, is(1));
-        assertThat(fooQux.getDeclaredMethod(BAR, Integer.class, String.class)
-                .invoke(fooQux.getDeclaredConstructor().newInstance(), 0, BAR), is((Object) BAR));
+        assertThat(fooQux.getDeclaredMethod(BAR, Integer.class, String.class).invoke(fooQux.getDeclaredConstructor().newInstance(), 0, BAR), is((Object) BAR));
     }
 
     @Test(expected = IllegalArgumentException.class)
@@ -252,24 +246,6 @@ public class FixedValueTest {
                 .method(isDeclaredBy(FooQux.class))
                 .intercept(FixedValue.argument(2))
                 .make();
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        final Iterator<Class<?>> iterator = Arrays.<Class<?>>asList(Object.class, String.class, Integer.class).iterator();
-        ObjectPropertyAssertion.of(FixedValue.ForPoolValue.class).create(new ObjectPropertyAssertion.Creator<Class<?>>() {
-            @Override
-            public Class<?> create() {
-                return iterator.next();
-            }
-        }).skipSynthetic().apply();
-        ObjectPropertyAssertion.of(FixedValue.ForValue.class).apply();
-        ObjectPropertyAssertion.of(FixedValue.ForOriginType.class).apply();
-        ObjectPropertyAssertion.of(FixedValue.ForOriginType.Appender.class).apply();
-        ObjectPropertyAssertion.of(FixedValue.ForNullValue.class).apply();
-        ObjectPropertyAssertion.of(FixedValue.ForThisValue.class).apply();
-        ObjectPropertyAssertion.of(FixedValue.ForThisValue.Appender.class).apply();
-        ObjectPropertyAssertion.of(FixedValue.ForArgument.class).apply();
     }
 
     public static class Foo extends CallTraceable {

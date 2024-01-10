@@ -1,6 +1,21 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation.bytecode;
 
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.implementation.Implementation;
 import org.objectweb.asm.MethodVisitor;
@@ -9,8 +24,8 @@ import org.objectweb.asm.Opcodes;
 /**
  * A stack manipulation for creating an <i>undefined</i> type on which a constructor is to be called.
  */
-@EqualsAndHashCode
-public class TypeCreation implements StackManipulation {
+@HashCodeAndEqualsPlugin.Enhance
+public class TypeCreation extends StackManipulation.AbstractBase {
 
     /**
      * The type that is being created.
@@ -20,7 +35,7 @@ public class TypeCreation implements StackManipulation {
     /**
      * Constructs a new type creation.
      *
-     * @param typeDescription The type to be create.
+     * @param typeDescription The type to be created.
      */
     protected TypeCreation(TypeDescription typeDescription) {
         this.typeDescription = typeDescription;
@@ -29,7 +44,7 @@ public class TypeCreation implements StackManipulation {
     /**
      * Creates a type creation for the given type.
      *
-     * @param typeDescription The type to be create.
+     * @param typeDescription The type to be created.
      * @return A stack manipulation that represents the creation of the given type.
      */
     public static StackManipulation of(TypeDescription typeDescription) {
@@ -39,12 +54,9 @@ public class TypeCreation implements StackManipulation {
         return new TypeCreation(typeDescription);
     }
 
-    @Override
-    public boolean isValid() {
-        return true;
-    }
-
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext) {
         methodVisitor.visitTypeInsn(Opcodes.NEW, typeDescription.getInternalName());
         return new Size(1, 1);

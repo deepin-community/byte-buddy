@@ -1,6 +1,21 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation.bind.annotation;
 
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.annotation.AnnotationDescription;
 import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.method.MethodList;
@@ -94,18 +109,22 @@ public @interface DefaultCall {
          * Looks up method constants of the default call annotation.
          */
         static {
-            MethodList<MethodDescription.InDefinedShape> annotationProperties = new TypeDescription.ForLoadedType(DefaultCall.class).getDeclaredMethods();
+            MethodList<MethodDescription.InDefinedShape> annotationProperties = TypeDescription.ForLoadedType.of(DefaultCall.class).getDeclaredMethods();
             TARGET_TYPE = annotationProperties.filter(named("targetType")).getOnly();
             SERIALIZABLE_PROXY = annotationProperties.filter(named("serializableProxy")).getOnly();
             NULL_IF_IMPOSSIBLE = annotationProperties.filter(named("nullIfImpossible")).getOnly();
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Class<DefaultCall> getHandledType() {
             return DefaultCall.class;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public MethodDelegationBinder.ParameterBinding<?> bind(AnnotationDescription.Loadable<DefaultCall> annotation,
                                                                MethodDescription source,
                                                                ParameterDescription target,
@@ -123,11 +142,11 @@ public @interface DefaultCall {
             TypeDescription typeDescription = annotation.getValue(TARGET_TYPE).resolve(TypeDescription.class);
             Implementation.SpecialMethodInvocation specialMethodInvocation = (typeDescription.represents(void.class)
                     ? DefaultMethodLocator.Implicit.INSTANCE
-                    : new DefaultMethodLocator.Explicit(typeDescription)).resolve(implementationTarget, source);
+                    : new DefaultMethodLocator.Explicit(typeDescription)).resolve(implementationTarget, source).withCheckedCompatibilityTo(source.asTypeToken());
             StackManipulation stackManipulation;
             if (specialMethodInvocation.isValid()) {
                 stackManipulation = new MethodCallProxy.AssignableSignatureCall(specialMethodInvocation, annotation.getValue(SERIALIZABLE_PROXY).resolve(Boolean.class));
-            } else if (annotation.loadSilent().nullIfImpossible()) {
+            } else if (annotation.getValue(NULL_IF_IMPOSSIBLE).resolve(Boolean.class)) {
                 stackManipulation = NullConstant.INSTANCE;
             } else {
                 return MethodDelegationBinder.ParameterBinding.Illegal.INSTANCE;
@@ -148,8 +167,7 @@ public @interface DefaultCall {
              * @return A special method invocation of the default method or an illegal special method invocation,
              * if no suitable invocation could be located.
              */
-            Implementation.SpecialMethodInvocation resolve(Implementation.Target implementationTarget,
-                                                           MethodDescription source);
+            Implementation.SpecialMethodInvocation resolve(Implementation.Target implementationTarget, MethodDescription source);
 
             /**
              * An implicit default method locator that only permits the invocation of a default method if the source
@@ -162,7 +180,9 @@ public @interface DefaultCall {
                  */
                 INSTANCE;
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public Implementation.SpecialMethodInvocation resolve(Implementation.Target implementationTarget, MethodDescription source) {
                     return implementationTarget.invokeDefault(source.asSignatureToken());
                 }
@@ -171,7 +191,7 @@ public @interface DefaultCall {
             /**
              * An explicit default method locator attempts to look up a default method in the specified interface type.
              */
-            @EqualsAndHashCode
+            @HashCodeAndEqualsPlugin.Enhance
             class Explicit implements DefaultMethodLocator {
 
                 /**
@@ -189,7 +209,9 @@ public @interface DefaultCall {
                     this.typeDescription = typeDescription;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public Implementation.SpecialMethodInvocation resolve(Implementation.Target implementationTarget, MethodDescription source) {
                     if (!typeDescription.isInterface()) {
                         throw new IllegalStateException(source + " method carries default method call parameter on non-interface type");

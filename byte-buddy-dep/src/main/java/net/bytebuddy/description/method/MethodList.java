@@ -1,14 +1,33 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.description.method;
 
 import net.bytebuddy.description.ByteCodeElement;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.matcher.ElementMatcher;
 import net.bytebuddy.matcher.FilterableList;
+import net.bytebuddy.utility.ConstructorComparator;
+import net.bytebuddy.utility.GraalImageCode;
+import net.bytebuddy.utility.MethodComparator;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -26,6 +45,22 @@ public interface MethodList<T extends MethodDescription> extends FilterableList<
      * @return The transformed token list.
      */
     ByteCodeElement.Token.TokenList<MethodDescription.Token> asTokenList(ElementMatcher<? super TypeDescription> matcher);
+
+    /**
+     * Returns a list of signature tokens for this list of methods.
+     *
+     * @return A list of signature tokens for this list of methods.
+     */
+    List<MethodDescription.SignatureToken> asSignatureTokenList();
+
+    /**
+     * Returns a list of signature tokens for this list of methods.
+     *
+     * @param matcher         A matcher for resolving methods to {@link net.bytebuddy.description.method.MethodDescription.Token}s.
+     * @param typeDescription The type description to resolve the {@link net.bytebuddy.description.method.MethodDescription.SignatureToken}s to.
+     * @return A list of signature tokens for this list of methods.
+     */
+    List<MethodDescription.SignatureToken> asSignatureTokenList(ElementMatcher<? super TypeDescription> matcher, TypeDescription typeDescription);
 
     /**
      * Returns this list of these method descriptions resolved to their defined shape.
@@ -46,7 +81,9 @@ public interface MethodList<T extends MethodDescription> extends FilterableList<
             return new Explicit<S>(values);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public ByteCodeElement.Token.TokenList<MethodDescription.Token> asTokenList(ElementMatcher<? super TypeDescription> matcher) {
             List<MethodDescription.Token> tokens = new ArrayList<MethodDescription.Token>(size());
             for (MethodDescription methodDescription : this) {
@@ -55,7 +92,31 @@ public interface MethodList<T extends MethodDescription> extends FilterableList<
             return new ByteCodeElement.Token.TokenList<MethodDescription.Token>(tokens);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
+        public List<MethodDescription.SignatureToken> asSignatureTokenList() {
+            List<MethodDescription.SignatureToken> tokens = new ArrayList<MethodDescription.SignatureToken>(size());
+            for (MethodDescription methodDescription : this) {
+                tokens.add(methodDescription.asSignatureToken());
+            }
+            return tokens;
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public List<MethodDescription.SignatureToken> asSignatureTokenList(ElementMatcher<? super TypeDescription> matcher, TypeDescription typeDescription) {
+            List<MethodDescription.SignatureToken> tokens = new ArrayList<MethodDescription.SignatureToken>(size());
+            for (MethodDescription methodDescription : this) {
+                tokens.add(methodDescription.asToken(matcher).asSignatureToken(typeDescription));
+            }
+            return tokens;
+        }
+
+        /**
+         * {@inheritDoc}
+         */
         public MethodList<MethodDescription.InDefinedShape> asDefined() {
             List<MethodDescription.InDefinedShape> declaredForms = new ArrayList<MethodDescription.InDefinedShape>(size());
             for (MethodDescription methodDescription : this) {
@@ -87,7 +148,8 @@ public interface MethodList<T extends MethodDescription> extends FilterableList<
          * @param type The type to be represented by this method list.
          */
         public ForLoadedMethods(Class<?> type) {
-            this(type.getDeclaredConstructors(), type.getDeclaredMethods());
+            this(GraalImageCode.getCurrent().sorted(type.getDeclaredConstructors(), ConstructorComparator.INSTANCE),
+                    GraalImageCode.getCurrent().sorted(type.getDeclaredMethods(), MethodComparator.INSTANCE));
         }
 
         /**
@@ -113,7 +175,9 @@ public interface MethodList<T extends MethodDescription> extends FilterableList<
             this.methods = methods;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public MethodDescription.InDefinedShape get(int index) {
             return index < constructors.size()
                     ? new MethodDescription.ForLoadedConstructor(constructors.get(index))
@@ -121,7 +185,9 @@ public interface MethodList<T extends MethodDescription> extends FilterableList<
 
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public int size() {
             return constructors.size() + methods.size();
         }
@@ -158,12 +224,16 @@ public interface MethodList<T extends MethodDescription> extends FilterableList<
             this.methodDescriptions = methodDescriptions;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public S get(int index) {
             return methodDescriptions.get(index);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public int size() {
             return methodDescriptions.size();
         }
@@ -205,12 +275,16 @@ public interface MethodList<T extends MethodDescription> extends FilterableList<
             this.tokens = tokens;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public MethodDescription.InDefinedShape get(int index) {
             return new MethodDescription.Latent(declaringType, tokens.get(index));
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public int size() {
             return tokens.size();
         }
@@ -251,12 +325,16 @@ public interface MethodList<T extends MethodDescription> extends FilterableList<
             this.visitor = visitor;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public MethodDescription.InGenericShape get(int index) {
             return new MethodDescription.TypeSubstituting(declaringType, methodDescriptions.get(index), visitor);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public int size() {
             return methodDescriptions.size();
         }
@@ -269,12 +347,30 @@ public interface MethodList<T extends MethodDescription> extends FilterableList<
      */
     class Empty<S extends MethodDescription> extends FilterableList.Empty<S, MethodList<S>> implements MethodList<S> {
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public ByteCodeElement.Token.TokenList<MethodDescription.Token> asTokenList(ElementMatcher<? super TypeDescription> matcher) {
             return new ByteCodeElement.Token.TokenList<MethodDescription.Token>();
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
+        public List<MethodDescription.SignatureToken> asSignatureTokenList() {
+            return Collections.<MethodDescription.SignatureToken>emptyList();
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        public List<MethodDescription.SignatureToken> asSignatureTokenList(ElementMatcher<? super TypeDescription> matcher, TypeDescription typeDescription) {
+            return Collections.<MethodDescription.SignatureToken>emptyList();
+        }
+
+        /**
+         * {@inheritDoc}
+         */
         @SuppressWarnings("unchecked")
         public MethodList<MethodDescription.InDefinedShape> asDefined() {
             return (MethodList<MethodDescription.InDefinedShape>) this;

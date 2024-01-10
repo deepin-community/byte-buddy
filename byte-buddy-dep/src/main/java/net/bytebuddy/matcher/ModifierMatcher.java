@@ -1,6 +1,21 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.matcher;
 
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.ModifierReviewable;
 import org.objectweb.asm.Opcodes;
 
@@ -9,8 +24,20 @@ import org.objectweb.asm.Opcodes;
  *
  * @param <T> The type of the matched entity.
  */
-@EqualsAndHashCode(callSuper = false)
-public class ModifierMatcher<T extends ModifierReviewable> extends ElementMatcher.Junction.AbstractBase<T> {
+@HashCodeAndEqualsPlugin.Enhance
+public class ModifierMatcher<T extends ModifierReviewable> extends ElementMatcher.Junction.ForNonNullValues<T> {
+
+    /**
+     * Returns a new element matcher that matches an element by its modifier.
+     *
+     * @param <T>  The type of the matched entity.
+     * @param mode The match mode to apply to the matched element's modifier.
+     * @return A matcher that matches methods of the provided sort.
+     */
+    @SuppressWarnings("unchecked")
+    public static <T extends ModifierReviewable> ElementMatcher.Junction<T> of(Mode mode) {
+        return (ElementMatcher.Junction<T>) mode.getMatcher();
+    }
 
     /**
      * The matching mode to apply by this modifier matcher.
@@ -26,8 +53,10 @@ public class ModifierMatcher<T extends ModifierReviewable> extends ElementMatche
         this.mode = mode;
     }
 
-    @Override
-    public boolean matches(T target) {
+    /**
+     * {@inheritDoc}
+     */
+    protected boolean doMatch(T target) {
         return (mode.getModifiers() & target.getModifiers()) != 0;
     }
 
@@ -142,6 +171,11 @@ public class ModifierMatcher<T extends ModifierReviewable> extends ElementMatche
         private final String description;
 
         /**
+         * The canonical matcher instance.
+         */
+        private final ModifierMatcher<?> matcher;
+
+        /**
          * Creates a new modifier matcher mode.
          *
          * @param modifiers   The mask of the modifier to match.
@@ -150,6 +184,7 @@ public class ModifierMatcher<T extends ModifierReviewable> extends ElementMatche
         Mode(int modifiers, String description) {
             this.modifiers = modifiers;
             this.description = description;
+            matcher = new ModifierMatcher<ModifierReviewable>(this);
         }
 
         /**
@@ -170,9 +205,13 @@ public class ModifierMatcher<T extends ModifierReviewable> extends ElementMatche
             return modifiers;
         }
 
-        @Override
-        public String toString() {
-            return "ModifierMatcher.Mode." + name();
+        /**
+         * Returns a reusable matcher for this modifier sort.
+         *
+         * @return A reusable matcher for this modifier sort.
+         */
+        protected ModifierMatcher<?> getMatcher() {
+            return matcher;
         }
     }
 }

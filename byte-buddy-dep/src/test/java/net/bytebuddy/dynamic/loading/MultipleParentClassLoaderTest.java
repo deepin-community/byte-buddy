@@ -1,25 +1,21 @@
 package net.bytebuddy.dynamic.loading;
 
 import net.bytebuddy.test.utility.IntegrationRule;
-import net.bytebuddy.test.utility.MockitoRule;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.hamcrest.CoreMatchers;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.MethodRule;
-import org.junit.rules.TestRule;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 
-import java.lang.reflect.Method;
 import java.net.URL;
 import java.util.Enumeration;
 import java.util.NoSuchElementException;
 
 import static net.bytebuddy.matcher.ElementMatchers.isBootstrapClassLoader;
 import static net.bytebuddy.matcher.ElementMatchers.not;
-import static org.hamcrest.CoreMatchers.is;
-import static org.hamcrest.CoreMatchers.nullValue;
+import static org.hamcrest.CoreMatchers.*;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.mockito.Mockito.*;
 
@@ -28,7 +24,7 @@ public class MultipleParentClassLoaderTest {
     private static final String FOO = "foo", BAR = "bar", QUX = "qux", BAZ = "baz", SCHEME = "http://";
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     @Rule
     public MethodRule integrationRule = new IntegrationRule();
@@ -65,7 +61,7 @@ public class MultipleParentClassLoaderTest {
     @Test
     public void testSingleParentReturnsOriginal() throws Exception {
         assertThat(new MultipleParentClassLoader.Builder()
-                .append(getClass().getClassLoader(), getClass().getClassLoader())
+                .append(ClassLoader.getSystemClassLoader(), ClassLoader.getSystemClassLoader())
                 .build(), is(ClassLoader.getSystemClassLoader()));
     }
 
@@ -80,9 +76,54 @@ public class MultipleParentClassLoaderTest {
     @Test
     public void testClassLoaderFilter() throws Exception {
         assertThat(new MultipleParentClassLoader.Builder()
-                .append(getClass().getClassLoader(), null)
+                .append(ClassLoader.getSystemClassLoader(), null)
                 .filter(not(isBootstrapClassLoader()))
-                .build(), is(getClass().getClassLoader()));
+                .build(), is(ClassLoader.getSystemClassLoader()));
+    }
+
+    @Test
+    public void testMostSpecificInHierarchyFirst() throws Exception {
+        assertThat(new MultipleParentClassLoader.Builder()
+                .appendMostSpecific(ClassLoader.getSystemClassLoader(), ClassLoader.getSystemClassLoader().getParent())
+                .build(), is(ClassLoader.getSystemClassLoader()));
+    }
+
+    @Test
+    public void testMostSpecificInHierarchyFirstChained() throws Exception {
+        assertThat(new MultipleParentClassLoader.Builder()
+                .appendMostSpecific(ClassLoader.getSystemClassLoader())
+                .appendMostSpecific(ClassLoader.getSystemClassLoader().getParent())
+                .build(), is(ClassLoader.getSystemClassLoader()));
+    }
+
+    @Test
+    public void testMostSpecificInHierarchyLast() throws Exception {
+        assertThat(new MultipleParentClassLoader.Builder()
+                .appendMostSpecific(ClassLoader.getSystemClassLoader().getParent(), ClassLoader.getSystemClassLoader())
+                .build(), is(ClassLoader.getSystemClassLoader()));
+    }
+
+    @Test
+    public void testMostSpecificInHierarchyFirstLast() throws Exception {
+        assertThat(new MultipleParentClassLoader.Builder()
+                .appendMostSpecific(ClassLoader.getSystemClassLoader().getParent())
+                .appendMostSpecific(ClassLoader.getSystemClassLoader())
+                .build(), is(ClassLoader.getSystemClassLoader()));
+    }
+
+    @Test
+    public void testMostSpecificInHierarchyUnique() throws Exception {
+        assertThat(new MultipleParentClassLoader.Builder()
+                .appendMostSpecific(first, second)
+                .build(), instanceOf(MultipleParentClassLoader.class));
+    }
+
+    @Test
+    public void testMostSpecificInHierarchyFirstUnique() throws Exception {
+        assertThat(new MultipleParentClassLoader.Builder()
+                .appendMostSpecific(first)
+                .appendMostSpecific(second)
+                .build(), instanceOf(MultipleParentClassLoader.class));
     }
 
     @Test
@@ -164,7 +205,8 @@ public class MultipleParentClassLoaderTest {
 
     @Test
     public void testMultipleParentClassLoaderExplicitParentPreIncludedWithOther() throws Exception {
-        ClassLoader classLoader = new MultipleParentClassLoader.Builder().append(first, second).build(first);;
+        ClassLoader classLoader = new MultipleParentClassLoader.Builder().append(first, second).build(first);
+        ;
         assertThat(classLoader, CoreMatchers.not(first));
         assertThat(classLoader, CoreMatchers.not(second));
         assertThat(classLoader.getParent(), is(first));
@@ -172,14 +214,9 @@ public class MultipleParentClassLoaderTest {
 
     @Test
     public void testMultipleParentClassLoaderExplicitParentNotPreIncludedWithOther() throws Exception {
-        ClassLoader classLoader = new MultipleParentClassLoader.Builder().append(second).build(first);;
+        ClassLoader classLoader = new MultipleParentClassLoader.Builder().append(second).build(first);
         assertThat(classLoader, CoreMatchers.not(second));
         assertThat(classLoader.getParent(), is(first));
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(MultipleParentClassLoader.Builder.class).apply();
     }
 
     public static class Foo {
@@ -206,12 +243,10 @@ public class MultipleParentClassLoaderTest {
             this.element = element;
         }
 
-        @Override
         public boolean hasMoreElements() {
             return element != null;
         }
 
-        @Override
         public URL nextElement() {
             if (!hasMoreElements()) {
                 throw new AssertionError();

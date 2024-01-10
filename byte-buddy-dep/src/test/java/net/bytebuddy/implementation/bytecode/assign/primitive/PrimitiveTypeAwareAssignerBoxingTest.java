@@ -3,14 +3,14 @@ package net.bytebuddy.implementation.bytecode.assign.primitive;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.implementation.bytecode.StackManipulation;
 import net.bytebuddy.implementation.bytecode.assign.Assigner;
-import net.bytebuddy.test.utility.MockitoRule;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 
 import java.util.Arrays;
 import java.util.Collection;
@@ -29,7 +29,7 @@ public class PrimitiveTypeAwareAssignerBoxingTest {
     private final boolean assignable;
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     @Mock
     private TypeDescription.Generic sourceTypeDescription, targetTypeDescription;
@@ -88,7 +88,7 @@ public class PrimitiveTypeAwareAssignerBoxingTest {
         verifyNoMoreInteractions(sourceTypeDescription);
         verify(targetTypeDescription, atLeast(1)).isPrimitive();
         verifyNoMoreInteractions(targetTypeDescription);
-        verify(chainedAssigner).assign(new TypeDescription.Generic.OfNonGenericType.ForLoadedType(targetType), targetTypeDescription, Assigner.Typing.STATIC);
+        verify(chainedAssigner).assign(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(targetType), targetTypeDescription, Assigner.Typing.STATIC);
         verifyNoMoreInteractions(chainedAssigner);
     }
 }

@@ -1,7 +1,23 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.dynamic.scaffold.subclass;
 
-import lombok.EqualsAndHashCode;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import net.bytebuddy.ClassFileVersion;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.method.MethodList;
 import net.bytebuddy.description.type.TypeDefinition;
@@ -15,7 +31,7 @@ import static net.bytebuddy.matcher.ElementMatchers.isVisibleTo;
 /**
  * An implementation target for creating a subclass of a given type.
  */
-@EqualsAndHashCode(callSuper = true)
+@HashCodeAndEqualsPlugin.Enhance
 public class SubclassImplementationTarget extends Implementation.Target.AbstractBase {
 
     /**
@@ -39,7 +55,9 @@ public class SubclassImplementationTarget extends Implementation.Target.Abstract
         this.originTypeResolver = originTypeResolver;
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public Implementation.SpecialMethodInvocation invokeSuper(MethodDescription.SignatureToken token) {
         return token.getName().equals(MethodDescription.CONSTRUCTOR_INTERNAL_NAME)
                 ? invokeConstructor(token)
@@ -58,7 +76,7 @@ public class SubclassImplementationTarget extends Implementation.Target.Abstract
                 ? new MethodList.Empty<MethodDescription.InGenericShape>()
                 : superClass.getDeclaredMethods().filter(hasSignature(token).and(isVisibleTo(instrumentedType)));
         return candidates.size() == 1
-                ? Implementation.SpecialMethodInvocation.Simple.of(candidates.getOnly(), instrumentedType.getSuperClass().asErasure())
+                ? Implementation.SpecialMethodInvocation.Simple.of(candidates.getOnly(), superClass.asErasure())
                 : Implementation.SpecialMethodInvocation.Illegal.INSTANCE;
     }
 
@@ -68,6 +86,7 @@ public class SubclassImplementationTarget extends Implementation.Target.Abstract
      * @param token A token describing the method to be invoked.
      * @return A special method invocation for a method representing the given method token, if available.
      */
+    @SuppressFBWarnings(value = "NP_NULL_ON_SOME_PATH_FROM_RETURN_VALUE", justification = "Assuming super class for given instance.")
     private Implementation.SpecialMethodInvocation invokeMethod(MethodDescription.SignatureToken token) {
         MethodGraph.Node methodNode = methodGraph.getSuperClassGraph().locate(token);
         return methodNode.getSort().isUnique()
@@ -75,7 +94,9 @@ public class SubclassImplementationTarget extends Implementation.Target.Abstract
                 : Implementation.SpecialMethodInvocation.Illegal.INSTANCE;
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public TypeDefinition getOriginType() {
         return originTypeResolver.identify(instrumentedType);
     }
@@ -91,6 +112,7 @@ public class SubclassImplementationTarget extends Implementation.Target.Abstract
          */
         SUPER_CLASS {
             @Override
+            @SuppressFBWarnings(value = "NP_NULL_ON_SOME_PATH_FROM_RETURN_VALUE", justification = "Assuming super class for given instance.")
             protected TypeDefinition identify(TypeDescription typeDescription) {
                 return typeDescription.getSuperClass();
             }
@@ -144,7 +166,9 @@ public class SubclassImplementationTarget extends Implementation.Target.Abstract
             this.originTypeResolver = originTypeResolver;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Implementation.Target make(TypeDescription instrumentedType, MethodGraph.Linked methodGraph, ClassFileVersion classFileVersion) {
             return new SubclassImplementationTarget(instrumentedType, methodGraph, DefaultMethodInvocation.of(classFileVersion), originTypeResolver);
         }

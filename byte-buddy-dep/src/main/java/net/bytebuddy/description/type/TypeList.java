@@ -1,6 +1,22 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.description.type;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import net.bytebuddy.build.CachedReturnPlugin;
 import net.bytebuddy.description.ByteCodeElement;
 import net.bytebuddy.description.TypeVariableSource;
 import net.bytebuddy.description.annotation.AnnotationList;
@@ -10,6 +26,9 @@ import net.bytebuddy.description.method.ParameterDescription;
 import net.bytebuddy.implementation.bytecode.StackSize;
 import net.bytebuddy.matcher.ElementMatcher;
 import net.bytebuddy.matcher.FilterableList;
+import net.bytebuddy.utility.JavaConstant;
+import net.bytebuddy.utility.nullability.AlwaysNull;
+import net.bytebuddy.utility.nullability.MaybeNull;
 import org.objectweb.asm.Type;
 
 import java.lang.reflect.Constructor;
@@ -26,9 +45,16 @@ import java.util.List;
 public interface TypeList extends FilterableList<TypeDescription, TypeList> {
 
     /**
+     * An {@code null} type list.
+     */
+    @AlwaysNull
+    TypeList UNDEFINED = null;
+
+    /**
      * Represents that a type list does not contain any values for ASM interoperability which is represented by {@code null}.
      */
-    @SuppressFBWarnings(value = {"MS_MUTABLE_ARRAY", "MS_OOI_PKGPROTECT"}, justification = "Value is null")
+    @AlwaysNull
+    @SuppressFBWarnings(value = {"MS_MUTABLE_ARRAY", "MS_OOI_PKGPROTECT"}, justification = "Null reference cannot be mutated.")
     String[] NO_INTERFACES = null;
 
     /**
@@ -36,6 +62,7 @@ public interface TypeList extends FilterableList<TypeDescription, TypeList> {
      *
      * @return An array of all internal names or {@code null} if the list is empty.
      */
+    @MaybeNull
     String[] toInternalNames();
 
     /**
@@ -55,9 +82,26 @@ public interface TypeList extends FilterableList<TypeDescription, TypeList> {
             return new Explicit(values);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public int getStackSize() {
             return StackSize.of(this);
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        @MaybeNull
+        public String[] toInternalNames() {
+            String[] internalNames = new String[size()];
+            int i = 0;
+            for (TypeDescription typeDescription : this) {
+                internalNames[i++] = typeDescription.getInternalName();
+            }
+            return internalNames.length == 0
+                    ? NO_INTERFACES
+                    : internalNames;
         }
     }
 
@@ -89,17 +133,24 @@ public interface TypeList extends FilterableList<TypeDescription, TypeList> {
             this.types = types;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public TypeDescription get(int index) {
-            return new TypeDescription.ForLoadedType(types.get(index));
+            return TypeDescription.ForLoadedType.of(types.get(index));
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public int size() {
             return types.size();
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
+        @MaybeNull
         public String[] toInternalNames() {
             String[] internalNames = new String[types.size()];
             int i = 0;
@@ -140,26 +191,32 @@ public interface TypeList extends FilterableList<TypeDescription, TypeList> {
             this.typeDescriptions = typeDescriptions;
         }
 
-        @Override
+        /**
+         * Returns a list of types of the supplied Java constants.
+         *
+         * @param constants The Java constants to represent as type descriptions.
+         * @return A list of type descriptions for the supplied constants.
+         */
+        public static TypeList of(List<? extends JavaConstant> constants) {
+            List<TypeDescription> typeDescriptions = new ArrayList<TypeDescription>(constants.size());
+            for (JavaConstant constant : constants) {
+                typeDescriptions.add(constant.getTypeDescription());
+            }
+            return new Explicit(typeDescriptions);
+        }
+
+        /**
+         * {@inheritDoc}
+         */
         public TypeDescription get(int index) {
             return typeDescriptions.get(index);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public int size() {
             return typeDescriptions.size();
-        }
-
-        @Override
-        public String[] toInternalNames() {
-            String[] internalNames = new String[typeDescriptions.size()];
-            int i = 0;
-            for (TypeDescription typeDescription : typeDescriptions) {
-                internalNames[i++] = typeDescription.getInternalName();
-            }
-            return internalNames.length == 0
-                    ? NO_INTERFACES
-                    : internalNames;
         }
     }
 
@@ -168,13 +225,17 @@ public interface TypeList extends FilterableList<TypeDescription, TypeList> {
      */
     class Empty extends FilterableList.Empty<TypeDescription, TypeList> implements TypeList {
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         @SuppressFBWarnings(value = "EI_EXPOSE_REP", justification = "Value is null")
         public String[] toInternalNames() {
             return NO_INTERFACES;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public int getStackSize() {
             return 0;
         }
@@ -233,7 +294,9 @@ public interface TypeList extends FilterableList<TypeDescription, TypeList> {
                 return new Explicit(values);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Generic accept(TypeDescription.Generic.Visitor<? extends TypeDescription.Generic> visitor) {
                 List<TypeDescription.Generic> visited = new ArrayList<TypeDescription.Generic>(size());
                 for (TypeDescription.Generic typeDescription : this) {
@@ -242,7 +305,9 @@ public interface TypeList extends FilterableList<TypeDescription, TypeList> {
                 return new Explicit(visited);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public ByteCodeElement.Token.TokenList<TypeVariableToken> asTokenList(ElementMatcher<? super TypeDescription> matcher) {
                 List<TypeVariableToken> tokens = new ArrayList<TypeVariableToken>(size());
                 for (TypeDescription.Generic typeVariable : this) {
@@ -251,7 +316,9 @@ public interface TypeList extends FilterableList<TypeDescription, TypeList> {
                 return new ByteCodeElement.Token.TokenList<TypeVariableToken>(tokens);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public int getStackSize() {
                 int stackSize = 0;
                 for (TypeDescription.Generic typeDescription : this) {
@@ -260,7 +327,9 @@ public interface TypeList extends FilterableList<TypeDescription, TypeList> {
                 return stackSize;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public TypeList asErasures() {
                 List<TypeDescription> typeDescriptions = new ArrayList<TypeDescription>(size());
                 for (TypeDescription.Generic typeDescription : this) {
@@ -269,7 +338,9 @@ public interface TypeList extends FilterableList<TypeDescription, TypeList> {
                 return new TypeList.Explicit(typeDescriptions);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Generic asRawTypes() {
                 List<TypeDescription.Generic> typeDescriptions = new ArrayList<TypeDescription.Generic>(size());
                 for (TypeDescription.Generic typeDescription : this) {
@@ -307,12 +378,16 @@ public interface TypeList extends FilterableList<TypeDescription, TypeList> {
                 this.typeDefinitions = typeDefinitions;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public TypeDescription.Generic get(int index) {
                 return typeDefinitions.get(index).asGenericType();
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public int size() {
                 return typeDefinitions.size();
             }
@@ -346,12 +421,16 @@ public interface TypeList extends FilterableList<TypeDescription, TypeList> {
                 this.types = types;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public TypeDescription.Generic get(int index) {
                 return TypeDefinition.Sort.describe(types.get(index));
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public int size() {
                 return types.size();
             }
@@ -394,13 +473,17 @@ public interface TypeList extends FilterableList<TypeDescription, TypeList> {
                     return new OfTypeVariables(genericDeclaration.getTypeParameters());
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public TypeDescription.Generic get(int index) {
                     TypeVariable<?> typeVariable = typeVariables.get(index);
-                    return TypeDefinition.Sort.describe(typeVariable, TypeDescription.Generic.AnnotationReader.DISPATCHER.resolveTypeVariable(typeVariable));
+                    return TypeDefinition.Sort.describe(typeVariable, new TypeDescription.Generic.AnnotationReader.Delegator.ForLoadedTypeVariable(typeVariable));
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public int size() {
                     return typeVariables.size();
                 }
@@ -489,12 +572,16 @@ public interface TypeList extends FilterableList<TypeDescription, TypeList> {
                 return new ForDetachedTypes(detachedTypes, TypeDescription.Generic.Visitor.Substitutor.ForAttachment.of(parameterDescription));
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public TypeDescription.Generic get(int index) {
                 return detachedTypes.get(index).accept(visitor);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public int size() {
                 return detachedTypes.size();
             }
@@ -522,17 +609,21 @@ public interface TypeList extends FilterableList<TypeDescription, TypeList> {
                  * @param visitor       The visitor to use for attaching the detached types.
                  */
                 public WithResolvedErasure(List<? extends TypeDescription.Generic> detachedTypes,
-                                          TypeDescription.Generic.Visitor<? extends TypeDescription.Generic> visitor) {
+                                           TypeDescription.Generic.Visitor<? extends TypeDescription.Generic> visitor) {
                     this.detachedTypes = detachedTypes;
                     this.visitor = visitor;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public TypeDescription.Generic get(int index) {
                     return new TypeDescription.Generic.LazyProjection.WithResolvedErasure(detachedTypes.get(index), visitor);
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public int size() {
                     return detachedTypes.size();
                 }
@@ -573,12 +664,16 @@ public interface TypeList extends FilterableList<TypeDescription, TypeList> {
                     this.visitor = visitor;
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public TypeDescription.Generic get(int index) {
                     return new AttachedTypeVariable(typeVariableSource, detachedTypeVariables.get(index), visitor);
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public int size() {
                     return detachedTypeVariables.size();
                 }
@@ -618,22 +713,30 @@ public interface TypeList extends FilterableList<TypeDescription, TypeList> {
                         this.visitor = visitor;
                     }
 
-                    @Override
+                    /**
+                     * {@inheritDoc}
+                     */
                     public Generic getUpperBounds() {
                         return typeVariableToken.getBounds().accept(visitor);
                     }
 
-                    @Override
+                    /**
+                     * {@inheritDoc}
+                     */
                     public TypeVariableSource getTypeVariableSource() {
                         return typeVariableSource;
                     }
 
-                    @Override
+                    /**
+                     * {@inheritDoc}
+                     */
                     public String getSymbol() {
                         return typeVariableToken.getSymbol();
                     }
 
-                    @Override
+                    /**
+                     * {@inheritDoc}
+                     */
                     public AnnotationList getDeclaredAnnotations() {
                         return typeVariableToken.getAnnotations();
                     }
@@ -660,17 +763,23 @@ public interface TypeList extends FilterableList<TypeDescription, TypeList> {
                 this.type = type;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public TypeDescription.Generic get(int index) {
                 return new OfLoadedInterfaceTypes.TypeProjection(type, index, type.getInterfaces());
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public int size() {
                 return type.getInterfaces().length;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public TypeList asErasures() {
                 return new TypeList.ForLoadedTypes(type.getInterfaces());
             }
@@ -709,6 +818,7 @@ public interface TypeList extends FilterableList<TypeDescription, TypeList> {
                 }
 
                 @Override
+                @CachedReturnPlugin.Enhance("resolved")
                 protected TypeDescription.Generic resolve() {
                     java.lang.reflect.Type[] type = this.type.getGenericInterfaces();
                     return erasure.length == type.length
@@ -716,14 +826,16 @@ public interface TypeList extends FilterableList<TypeDescription, TypeList> {
                             : asRawType();
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public TypeDescription asErasure() {
-                    return new TypeDescription.ForLoadedType(erasure[index]);
+                    return TypeDescription.ForLoadedType.of(erasure[index]);
                 }
 
                 @Override
                 protected AnnotationReader getAnnotationReader() {
-                    return AnnotationReader.DISPATCHER.resolveInterfaceType(type, index);
+                    return new AnnotationReader.Delegator.ForLoadedInterface(type, index);
                 }
             }
         }
@@ -747,17 +859,23 @@ public interface TypeList extends FilterableList<TypeDescription, TypeList> {
                 this.constructor = constructor;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public TypeDescription.Generic get(int index) {
                 return new OfConstructorExceptionTypes.TypeProjection(constructor, index, constructor.getExceptionTypes());
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public int size() {
                 return constructor.getExceptionTypes().length;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public TypeList asErasures() {
                 return new TypeList.ForLoadedTypes(constructor.getExceptionTypes());
             }
@@ -796,6 +914,7 @@ public interface TypeList extends FilterableList<TypeDescription, TypeList> {
                 }
 
                 @Override
+                @CachedReturnPlugin.Enhance("resolved")
                 protected TypeDescription.Generic resolve() {
                     java.lang.reflect.Type[] type = constructor.getGenericExceptionTypes();
                     return erasure.length == type.length
@@ -803,14 +922,16 @@ public interface TypeList extends FilterableList<TypeDescription, TypeList> {
                             : asRawType();
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public TypeDescription asErasure() {
-                    return new TypeDescription.ForLoadedType(erasure[index]);
+                    return TypeDescription.ForLoadedType.of(erasure[index]);
                 }
 
                 @Override
                 protected AnnotationReader getAnnotationReader() {
-                    return AnnotationReader.DISPATCHER.resolveExceptionType(constructor, index);
+                    return new AnnotationReader.Delegator.ForLoadedExecutableExceptionType(constructor, index);
                 }
             }
         }
@@ -834,17 +955,23 @@ public interface TypeList extends FilterableList<TypeDescription, TypeList> {
                 this.method = method;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public TypeDescription.Generic get(int index) {
                 return new OfMethodExceptionTypes.TypeProjection(method, index, method.getExceptionTypes());
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public int size() {
                 return method.getExceptionTypes().length;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public TypeList asErasures() {
                 return new TypeList.ForLoadedTypes(method.getExceptionTypes());
             }
@@ -883,6 +1010,7 @@ public interface TypeList extends FilterableList<TypeDescription, TypeList> {
                 }
 
                 @Override
+                @CachedReturnPlugin.Enhance("resolved")
                 protected TypeDescription.Generic resolve() {
                     java.lang.reflect.Type[] type = method.getGenericExceptionTypes();
                     return erasure.length == type.length
@@ -890,14 +1018,16 @@ public interface TypeList extends FilterableList<TypeDescription, TypeList> {
                             : asRawType();
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public TypeDescription asErasure() {
-                    return new TypeDescription.ForLoadedType(erasure[index]);
+                    return TypeDescription.ForLoadedType.of(erasure[index]);
                 }
 
                 @Override
                 protected AnnotationReader getAnnotationReader() {
-                    return AnnotationReader.DISPATCHER.resolveExceptionType(method, index);
+                    return new AnnotationReader.Delegator.ForLoadedExecutableExceptionType(method, index);
                 }
             }
         }
@@ -907,27 +1037,37 @@ public interface TypeList extends FilterableList<TypeDescription, TypeList> {
          */
         class Empty extends FilterableList.Empty<TypeDescription.Generic, Generic> implements Generic {
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public TypeList asErasures() {
                 return new TypeList.Empty();
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Generic asRawTypes() {
                 return this;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Generic accept(TypeDescription.Generic.Visitor<? extends TypeDescription.Generic> visitor) {
                 return new Generic.Empty();
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public ByteCodeElement.Token.TokenList<TypeVariableToken> asTokenList(ElementMatcher<? super TypeDescription> matcher) {
                 return new ByteCodeElement.Token.TokenList<TypeVariableToken>();
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public int getStackSize() {
                 return 0;
             }

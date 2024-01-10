@@ -7,6 +7,7 @@ import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.method.MethodList;
 import net.bytebuddy.description.method.ParameterList;
 import net.bytebuddy.description.modifier.ModifierContributor;
+import net.bytebuddy.description.type.TypeDefinition;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.description.type.TypeList;
 import net.bytebuddy.dynamic.scaffold.MethodGraph;
@@ -14,12 +15,12 @@ import net.bytebuddy.implementation.Implementation;
 import net.bytebuddy.implementation.MethodAccessorFactory;
 import net.bytebuddy.implementation.bytecode.StackManipulation;
 import net.bytebuddy.matcher.ElementMatcher;
-import net.bytebuddy.test.utility.MockitoRule;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
@@ -30,6 +31,7 @@ import java.util.Collections;
 import static net.bytebuddy.matcher.ElementMatchers.*;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.*;
 
 public class TypeProxyCreationTest {
@@ -37,7 +39,7 @@ public class TypeProxyCreationTest {
     private static final String FOO = "foo", BAR = "bar";
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     @Mock
     private Implementation.Target implementationTarget;
@@ -65,8 +67,8 @@ public class TypeProxyCreationTest {
         for (ModifierContributor modifierContributor : AuxiliaryType.DEFAULT_TYPE_MODIFIER) {
             modifiers = modifiers | modifierContributor.getMask();
         }
-        foo = new TypeDescription.ForLoadedType(Foo.class);
-        fooMethods = MethodGraph.Compiler.DEFAULT.compile(foo)
+        foo = TypeDescription.ForLoadedType.of(Foo.class);
+        fooMethods = MethodGraph.Compiler.DEFAULT.compile((TypeDefinition) foo)
                 .listNodes()
                 .asMethodList()
                 .filter(isVirtual().and(not(isFinal())).and(not(isDefaultFinalizer())));
@@ -74,8 +76,17 @@ public class TypeProxyCreationTest {
         when(proxyMethod.getDeclaringType()).thenReturn(foo);
         when(proxyMethod.getInternalName()).thenReturn(FOO);
         when(proxyMethod.getDescriptor()).thenReturn(FOO);
-        when(proxyMethod.getReturnType()).thenReturn(TypeDescription.Generic.OBJECT);
+        when(proxyMethod.getReturnType()).thenReturn(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class));
         when(proxyMethod.asDefined()).thenReturn(proxyMethod);
+    }
+
+    @Test
+    public void testSuffix() {
+        assertThat(new TypeProxy(foo,
+                implementationTarget,
+                invocationFactory,
+                true,
+                false).getSuffix(), is("4b944o3I0"));
     }
 
     @Test
@@ -96,7 +107,7 @@ public class TypeProxyCreationTest {
         assertThat(dynamicType.getName(), is(BAR));
         assertThat(dynamicType.getDeclaredMethods().size(), is(2));
         assertThat(dynamicType.isAssignableTo(Serializable.class), is(false));
-        verifyZeroInteractions(methodAccessorFactory);
+        verifyNoMoreInteractions(methodAccessorFactory);
         for (MethodDescription methodDescription : fooMethods) {
             verify(invocationFactory).invoke(implementationTarget, foo, methodDescription);
         }
@@ -201,6 +212,7 @@ public class TypeProxyCreationTest {
     }
 
     @Test
+    @SuppressWarnings("cast")
     public void testForConstructorConstruction() throws Exception {
         when(implementationTarget.getInstrumentedType()).thenReturn(foo);
         when(invocationFactory.invoke(eq(implementationTarget), eq(foo), any(MethodDescription.class)))
@@ -211,7 +223,7 @@ public class TypeProxyCreationTest {
         when(methodAccessorFactory.registerAccessorFor(specialMethodInvocation, MethodAccessorFactory.AccessType.DEFAULT)).thenReturn(proxyMethod);
         StackManipulation stackManipulation = new TypeProxy.ForSuperMethodByConstructor(foo,
                 implementationTarget,
-                Collections.singletonList((TypeDescription) new TypeDescription.ForLoadedType(Void.class)),
+                Collections.singletonList((TypeDescription) TypeDescription.ForLoadedType.of(Void.class)),
                 true,
                 false);
         MethodVisitor methodVisitor = mock(MethodVisitor.class);
@@ -291,7 +303,7 @@ public class TypeProxyCreationTest {
         MethodVisitor methodVisitor = mock(MethodVisitor.class);
         Implementation.Context implementationContext = mock(Implementation.Context.class);
         when(implementationContext.register(any(AuxiliaryType.class)))
-                .thenReturn(new TypeDescription.ForLoadedType(FooProxyMake.class));
+                .thenReturn(TypeDescription.ForLoadedType.of(FooProxyMake.class));
         assertThat(stackManipulation.isValid(), is(true));
         StackManipulation.Size size = stackManipulation.apply(methodVisitor, implementationContext);
         assertThat(size.getSizeImpact(), is(1));

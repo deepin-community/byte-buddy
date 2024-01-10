@@ -1,19 +1,27 @@
 package net.bytebuddy.description.type;
 
+import net.bytebuddy.ByteBuddy;
 import net.bytebuddy.description.TypeVariableSource;
 import net.bytebuddy.description.annotation.AnnotationDescription;
 import net.bytebuddy.description.annotation.AnnotationList;
+import net.bytebuddy.description.field.FieldDescription;
 import net.bytebuddy.description.method.MethodDescription;
+import net.bytebuddy.description.method.ParameterDescription;
+import net.bytebuddy.dynamic.ClassFileLocator;
 import net.bytebuddy.dynamic.loading.ByteArrayClassLoader;
 import net.bytebuddy.dynamic.loading.ClassLoadingStrategy;
+import net.bytebuddy.dynamic.loading.PackageDefinitionStrategy;
 import net.bytebuddy.implementation.bytecode.StackSize;
 import net.bytebuddy.test.packaging.SimpleType;
 import net.bytebuddy.test.scope.EnclosingType;
-import net.bytebuddy.test.utility.ClassFileExtraction;
+import net.bytebuddy.test.utility.JavaVersionRule;
 import net.bytebuddy.test.visibility.Sample;
+import net.bytebuddy.utility.OpenedClassReader;
 import org.hamcrest.CoreMatchers;
 import org.hamcrest.Matcher;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.MethodRule;
 import org.objectweb.asm.*;
 
 import java.io.Serializable;
@@ -26,7 +34,9 @@ import java.lang.reflect.GenericSignatureFormatError;
 import java.util.*;
 import java.util.concurrent.Callable;
 
-import static net.bytebuddy.matcher.ElementMatchers.isMethod;
+import static net.bytebuddy.matcher.ElementMatchers.*;
+import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.CoreMatchers.not;
 import static org.hamcrest.CoreMatchers.*;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.mockito.Mockito.mock;
@@ -36,11 +46,13 @@ public abstract class AbstractTypeDescriptionTest extends AbstractTypeDescriptio
 
     private static final String FOO = "foo", BAR = "bar";
 
+    @Rule
+    public MethodRule javaVersionRule = new JavaVersionRule();
+
     private final List<Class<?>> standardTypes;
 
-    @SuppressWarnings({"unchecked", "deprecation"})
     protected AbstractTypeDescriptionTest() {
-        standardTypes = Arrays.asList(
+        standardTypes = Arrays.<Class<?>>asList(
                 Object.class,
                 Object[].class,
                 SampleClass.class,
@@ -73,11 +85,11 @@ public abstract class AbstractTypeDescriptionTest extends AbstractTypeDescriptio
                 new EnclosingType().anonymousConstructor,
                 Array.newInstance(new EnclosingType().anonymousConstructor, 1).getClass(),
                 EnclosingType.LOCAL_INITIALIZER,
-                Array.newInstance(EnclosingType.LOCAL_INITIALIZER.getClass(), 1).getClass(),
+                Array.newInstance(EnclosingType.LOCAL_INITIALIZER, 1).getClass(),
                 EnclosingType.ANONYMOUS_INITIALIZER,
                 Array.newInstance(EnclosingType.ANONYMOUS_INITIALIZER, 1).getClass(),
                 EnclosingType.LOCAL_METHOD,
-                Array.newInstance(EnclosingType.LOCAL_METHOD.getClass(), 1).getClass(),
+                Array.newInstance(EnclosingType.LOCAL_METHOD, 1).getClass(),
                 EnclosingType.ANONYMOUS_METHOD,
                 Array.newInstance(EnclosingType.ANONYMOUS_METHOD, 1).getClass(),
                 EnclosingType.INNER,
@@ -102,19 +114,34 @@ public abstract class AbstractTypeDescriptionTest extends AbstractTypeDescriptio
                 Array.newInstance(EnclosingType.FINAL_INNER, 1).getClass(),
                 EnclosingType.DEPRECATED,
                 Array.newInstance(EnclosingType.DEPRECATED, 1).getClass(),
-                Type$With$Dollar.class);
+                Type$With$Dollar.class,
+                new ByteBuddy()
+                        .subclass(Object.class)
+                        .name("sample.WithoutDefinedPackage")
+                        .make()
+                        .load(ClassLoadingStrategy.BOOTSTRAP_LOADER,
+                                ClassLoadingStrategy.Default.WRAPPER_PERSISTENT.with(PackageDefinitionStrategy.NoOp.INSTANCE))
+                        .getLoaded(),
+                new ByteBuddy()
+                        .subclass(Object.class)
+                        .name("WithoutPackage")
+                        .make()
+                        .load(ClassLoadingStrategy.BOOTSTRAP_LOADER,
+                                ClassLoadingStrategy.Default.WRAPPER_PERSISTENT)
+                        .getLoaded());
     }
 
     @Test
+    @SuppressWarnings("cast")
     public void testPrecondition() throws Exception {
         assertThat(describe(SampleClass.class), not(describe(SampleInterface.class)));
         assertThat(describe(SampleClass.class), not(describe(SampleAnnotation.class)));
         assertThat(describe(SampleClass.class), is(describe(SampleClass.class)));
         assertThat(describe(SampleInterface.class), is(describe(SampleInterface.class)));
         assertThat(describe(SampleAnnotation.class), is(describe(SampleAnnotation.class)));
-        assertThat(describe(SampleClass.class), is((TypeDescription) new TypeDescription.ForLoadedType(SampleClass.class)));
-        assertThat(describe(SampleInterface.class), is((TypeDescription) new TypeDescription.ForLoadedType(SampleInterface.class)));
-        assertThat(describe(SampleAnnotation.class), is((TypeDescription) new TypeDescription.ForLoadedType(SampleAnnotation.class)));
+        assertThat(describe(SampleClass.class), is((TypeDescription) TypeDescription.ForLoadedType.of(SampleClass.class)));
+        assertThat(describe(SampleInterface.class), is((TypeDescription) TypeDescription.ForLoadedType.of(SampleInterface.class)));
+        assertThat(describe(SampleAnnotation.class), is((TypeDescription) TypeDescription.ForLoadedType.of(SampleAnnotation.class)));
     }
 
     @Test
@@ -191,23 +218,36 @@ public abstract class AbstractTypeDescriptionTest extends AbstractTypeDescriptio
     }
 
     @Test
-    public void testIsMemberClass() throws Exception {
+    public void getLongSimpleName() throws Exception {
         for (Class<?> type : standardTypes) {
-            assertThat(describe(type).isMemberClass(), is(type.isMemberClass()));
+            if (type.getDeclaringClass() == null) {
+                assertThat(describe(type).getLongSimpleName(), is(type.getSimpleName()));
+            } else {
+                assertThat(describe(type).getLongSimpleName(), is(type.getDeclaringClass().getSimpleName()
+                        + "."
+                        + type.getSimpleName()));
+            }
         }
     }
 
     @Test
-    public void testIsAnonymousClass() throws Exception {
+    public void testIsMemberType() throws Exception {
         for (Class<?> type : standardTypes) {
-            assertThat(describe(type).isAnonymousClass(), is(type.isAnonymousClass()));
+            assertThat(describe(type).isMemberType(), is(type.isMemberClass()));
         }
     }
 
     @Test
-    public void testIsLocalClass() throws Exception {
+    public void testIsAnonymousType() throws Exception {
         for (Class<?> type : standardTypes) {
-            assertThat(describe(type).isLocalClass(), is(type.isLocalClass()));
+            assertThat(describe(type).isAnonymousType(), is(type.isAnonymousClass()));
+        }
+    }
+
+    @Test
+    public void testIsLocalType() throws Exception {
+        for (Class<?> type : standardTypes) {
+            assertThat(describe(type).isLocalType(), is(type.isLocalClass()));
         }
     }
 
@@ -252,11 +292,19 @@ public abstract class AbstractTypeDescriptionTest extends AbstractTypeDescriptio
     }
 
     @Test
+    @SuppressWarnings("cast")
     public void testDeclaringType() throws Exception {
         for (Class<?> type : standardTypes) {
             assertThat(describe(type).getDeclaringType(), type.getDeclaringClass() == null
                     ? nullValue(TypeDescription.class)
-                    : is((TypeDescription) new TypeDescription.ForLoadedType(type.getDeclaringClass())));
+                    : is((TypeDescription) TypeDescription.ForLoadedType.of(type.getDeclaringClass())));
+        }
+    }
+
+    @Test
+    public void testDeclaredTypes() throws Exception {
+        for (Class<?> type : standardTypes) {
+            assertThat(describe(type).getDeclaredTypes(), is((TypeList) new TypeList.ForLoadedTypes(type.getDeclaredClasses())));
         }
     }
 
@@ -276,11 +324,12 @@ public abstract class AbstractTypeDescriptionTest extends AbstractTypeDescriptio
     }
 
     @Test
+    @SuppressWarnings("cast")
     public void testEnclosingType() throws Exception {
         for (Class<?> type : standardTypes) {
             assertThat(describe(type).getEnclosingType(), type.getEnclosingClass() == null
                     ? nullValue(TypeDescription.class)
-                    : is((TypeDescription) new TypeDescription.ForLoadedType(type.getEnclosingClass())));
+                    : is((TypeDescription) TypeDescription.ForLoadedType.of(type.getEnclosingClass())));
         }
     }
 
@@ -298,6 +347,7 @@ public abstract class AbstractTypeDescriptionTest extends AbstractTypeDescriptio
     }
 
     @Test
+    @SuppressWarnings("cast")
     public void testEquals() throws Exception {
         TypeDescription identical = describe(SampleClass.class);
         assertThat(identical, is(identical));
@@ -307,14 +357,14 @@ public abstract class AbstractTypeDescriptionTest extends AbstractTypeDescriptio
         when(equalFirst.getName()).thenReturn(SampleClass.class.getName());
         assertThat(describe(SampleClass.class), is(equalFirst));
         assertThat(describe(SampleClass.class), not(describe(SampleInterface.class)));
-        assertThat(describe(SampleClass.class), not((TypeDescription) new TypeDescription.ForLoadedType(SampleInterface.class)));
+        assertThat(describe(SampleClass.class), not((TypeDescription) TypeDescription.ForLoadedType.of(SampleInterface.class)));
         TypeDefinition nonRawType = mock(TypeDescription.Generic.class);
         when(nonRawType.getSort()).thenReturn(TypeDefinition.Sort.VARIABLE);
         assertThat(describe(SampleClass.class), not(nonRawType));
         assertThat(describe(SampleClass.class), not(new Object()));
         assertThat(describe(SampleClass.class), not(equalTo(null)));
-        assertThat(describe(Object[].class), is((TypeDescription) new TypeDescription.ForLoadedType(Object[].class)));
-        assertThat(describe(Object[].class), not(TypeDescription.OBJECT));
+        assertThat(describe(Object[].class), is((TypeDescription) TypeDescription.ForLoadedType.of(Object[].class)));
+        assertThat(describe(Object[].class), not(TypeDescription.ForLoadedType.of(Object.class)));
     }
 
     @Test
@@ -328,11 +378,17 @@ public abstract class AbstractTypeDescriptionTest extends AbstractTypeDescriptio
 
     @Test
     public void testPackage() throws Exception {
-        assertThat(describe(SampleClass.class).getPackage(),
-                is((PackageDescription) new PackageDescription.ForLoadedPackage(SampleClass.class.getPackage())));
-        assertThat(describe(Object.class).getPackage(),
-                is((PackageDescription) new PackageDescription.ForLoadedPackage(Object.class.getPackage())));
-        assertThat(describe(Object[].class).getPackage(), nullValue(PackageDescription.class));
+        for (Class<?> type : standardTypes) {
+            if (type.isArray() || type.isPrimitive()) {
+                assertThat(describe(type).getPackage(), nullValue(PackageDescription.class));
+            } else {
+                String packageName = type.getName();
+                int packageIndex = packageName.lastIndexOf('.');
+                assertThat(describe(type).getPackage().getName(), is(packageIndex == -1
+                        ? ""
+                        : packageName.substring(0, packageIndex)));
+            }
+        }
     }
 
     @Test
@@ -365,10 +421,10 @@ public abstract class AbstractTypeDescriptionTest extends AbstractTypeDescriptio
         assertThat(describe(SampleInterface.class).getSuperClass(), nullValue(TypeDescription.Generic.class));
         assertThat(describe(SampleAnnotation.class).getSuperClass(), nullValue(TypeDescription.Generic.class));
         assertThat(describe(void.class).getSuperClass(), nullValue(TypeDescription.Generic.class));
-        assertThat(describe(SampleClass.class).getSuperClass(), is(TypeDescription.Generic.OBJECT));
+        assertThat(describe(SampleClass.class).getSuperClass(), is(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class)));
         assertThat(describe(SampleIndirectInterfaceImplementation.class).getSuperClass(),
-                is((TypeDefinition) new TypeDescription.ForLoadedType(SampleInterfaceImplementation.class)));
-        assertThat(describe(Object[].class).getSuperClass(), is(TypeDescription.Generic.OBJECT));
+                is((TypeDefinition) TypeDescription.ForLoadedType.of(SampleInterfaceImplementation.class)));
+        assertThat(describe(Object[].class).getSuperClass(), is(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class)));
     }
 
     @Test
@@ -436,7 +492,7 @@ public abstract class AbstractTypeDescriptionTest extends AbstractTypeDescriptio
     @Test
     public void testIsAssignableClassLoader() throws Exception {
         ClassLoader classLoader = new ByteArrayClassLoader(ClassLoadingStrategy.BOOTSTRAP_LOADER,
-                ClassFileExtraction.of(SimpleType.class),
+                ClassFileLocator.ForClassLoader.readToNames(SimpleType.class),
                 ByteArrayClassLoader.PersistenceHandler.MANIFEST);
         Class<?> otherSimpleType = classLoader.loadClass(SimpleType.class.getName());
         assertThat(describe(SimpleType.class).isAssignableFrom(describe(otherSimpleType)), is(true));
@@ -446,17 +502,27 @@ public abstract class AbstractTypeDescriptionTest extends AbstractTypeDescriptio
     }
 
     @Test
+    public void testIsInHierarchyWith() throws Exception {
+        assertThat(describe(Object.class).isInHierarchyWith(Object.class), is(true));
+        assertThat(describe(Object.class).isInHierarchyWith(String.class), is(true));
+        assertThat(describe(String.class).isInHierarchyWith(Object.class), is(true));
+        assertThat(describe(Integer.class).isInHierarchyWith(Long.class), is(false));
+        assertThat(describe(Integer.class).isInHierarchyWith(int.class), is(false));
+        assertThat(describe(Object.class).isInHierarchyWith(int.class), is(false));
+    }
+
+    @Test
     public void testIsVisible() throws Exception {
-        assertThat(describe(SampleClass.class).isVisibleTo(new TypeDescription.ForLoadedType(SampleInterface.class)), is(true));
-        assertThat(describe(SamplePackagePrivate.class).isVisibleTo(new TypeDescription.ForLoadedType(SampleClass.class)), is(true));
-        assertThat(describe(SampleInterface.class).isVisibleTo(new TypeDescription.ForLoadedType(SampleClass.class)), is(true));
-        assertThat(describe(SampleAnnotation.class).isVisibleTo(new TypeDescription.ForLoadedType(SampleClass.class)), is(true));
-        assertThat(describe(SamplePackagePrivate.class).isVisibleTo(TypeDescription.OBJECT), is(false));
-        assertThat(describe(SampleInterface.class).isVisibleTo(TypeDescription.OBJECT), is(true));
-        assertThat(describe(SampleAnnotation.class).isVisibleTo(TypeDescription.OBJECT), is(false));
-        assertThat(describe(int.class).isVisibleTo(TypeDescription.OBJECT), is(true));
-        assertThat(describe(SampleInterface[].class).isVisibleTo(TypeDescription.OBJECT), is(true));
-        assertThat(describe(SamplePackagePrivate[].class).isVisibleTo(TypeDescription.OBJECT), is(false));
+        assertThat(describe(SampleClass.class).isVisibleTo(TypeDescription.ForLoadedType.of(SampleInterface.class)), is(true));
+        assertThat(describe(SamplePackagePrivate.class).isVisibleTo(TypeDescription.ForLoadedType.of(SampleClass.class)), is(true));
+        assertThat(describe(SampleInterface.class).isVisibleTo(TypeDescription.ForLoadedType.of(SampleClass.class)), is(true));
+        assertThat(describe(OtherAnnotation.class).isVisibleTo(TypeDescription.ForLoadedType.of(SampleClass.class)), is(true));
+        assertThat(describe(SamplePackagePrivate.class).isVisibleTo(TypeDescription.ForLoadedType.of(Object.class)), is(false));
+        assertThat(describe(SampleInterface.class).isVisibleTo(TypeDescription.ForLoadedType.of(Object.class)), is(true));
+        assertThat(describe(OtherAnnotation.class).isVisibleTo(TypeDescription.ForLoadedType.of(Object.class)), is(false));
+        assertThat(describe(int.class).isVisibleTo(TypeDescription.ForLoadedType.of(Object.class)), is(true));
+        assertThat(describe(SampleInterface[].class).isVisibleTo(TypeDescription.ForLoadedType.of(Object.class)), is(true));
+        assertThat(describe(SamplePackagePrivate[].class).isVisibleTo(TypeDescription.ForLoadedType.of(Object.class)), is(false));
     }
 
     @Test
@@ -470,19 +536,12 @@ public abstract class AbstractTypeDescriptionTest extends AbstractTypeDescriptio
     private void assertAnnotations(Class<?> type) {
         assertThat(describe(type).getDeclaredAnnotations(),
                 hasItems(new AnnotationList.ForLoadedAnnotations(type.getDeclaredAnnotations())
-                        .toArray(new AnnotationDescription[type.getDeclaredAnnotations().length])));
+                        .toArray(new AnnotationDescription[0])));
         assertThat(describe(type).getDeclaredAnnotations().size(), is(type.getDeclaredAnnotations().length));
         assertThat(describe(type).getInheritedAnnotations(),
                 hasItems(new AnnotationList.ForLoadedAnnotations(type.getAnnotations())
-                        .toArray(new AnnotationDescription[type.getAnnotations().length])));
+                        .toArray(new AnnotationDescription[0])));
         assertThat(describe(type).getInheritedAnnotations().size(), is(type.getAnnotations().length));
-    }
-
-    @Test
-    public void testDeclaredTypes() throws Exception {
-        assertThat(describe(SampleClass.class).getDeclaredTypes().size(), is(0));
-        assertThat(describe(AbstractTypeDescriptionTest.class).getDeclaredTypes(),
-                is((TypeList) new TypeList.ForLoadedTypes(AbstractTypeDescriptionTest.class.getDeclaredClasses())));
     }
 
     @Test
@@ -506,29 +565,19 @@ public abstract class AbstractTypeDescriptionTest extends AbstractTypeDescriptio
     }
 
     @Test
-    public void testConstantPool() throws Exception {
-        assertThat(describe(Object.class).isConstantPool(), is(false));
-        assertThat(describe(boolean.class).isConstantPool(), is(false));
-        assertThat(describe(int.class).isConstantPool(), is(true));
-        assertThat(describe(Integer.class).isConstantPool(), is(false));
-        assertThat(describe(String.class).isConstantPool(), is(true));
-        assertThat(describe(Class.class).isConstantPool(), is(true));
-    }
-
-    @Test
     public void testGenericType() throws Exception {
-        assertThat(describe(SampleGenericType.class).getTypeVariables(), is(new TypeDescription.ForLoadedType(SampleGenericType.class).getTypeVariables()));
-        assertThat(describe(SampleGenericType.class).getSuperClass(), is(new TypeDescription.ForLoadedType(SampleGenericType.class).getSuperClass()));
-        assertThat(describe(SampleGenericType.class).getInterfaces(), is(new TypeDescription.ForLoadedType(SampleGenericType.class).getInterfaces()));
+        assertThat(describe(SampleGenericType.class).getTypeVariables(), is(TypeDescription.ForLoadedType.of(SampleGenericType.class).getTypeVariables()));
+        assertThat(describe(SampleGenericType.class).getSuperClass(), is(TypeDescription.ForLoadedType.of(SampleGenericType.class).getSuperClass()));
+        assertThat(describe(SampleGenericType.class).getInterfaces(), is(TypeDescription.ForLoadedType.of(SampleGenericType.class).getInterfaces()));
     }
 
     @Test
     public void testHierarchyIteration() throws Exception {
         Iterator<TypeDefinition> iterator = describe(Traversal.class).iterator();
         assertThat(iterator.hasNext(), is(true));
-        assertThat(iterator.next(), is((TypeDefinition) new TypeDescription.ForLoadedType(Traversal.class)));
+        assertThat(iterator.next(), is((TypeDefinition) TypeDescription.ForLoadedType.of(Traversal.class)));
         assertThat(iterator.hasNext(), is(true));
-        assertThat(iterator.next(), is((TypeDefinition) TypeDescription.OBJECT));
+        assertThat(iterator.next(), is((TypeDefinition) TypeDescription.ForLoadedType.of(Object.class)));
         assertThat(iterator.hasNext(), is(false));
     }
 
@@ -536,7 +585,7 @@ public abstract class AbstractTypeDescriptionTest extends AbstractTypeDescriptio
     public void testHierarchyEnds() throws Exception {
         Iterator<TypeDefinition> iterator = describe(Object.class).iterator();
         assertThat(iterator.hasNext(), is(true));
-        assertThat(iterator.next(), is((TypeDefinition) TypeDescription.OBJECT));
+        assertThat(iterator.next(), is((TypeDefinition) TypeDescription.ForLoadedType.of(Object.class)));
         assertThat(iterator.hasNext(), is(false));
         iterator.next();
     }
@@ -572,7 +621,7 @@ public abstract class AbstractTypeDescriptionTest extends AbstractTypeDescriptio
     @Test
     public void testNonAvailableAnnotations() throws Exception {
         TypeDescription typeDescription = describe(new ByteArrayClassLoader(ClassLoadingStrategy.BOOTSTRAP_LOADER,
-                ClassFileExtraction.of(MissingAnnotations.class),
+                ClassFileLocator.ForClassLoader.readToNames(MissingAnnotations.class),
                 ByteArrayClassLoader.PersistenceHandler.MANIFEST).loadClass(MissingAnnotations.class.getName()));
         assertThat(typeDescription.getDeclaredAnnotations().isAnnotationPresent(SampleAnnotation.class), is(false));
         assertThat(typeDescription.getDeclaredFields().getOnly().getDeclaredAnnotations().isAnnotationPresent(SampleAnnotation.class), is(false));
@@ -617,6 +666,22 @@ public abstract class AbstractTypeDescriptionTest extends AbstractTypeDescriptio
         assertThat(describe(GenericSample.Nested.class).isGenerified(), is(false));
         assertThat(describe(GenericSample.NestedInterface.class).isGenerified(), is(false));
         assertThat(describe(Object.class).isGenerified(), is(false));
+        assertThat(describe(anonymousGenericSample().getClass()).isGenerified(), is(true));
+        assertThat(describe(innerGenericSample().getClass()).isGenerified(), is(true));
+    }
+
+    @Test
+    public void testInnerClass() throws Exception {
+        assertThat(describe(Object.class).isInnerClass(), is(false));
+        assertThat(describe(GenericSample.class).isInnerClass(), is(false));
+        assertThat(describe(GenericSample.Inner.class).isInnerClass(), is(true));
+    }
+
+    @Test
+    public void testNestedClass() throws Exception {
+        assertThat(describe(Object.class).isNestedClass(), is(false));
+        assertThat(describe(GenericSample.class).isNestedClass(), is(true));
+        assertThat(describe(GenericSample.Inner.class).isNestedClass(), is(true));
     }
 
     @Test
@@ -656,6 +721,169 @@ public abstract class AbstractTypeDescriptionTest extends AbstractTypeDescriptio
         assertThat(describe(Object.class).asUnboxed(), is(describe(Object.class)));
     }
 
+    @Test
+    public void testNestMatesTrivial() throws Exception {
+        assertThat(describe(Object.class).getNestHost(), is(TypeDescription.ForLoadedType.of(Object.class)));
+        assertThat(describe(Object.class).getNestMembers().size(), is(1));
+        assertThat(describe(Object.class).getNestMembers(), hasItem(TypeDescription.ForLoadedType.of(Object.class)));
+        assertThat(describe(Object.class).isNestMateOf(Object.class), is(true));
+        assertThat(describe(Object.class).isNestMateOf(TypeDescription.ForLoadedType.of(String.class)), is(false));
+        assertThat(describe(Object.class).isNestHost(), is(true));
+    }
+
+    @Test
+    @JavaVersionRule.Enforce(value = 11, target = SampleClass.class)
+    public void testNestMatesSupported() throws Exception {
+        assertThat(describe(SampleClass.class).getNestHost(), is(describe(AbstractTypeDescriptionTest.class)));
+        assertThat(describe(SampleClass.class).getNestMembers(), hasItems(describe(SampleClass.class), describe(AbstractTypeDescriptionTest.class)));
+        assertThat(describe(SampleClass.class).isNestHost(), is(false));
+        assertThat(describe(AbstractTypeDescriptionTest.class).getNestHost(), is(describe(AbstractTypeDescriptionTest.class)));
+        assertThat(describe(AbstractTypeDescriptionTest.class).getNestMembers(), hasItems(describe(SampleClass.class), describe(AbstractTypeDescriptionTest.class)));
+        assertThat(describe(AbstractTypeDescriptionTest.class).isNestHost(), is(true));
+        assertThat(describe(SampleClass.class).isNestMateOf(SampleClass.class), is(true));
+        assertThat(describe(SampleClass.class).isNestMateOf(AbstractTypeDescriptionTest.class), is(true));
+        assertThat(describe(AbstractTypeDescriptionTest.class).isNestMateOf(SampleClass.class), is(true));
+        assertThat(describe(AbstractTypeDescriptionTest.class).isNestMateOf(Object.class), is(false));
+        assertThat(describe(Object.class).isNestMateOf(AbstractTypeDescriptionTest.class), is(false));
+    }
+
+    @Test
+    public void testNonEnclosedAnonymousType() throws Exception {
+        ClassWriter classWriter = new ClassWriter(0);
+        classWriter.visit(Opcodes.V1_6, Opcodes.ACC_PUBLIC, "foo/Bar", null, "java/lang/Object", null);
+        classWriter.visitInnerClass("foo/Bar", null, null, Opcodes.ACC_PUBLIC);
+        classWriter.visitEnd();
+
+        ClassLoader classLoader = new ByteArrayClassLoader(null,
+                Collections.singletonMap("foo.Bar", classWriter.toByteArray()),
+                ByteArrayClassLoader.PersistenceHandler.MANIFEST);
+        Class<?> type = classLoader.loadClass("foo.Bar");
+
+        assertThat(describe(type).isAnonymousType(), is(type.isAnonymousClass()));
+        assertThat(describe(type).isLocalType(), is(type.isLocalClass()));
+        assertThat(describe(type).isMemberType(), is(type.isMemberClass()));
+    }
+
+    @Test
+    public void testNotSealed() throws Exception {
+        assertThat(describe(SampleClass.class).isSealed(), is(false));
+        assertThat(describe(SampleClass.class).getPermittedSubtypes().isEmpty(), is(true));
+    }
+
+    @Test
+    @JavaVersionRule.Enforce(17)
+    public void testSealed() throws Exception {
+        Class<?> sealed = Class.forName("net.bytebuddy.test.precompiled.v17.Sealed");
+        assertThat(describe(sealed).isSealed(), is(true));
+        assertThat(describe(sealed).getPermittedSubtypes().size(), is(3));
+        assertThat(describe(sealed).getPermittedSubtypes().get(0), is(describe(Class.forName(sealed.getName() + "$SubNonSealed"))));
+        assertThat(describe(sealed).getPermittedSubtypes().get(1), is(describe(Class.forName(sealed.getName() + "$SubSealed"))));
+        assertThat(describe(sealed).getPermittedSubtypes().get(2), is(describe(Class.forName(sealed.getName() + "$SubFinal"))));
+    }
+
+    @Test
+    public void testNonRecordComponents() throws Exception {
+        assertThat(describe(String.class).isRecord(), is(false));
+        assertThat(describe(String.class).getRecordComponents().size(), is(0));
+    }
+
+    @Test
+    @JavaVersionRule.Enforce(16)
+    public void testRecordComponents() throws Exception {
+        Class<?> sampleRecord = Class.forName("net.bytebuddy.test.precompiled.v16.RecordSample");
+        assertThat(describe(sampleRecord).isRecord(), is(true));
+        @SuppressWarnings("unchecked")
+        Class<? extends Annotation> typeAnnotation = (Class<? extends Annotation>) Class.forName("net.bytebuddy.test.precompiled.v8.TypeAnnotation");
+        MethodDescription.InDefinedShape value = new MethodDescription.ForLoadedMethod(typeAnnotation.getMethod("value"));
+        RecordComponentList<RecordComponentDescription.InDefinedShape> recordComponents = describe(sampleRecord).getRecordComponents();
+        assertThat(recordComponents.size(), is(1));
+        assertThat(recordComponents.getOnly().getActualName(), is(FOO));
+        assertThat(recordComponents.getOnly().getAccessor(), is((MethodDescription) new MethodDescription.ForLoadedMethod(sampleRecord.getMethod(FOO))));
+        assertThat(recordComponents.getOnly().getDeclaringType(), is((TypeDefinition) TypeDescription.ForLoadedType.of(sampleRecord)));
+        assertThat(recordComponents.getOnly().getDeclaredAnnotations().size(), is(1));
+        assertThat(recordComponents.getOnly().getDeclaredAnnotations().getOnly().getAnnotationType().represents(SampleAnnotation.class), is(true));
+        assertThat(recordComponents.getOnly().getType().asErasure().represents(List.class), is(true));
+        assertThat(recordComponents.getOnly().getType().getSort(), is(TypeDefinition.Sort.PARAMETERIZED));
+        assertThat(recordComponents.getOnly().getType().getDeclaredAnnotations().size(), is(1));
+        assertThat(recordComponents.getOnly().getType().getDeclaredAnnotations().getOnly().getAnnotationType().represents(typeAnnotation), is(true));
+        assertThat(recordComponents.getOnly().getType().getDeclaredAnnotations().getOnly().prepare(typeAnnotation).getValue(value).resolve(), is((Object) 42));
+        assertThat(recordComponents.getOnly().getType().getTypeArguments().size(), is(1));
+        assertThat(recordComponents.getOnly().getType().getTypeArguments().getOnly().getSort(), is(TypeDefinition.Sort.NON_GENERIC));
+        assertThat(recordComponents.getOnly().getType().getTypeArguments().getOnly().asErasure().represents(String.class), is(true));
+        assertThat(recordComponents.getOnly().getType().getTypeArguments().getOnly().getDeclaredAnnotations().size(), is(1));
+        assertThat(recordComponents.getOnly().getType().getTypeArguments().getOnly().getDeclaredAnnotations().getOnly().getAnnotationType().represents(typeAnnotation), is(true));
+        assertThat(recordComponents.getOnly().getType().getTypeArguments().getOnly().getDeclaredAnnotations().getOnly().prepare(typeAnnotation).getValue(value).resolve(), is((Object) 84));
+    }
+
+    @Test
+    @JavaVersionRule.Enforce(16)
+    public void testRecordComponentsField() throws Exception {
+        Class<?> sampleRecord = Class.forName("net.bytebuddy.test.precompiled.v16.RecordSample");
+        @SuppressWarnings("unchecked")
+        Class<? extends Annotation> typeAnnotation = (Class<? extends Annotation>) Class.forName("net.bytebuddy.test.precompiled.v8.TypeAnnotation");
+        MethodDescription.InDefinedShape value = new MethodDescription.ForLoadedMethod(typeAnnotation.getMethod("value"));
+        FieldDescription fieldDescription = describe(sampleRecord).getDeclaredFields().filter(named(FOO)).getOnly();
+        assertThat(fieldDescription.getDeclaredAnnotations().size(), is(1));
+        assertThat(fieldDescription.getDeclaredAnnotations().getOnly().getAnnotationType().represents(SampleAnnotation.class), is(true));
+        assertThat(fieldDescription.getType().asErasure().represents(List.class), is(true));
+        assertThat(fieldDescription.getType().getSort(), is(TypeDefinition.Sort.PARAMETERIZED));
+        assertThat(fieldDescription.getType().getDeclaredAnnotations().size(), is(1));
+        assertThat(fieldDescription.getType().getDeclaredAnnotations().getOnly().getAnnotationType().represents(typeAnnotation), is(true));
+        assertThat(fieldDescription.getType().getDeclaredAnnotations().getOnly().prepare(typeAnnotation).getValue(value).resolve(), is((Object) 42));
+        assertThat(fieldDescription.getType().getTypeArguments().size(), is(1));
+        assertThat(fieldDescription.getType().getTypeArguments().getOnly().getSort(), is(TypeDefinition.Sort.NON_GENERIC));
+        assertThat(fieldDescription.getType().getTypeArguments().getOnly().asErasure().represents(String.class), is(true));
+        assertThat(fieldDescription.getType().getTypeArguments().getOnly().getDeclaredAnnotations().size(), is(1));
+        assertThat(fieldDescription.getType().getTypeArguments().getOnly().getDeclaredAnnotations().getOnly().getAnnotationType().represents(typeAnnotation), is(true));
+        assertThat(fieldDescription.getType().getTypeArguments().getOnly().getDeclaredAnnotations().getOnly().prepare(typeAnnotation).getValue(value).resolve(), is((Object) 84));
+    }
+
+    @Test
+    @JavaVersionRule.Enforce(16)
+    public void testRecordComponentsAccessor() throws Exception {
+        Class<?> sampleRecord = Class.forName("net.bytebuddy.test.precompiled.v16.RecordSample");
+        @SuppressWarnings("unchecked")
+        Class<? extends Annotation> typeAnnotation = (Class<? extends Annotation>) Class.forName("net.bytebuddy.test.precompiled.v8.TypeAnnotation");
+        MethodDescription.InDefinedShape value = new MethodDescription.ForLoadedMethod(typeAnnotation.getMethod("value"));
+        MethodDescription methodDescription = describe(sampleRecord).getDeclaredMethods().filter(named(FOO)).getOnly();
+        assertThat(methodDescription.getDeclaredAnnotations().size(), is(1));
+        assertThat(methodDescription.getDeclaredAnnotations().getOnly().getAnnotationType().represents(SampleAnnotation.class), is(true));
+        assertThat(methodDescription.getReturnType().asErasure().represents(List.class), is(true));
+        assertThat(methodDescription.getReturnType().getSort(), is(TypeDefinition.Sort.PARAMETERIZED));
+        assertThat(methodDescription.getReturnType().getDeclaredAnnotations().size(), is(1));
+        assertThat(methodDescription.getReturnType().getDeclaredAnnotations().getOnly().getAnnotationType().represents(typeAnnotation), is(true));
+        assertThat(methodDescription.getReturnType().getDeclaredAnnotations().getOnly().prepare(typeAnnotation).getValue(value).resolve(), is((Object) 42));
+        assertThat(methodDescription.getReturnType().getTypeArguments().size(), is(1));
+        assertThat(methodDescription.getReturnType().getTypeArguments().getOnly().getSort(), is(TypeDefinition.Sort.NON_GENERIC));
+        assertThat(methodDescription.getReturnType().getTypeArguments().getOnly().asErasure().represents(String.class), is(true));
+        assertThat(methodDescription.getReturnType().getTypeArguments().getOnly().getDeclaredAnnotations().size(), is(1));
+        assertThat(methodDescription.getReturnType().getTypeArguments().getOnly().getDeclaredAnnotations().getOnly().getAnnotationType().represents(typeAnnotation), is(true));
+        assertThat(methodDescription.getReturnType().getTypeArguments().getOnly().getDeclaredAnnotations().getOnly().prepare(typeAnnotation).getValue(value).resolve(), is((Object) 84));
+    }
+
+    @Test
+    @JavaVersionRule.Enforce(16)
+    public void testRecordComponentsConstructorParameter() throws Exception {
+        Class<?> sampleRecord = Class.forName("net.bytebuddy.test.precompiled.v16.RecordSample");
+        @SuppressWarnings("unchecked")
+        Class<? extends Annotation> typeAnnotation = (Class<? extends Annotation>) Class.forName("net.bytebuddy.test.precompiled.v8.TypeAnnotation");
+        MethodDescription.InDefinedShape value = new MethodDescription.ForLoadedMethod(typeAnnotation.getMethod("value"));
+        ParameterDescription parameterDescription = describe(sampleRecord).getDeclaredMethods().filter(isConstructor()).getOnly().getParameters().getOnly();
+        assertThat(parameterDescription.getDeclaredAnnotations().size(), is(1));
+        assertThat(parameterDescription.getDeclaredAnnotations().getOnly().getAnnotationType().represents(SampleAnnotation.class), is(true));
+        assertThat(parameterDescription.getType().asErasure().represents(List.class), is(true));
+        assertThat(parameterDescription.getType().getSort(), is(TypeDefinition.Sort.PARAMETERIZED));
+        assertThat(parameterDescription.getType().getDeclaredAnnotations().size(), is(1));
+        assertThat(parameterDescription.getType().getDeclaredAnnotations().getOnly().getAnnotationType().represents(typeAnnotation), is(true));
+        assertThat(parameterDescription.getType().getDeclaredAnnotations().getOnly().prepare(typeAnnotation).getValue(value).resolve(), is((Object) 42));
+        assertThat(parameterDescription.getType().getTypeArguments().size(), is(1));
+        assertThat(parameterDescription.getType().getTypeArguments().getOnly().getSort(), is(TypeDefinition.Sort.NON_GENERIC));
+        assertThat(parameterDescription.getType().getTypeArguments().getOnly().asErasure().represents(String.class), is(true));
+        assertThat(parameterDescription.getType().getTypeArguments().getOnly().getDeclaredAnnotations().size(), is(1));
+        assertThat(parameterDescription.getType().getTypeArguments().getOnly().getDeclaredAnnotations().getOnly().getAnnotationType().represents(typeAnnotation), is(true));
+        assertThat(parameterDescription.getType().getTypeArguments().getOnly().getDeclaredAnnotations().getOnly().prepare(typeAnnotation).getValue(value).resolve(), is((Object) 84));
+    }
+
     private Class<?> inMethodClass() {
         class InMethod {
             /* empty */
@@ -668,7 +896,7 @@ public abstract class AbstractTypeDescriptionTest extends AbstractTypeDescriptio
     }
 
     @Retention(RetentionPolicy.RUNTIME)
-    private @interface SampleAnnotation {
+    public @interface SampleAnnotation {
         /* empty */
     }
 
@@ -688,7 +916,7 @@ public abstract class AbstractTypeDescriptionTest extends AbstractTypeDescriptio
         private static final String FOO = "foo";
 
         public SignatureMalformer(ClassVisitor classVisitor) {
-            super(Opcodes.ASM6, classVisitor);
+            super(OpenedClassReader.ASM_API, classVisitor);
         }
 
         public static Class<?> malform(Class<?> type) throws Exception {
@@ -747,7 +975,8 @@ public abstract class AbstractTypeDescriptionTest extends AbstractTypeDescriptio
             V extends ArrayList<? super ArrayList<V>>,
             W extends Callable<W[]>> extends ArrayList<T> implements Callable<T> {
 
-        @Override
+        private static final long serialVersionUID = 1L;
+
         public T call() throws Exception {
             return null;
         }
@@ -805,6 +1034,19 @@ public abstract class AbstractTypeDescriptionTest extends AbstractTypeDescriptio
         interface NestedInterface {
             /* empty */
         }
+    }
+
+    private static  <T> GenericSample<T> anonymousGenericSample() {
+        return new GenericSample<T>() {
+            /* empty */
+        };
+    }
+
+    private static  <T> GenericSample<T> innerGenericSample() {
+        class ExtendedGenericSample<T> extends GenericSample<T> {
+            /* empty */
+        };
+        return new ExtendedGenericSample<T>();
     }
 
     private static class Type$With$Dollar {

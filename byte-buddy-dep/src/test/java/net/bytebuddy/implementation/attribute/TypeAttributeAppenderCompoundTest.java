@@ -1,13 +1,10 @@
 package net.bytebuddy.implementation.attribute;
 
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Test;
 import org.mockito.Mock;
 
-import java.util.Collections;
-import java.util.List;
-
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 public class TypeAttributeAppenderCompoundTest extends AbstractTypeAttributeAppenderTest {
 
@@ -22,16 +19,6 @@ public class TypeAttributeAppenderCompoundTest extends AbstractTypeAttributeAppe
         verifyNoMoreInteractions(first);
         verify(second).apply(classVisitor, instrumentedType, annotationValueFilter);
         verifyNoMoreInteractions(second);
-        verifyZeroInteractions(instrumentedType);
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(TypeAttributeAppender.Compound.class).create(new ObjectPropertyAssertion.Creator<List<?>>() {
-            @Override
-            public List<?> create() {
-                return Collections.singletonList(mock(TypeAttributeAppender.class));
-            }
-        }).apply();
+        verifyNoMoreInteractions(instrumentedType);
     }
 }

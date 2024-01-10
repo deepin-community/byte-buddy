@@ -17,17 +17,17 @@ import net.bytebuddy.dynamic.scaffold.MethodRegistry;
 import net.bytebuddy.implementation.attribute.MethodAttributeAppender;
 import net.bytebuddy.matcher.ElementMatchers;
 import net.bytebuddy.matcher.LatentMatcher;
-import net.bytebuddy.test.utility.MockitoRule;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 import org.objectweb.asm.Opcodes;
 
 import java.util.Collections;
 
+import static net.bytebuddy.test.utility.FieldByFieldComparison.matchesPrototype;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.mockito.Mockito.*;
@@ -39,7 +39,7 @@ public class ConstructorStrategyDefaultTest {
     private static final int MODIFIERS = 42;
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     @Mock
     private MethodRegistry methodRegistry;
@@ -72,7 +72,7 @@ public class ConstructorStrategyDefaultTest {
         when(superClass.getDeclaredMethods()).thenReturn(new MethodList.Explicit<MethodDescription.InGenericShape>(methodDescription));
         when(methodDescription.isConstructor()).thenReturn(true);
         when(methodDescription.isVisibleTo(instrumentedType)).thenReturn(true);
-        when(methodDescription.asToken(ElementMatchers.is(instrumentedType))).thenReturn(token);
+        when(methodDescription.asToken(matchesPrototype(ElementMatchers.is(instrumentedType)))).thenReturn(token);
         when(token.getName()).thenReturn(FOO);
         when(token.getModifiers()).thenReturn(MODIFIERS);
         when(token.getTypeVariableTokens()).thenReturn(new ByteCodeElement.Token.TokenList<TypeVariableToken>());
@@ -97,8 +97,8 @@ public class ConstructorStrategyDefaultTest {
     public void testNoConstructorsStrategy() throws Exception {
         assertThat(ConstructorStrategy.Default.NO_CONSTRUCTORS.extractConstructors(instrumentedType).size(), is(0));
         assertThat(ConstructorStrategy.Default.NO_CONSTRUCTORS.inject(instrumentedType, methodRegistry), is(methodRegistry));
-        verifyZeroInteractions(methodRegistry);
-        verifyZeroInteractions(instrumentedType);
+        verifyNoMoreInteractions(methodRegistry);
+        verifyNoMoreInteractions(instrumentedType);
     }
 
     @Test
@@ -107,8 +107,8 @@ public class ConstructorStrategyDefaultTest {
         ConstructorStrategy constructorStrategy = ConstructorStrategy.Default.NO_CONSTRUCTORS.with(methodAttributeAppenderFactory);
         assertThat(constructorStrategy.extractConstructors(instrumentedType).size(), is(0));
         assertThat(constructorStrategy.inject(instrumentedType, methodRegistry), is(methodRegistry));
-        verifyZeroInteractions(methodRegistry);
-        verifyZeroInteractions(instrumentedType);
+        verifyNoMoreInteractions(methodRegistry);
+        verifyNoMoreInteractions(instrumentedType);
     }
 
     @Test
@@ -116,8 +116,8 @@ public class ConstructorStrategyDefaultTest {
         ConstructorStrategy constructorStrategy = ConstructorStrategy.Default.NO_CONSTRUCTORS.withInheritedAnnotations();
         assertThat(constructorStrategy.extractConstructors(instrumentedType).size(), is(0));
         assertThat(constructorStrategy.inject(instrumentedType, methodRegistry), is(methodRegistry));
-        verifyZeroInteractions(methodRegistry);
-        verifyZeroInteractions(instrumentedType);
+        verifyNoMoreInteractions(methodRegistry);
+        verifyNoMoreInteractions(instrumentedType);
     }
 
     @Test
@@ -308,11 +308,5 @@ public class ConstructorStrategyDefaultTest {
         verifyNoMoreInteractions(methodRegistry);
         verify(instrumentedType, atLeastOnce()).getSuperClass();
         verifyNoMoreInteractions(instrumentedType);
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(ConstructorStrategy.Default.class).apply();
-        ObjectPropertyAssertion.of(ConstructorStrategy.Default.WithMethodAttributeAppenderFactory.class).apply();
     }
 }

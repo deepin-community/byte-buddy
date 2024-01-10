@@ -1,6 +1,22 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation;
 
-import lombok.EqualsAndHashCode;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.field.FieldDescription;
 import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.type.TypeDescription;
@@ -16,6 +32,7 @@ import net.bytebuddy.implementation.bytecode.member.MethodReturn;
 import net.bytebuddy.implementation.bytecode.member.MethodVariableAccess;
 import net.bytebuddy.matcher.ElementMatcher;
 import net.bytebuddy.matcher.ElementMatchers;
+import net.bytebuddy.utility.nullability.MaybeNull;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 
@@ -27,13 +44,13 @@ import static net.bytebuddy.matcher.ElementMatchers.*;
 /**
  * An implementation of {@link Object#toString()} that concatenates the {@link String} representation of all fields that are declared by a class.
  */
-@EqualsAndHashCode
+@HashCodeAndEqualsPlugin.Enhance
 public class ToStringMethod implements Implementation {
 
     /**
      * The {@link StringBuilder#StringBuilder(String)} constructor.
      */
-    private static final MethodDescription.InDefinedShape STRING_BUILDER_CONSTRUCTOR = new TypeDescription.ForLoadedType(StringBuilder.class)
+    private static final MethodDescription.InDefinedShape STRING_BUILDER_CONSTRUCTOR = TypeDescription.ForLoadedType.of(StringBuilder.class)
             .getDeclaredMethods()
             .filter(isConstructor().and(ElementMatchers.takesArguments(String.class)))
             .getOnly();
@@ -41,7 +58,7 @@ public class ToStringMethod implements Implementation {
     /**
      * The {@link StringBuilder#toString()} method.
      */
-    private static final MethodDescription.InDefinedShape TO_STRING = new TypeDescription.ForLoadedType(StringBuilder.class)
+    private static final MethodDescription.InDefinedShape TO_STRING = TypeDescription.ForLoadedType.of(StringBuilder.class)
             .getDeclaredMethods()
             .filter(isToString())
             .getOnly();
@@ -186,12 +203,16 @@ public class ToStringMethod implements Implementation {
         return new ToStringMethod(prefixResolver, start, end, separator, definer, ignored);
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public InstrumentedType prepare(InstrumentedType instrumentedType) {
         return instrumentedType;
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public Appender appender(Target implementationTarget) {
         if (implementationTarget.getInstrumentedType().isInterface()) {
             throw new IllegalStateException("Cannot implement meaningful toString method for " + implementationTarget.getInstrumentedType());
@@ -211,7 +232,7 @@ public class ToStringMethod implements Implementation {
     /**
      * An appender to implement {@link ToStringMethod}.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     protected static class Appender implements ByteCodeAppender {
 
         /**
@@ -268,7 +289,9 @@ public class ToStringMethod implements Implementation {
             this.fieldDescriptions = fieldDescriptions;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Size apply(MethodVisitor methodVisitor, Context implementationContext, MethodDescription instrumentedMethod) {
             if (instrumentedMethod.isStatic()) {
                 throw new IllegalStateException("toString method must not be static: " + instrumentedMethod);
@@ -276,7 +299,7 @@ public class ToStringMethod implements Implementation {
                 throw new IllegalStateException("toString method does not return String-compatible type: " + instrumentedMethod);
             }
             List<StackManipulation> stackManipulations = new ArrayList<StackManipulation>(Math.max(0, fieldDescriptions.size() * 7 - 2) + 10);
-            stackManipulations.add(TypeCreation.of(new TypeDescription.ForLoadedType(StringBuilder.class)));
+            stackManipulations.add(TypeCreation.of(TypeDescription.ForLoadedType.of(StringBuilder.class)));
             stackManipulations.add(Duplication.SINGLE);
             stackManipulations.add(new TextConstant(prefix));
             stackManipulations.add(MethodInvocation.invoke(STRING_BUILDER_CONSTRUCTOR));
@@ -305,7 +328,7 @@ public class ToStringMethod implements Implementation {
     }
 
     /**
-     * A prefix resolver is responsible for providing a value that is preprended to a {@link Object#toString()} implementation.
+     * A prefix resolver is responsible for providing a value that is prepended to a {@link Object#toString()} implementation.
      */
     public interface PrefixResolver {
 
@@ -315,6 +338,7 @@ public class ToStringMethod implements Implementation {
          * @param instrumentedType The instrumented type.
          * @return The value to be prefixed.
          */
+        @MaybeNull
         String resolve(TypeDescription instrumentedType);
 
         /**
@@ -326,7 +350,7 @@ public class ToStringMethod implements Implementation {
              * A prefix resolver for the instrumented type's fully qualified class name.
              */
             FULLY_QUALIFIED_CLASS_NAME {
-                @Override
+                /** {@inheritDoc} */
                 public String resolve(TypeDescription instrumentedType) {
                     return instrumentedType.getName();
                 }
@@ -336,7 +360,8 @@ public class ToStringMethod implements Implementation {
              * A prefix resolver for the instrumented type's fully qualified class name.
              */
             CANONICAL_CLASS_NAME {
-                @Override
+                /** {@inheritDoc} */
+                @MaybeNull
                 public String resolve(TypeDescription instrumentedType) {
                     return instrumentedType.getCanonicalName();
                 }
@@ -346,7 +371,7 @@ public class ToStringMethod implements Implementation {
              * A prefix resolver for the instrumented type's simple class name.
              */
             SIMPLE_CLASS_NAME {
-                @Override
+                /** {@inheritDoc} */
                 public String resolve(TypeDescription instrumentedType) {
                     return instrumentedType.getSimpleName();
                 }
@@ -356,7 +381,7 @@ public class ToStringMethod implements Implementation {
         /**
          * A prefix resolver that returns a fixed value.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class ForFixedValue implements PrefixResolver {
 
             /**
@@ -369,11 +394,13 @@ public class ToStringMethod implements Implementation {
              *
              * @param prefix The prefix to prepend.
              */
-            public ForFixedValue(String prefix) {
+            protected ForFixedValue(String prefix) {
                 this.prefix = prefix;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public String resolve(TypeDescription instrumentedType) {
                 return prefix;
             }
@@ -389,10 +416,10 @@ public class ToStringMethod implements Implementation {
          * A value consumer for a {@code boolean} value.
          */
         BOOLEAN {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/StringBuilder", "append", "(Z)Ljava/lang/StringBuilder;", false);
-                return new Size(0, 0);
+                return Size.ZERO;
             }
         },
 
@@ -400,10 +427,10 @@ public class ToStringMethod implements Implementation {
          * A value consumer for a {@code char} value.
          */
         CHARACTER {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/StringBuilder", "append", "(C)Ljava/lang/StringBuilder;", false);
-                return new Size(0, 0);
+                return Size.ZERO;
             }
         },
 
@@ -411,10 +438,10 @@ public class ToStringMethod implements Implementation {
          * A value consumer for an {@code int} value.
          */
         INTEGER {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/StringBuilder", "append", "(I)Ljava/lang/StringBuilder;", false);
-                return new Size(0, 0);
+                return Size.ZERO;
             }
         },
 
@@ -422,7 +449,7 @@ public class ToStringMethod implements Implementation {
          * A value consumer for a {@code long} value.
          */
         LONG {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/StringBuilder", "append", "(J)Ljava/lang/StringBuilder;", false);
                 return new Size(-1, 0);
@@ -433,10 +460,10 @@ public class ToStringMethod implements Implementation {
          * A value consumer for a {@code float} value.
          */
         FLOAT {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/StringBuilder", "append", "(F)Ljava/lang/StringBuilder;", false);
-                return new Size(0, 0);
+                return Size.ZERO;
             }
         },
 
@@ -444,7 +471,7 @@ public class ToStringMethod implements Implementation {
          * A value consumer for a {@code double} value.
          */
         DOUBLE {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/StringBuilder", "append", "(D)Ljava/lang/StringBuilder;", false);
                 return new Size(-1, 0);
@@ -455,10 +482,10 @@ public class ToStringMethod implements Implementation {
          * A value consumer for a {@link String} value.
          */
         STRING {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/StringBuilder", "append", "(Ljava/lang/String;)Ljava/lang/StringBuilder;", false);
-                return new Size(0, 0);
+                return Size.ZERO;
             }
         },
 
@@ -467,10 +494,10 @@ public class ToStringMethod implements Implementation {
          * A value consumer for a {@link CharSequence} value.
          */
         CHARACTER_SEQUENCE {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/StringBuilder", "append", "(Ljava/lang/CharSequence;)Ljava/lang/StringBuilder;", false);
-                return new Size(0, 0);
+                return Size.ZERO;
             }
         },
 
@@ -478,10 +505,10 @@ public class ToStringMethod implements Implementation {
          * A value consumer for a reference type.
          */
         OBJECT {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/StringBuilder", "append", "(Ljava/lang/Object;)Ljava/lang/StringBuilder;", false);
-                return new Size(0, 0);
+                return Size.ZERO;
             }
         },
 
@@ -489,11 +516,11 @@ public class ToStringMethod implements Implementation {
          * A value consumer for a {@code boolean} array type.
          */
         BOOLEAN_ARRAY {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Arrays", "toString", "([Z)Ljava/lang/String;", false);
                 methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/StringBuilder", "append", "(Ljava/lang/String;)Ljava/lang/StringBuilder;", false);
-                return new Size(0, 0);
+                return Size.ZERO;
             }
         },
 
@@ -501,11 +528,11 @@ public class ToStringMethod implements Implementation {
          * A value consumer for a {@code byte} array type.
          */
         BYTE_ARRAY {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Arrays", "toString", "([B)Ljava/lang/String;", false);
                 methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/StringBuilder", "append", "(Ljava/lang/String;)Ljava/lang/StringBuilder;", false);
-                return new Size(0, 0);
+                return Size.ZERO;
             }
         },
 
@@ -513,11 +540,11 @@ public class ToStringMethod implements Implementation {
          * A value consumer for a {@code short} array type.
          */
         SHORT_ARRAY {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Arrays", "toString", "([S)Ljava/lang/String;", false);
                 methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/StringBuilder", "append", "(Ljava/lang/String;)Ljava/lang/StringBuilder;", false);
-                return new Size(0, 0);
+                return Size.ZERO;
             }
         },
 
@@ -525,11 +552,11 @@ public class ToStringMethod implements Implementation {
          * A value consumer for a {@code char} array type.
          */
         CHARACTER_ARRAY {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Arrays", "toString", "([C)Ljava/lang/String;", false);
                 methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/StringBuilder", "append", "(Ljava/lang/String;)Ljava/lang/StringBuilder;", false);
-                return new Size(0, 0);
+                return Size.ZERO;
             }
         },
 
@@ -537,11 +564,11 @@ public class ToStringMethod implements Implementation {
          * A value consumer for an {@code int} array type.
          */
         INTEGER_ARRAY {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Arrays", "toString", "([I)Ljava/lang/String;", false);
                 methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/StringBuilder", "append", "(Ljava/lang/String;)Ljava/lang/StringBuilder;", false);
-                return new Size(0, 0);
+                return Size.ZERO;
             }
         },
 
@@ -549,11 +576,11 @@ public class ToStringMethod implements Implementation {
          * A value consumer for a {@code long} array type.
          */
         LONG_ARRAY {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Arrays", "toString", "([J)Ljava/lang/String;", false);
                 methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/StringBuilder", "append", "(Ljava/lang/String;)Ljava/lang/StringBuilder;", false);
-                return new Size(0, 0);
+                return Size.ZERO;
             }
         },
 
@@ -561,11 +588,11 @@ public class ToStringMethod implements Implementation {
          * A value consumer for a {@code float} array type.
          */
         FLOAT_ARRAY {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Arrays", "toString", "([F)Ljava/lang/String;", false);
                 methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/StringBuilder", "append", "(Ljava/lang/String;)Ljava/lang/StringBuilder;", false);
-                return new Size(0, 0);
+                return Size.ZERO;
             }
         },
 
@@ -573,11 +600,11 @@ public class ToStringMethod implements Implementation {
          * A value consumer for a {@code double} array type.
          */
         DOUBLE_ARRAY {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Arrays", "toString", "([D)Ljava/lang/String;", false);
                 methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/StringBuilder", "append", "(Ljava/lang/String;)Ljava/lang/StringBuilder;", false);
-                return new Size(0, 0);
+                return Size.ZERO;
             }
         },
 
@@ -585,11 +612,11 @@ public class ToStringMethod implements Implementation {
          * A value consumer for a reference array type.
          */
         REFERENCE_ARRAY {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Arrays", "toString", "([Ljava/lang/Object;)Ljava/lang/String;", false);
                 methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/StringBuilder", "append", "(Ljava/lang/String;)Ljava/lang/StringBuilder;", false);
-                return new Size(0, 0);
+                return Size.ZERO;
             }
         },
 
@@ -597,11 +624,11 @@ public class ToStringMethod implements Implementation {
          * A value consumer for a nested array type.
          */
         NESTED_ARRAY {
-            @Override
+            /** {@inheritDoc} */
             public Size apply(MethodVisitor methodVisitor, Context implementationContext) {
                 methodVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, "java/util/Arrays", "deepToString", "([Ljava/lang/Object;)Ljava/lang/String;", false);
                 methodVisitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/StringBuilder", "append", "(Ljava/lang/String;)Ljava/lang/StringBuilder;", false);
-                return new Size(0, 0);
+                return Size.ZERO;
             }
         };
 
@@ -611,6 +638,7 @@ public class ToStringMethod implements Implementation {
          * @param typeDescription The type for which to resolve a value resolver.
          * @return An appropriate stack manipulation.
          */
+        @SuppressFBWarnings(value = "NP_NULL_ON_SOME_PATH_FROM_RETURN_VALUE", justification = "Assuming component type for array type.")
         protected static StackManipulation of(TypeDescription typeDescription) {
             if (typeDescription.represents(boolean.class)) {
                 return BOOLEAN;
@@ -655,7 +683,9 @@ public class ToStringMethod implements Implementation {
             }
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public boolean isValid() {
             return true;
         }

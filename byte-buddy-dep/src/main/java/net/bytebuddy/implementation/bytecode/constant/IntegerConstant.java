@@ -1,6 +1,21 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation.bytecode.constant;
 
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.implementation.Implementation;
 import net.bytebuddy.implementation.bytecode.StackManipulation;
 import net.bytebuddy.implementation.bytecode.StackSize;
@@ -114,12 +129,16 @@ public enum IntegerConstant implements StackManipulation {
         }
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public boolean isValid() {
         return true;
     }
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext) {
         methodVisitor.visitInsn(opcode);
         return SIZE;
@@ -129,8 +148,8 @@ public enum IntegerConstant implements StackManipulation {
      * A stack manipulation that loads a JVM-integer value by a {@code BIPUSH} operation which is
      * legal for single byte integer values.
      */
-    @EqualsAndHashCode
-    protected static class SingleBytePush implements StackManipulation {
+    @HashCodeAndEqualsPlugin.Enhance
+    protected static class SingleBytePush extends StackManipulation.AbstractBase {
 
         /**
          * The single byte value to be loaded onto the operand stack.
@@ -146,12 +165,9 @@ public enum IntegerConstant implements StackManipulation {
             this.value = value;
         }
 
-        @Override
-        public boolean isValid() {
-            return true;
-        }
-
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext) {
             methodVisitor.visitIntInsn(Opcodes.BIPUSH, value);
             return SIZE;
@@ -162,8 +178,8 @@ public enum IntegerConstant implements StackManipulation {
      * A stack manipulation that loads a JVM-integer value by a {@code SIPUSH} operation which is
      * legal for up to two byte integer values.
      */
-    @EqualsAndHashCode
-    protected static class TwoBytePush implements StackManipulation {
+    @HashCodeAndEqualsPlugin.Enhance
+    protected static class TwoBytePush extends StackManipulation.AbstractBase {
 
         /**
          * The two byte value to be loaded onto the operand stack.
@@ -179,12 +195,9 @@ public enum IntegerConstant implements StackManipulation {
             this.value = value;
         }
 
-        @Override
-        public boolean isValid() {
-            return true;
-        }
-
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext) {
             methodVisitor.visitIntInsn(Opcodes.SIPUSH, value);
             return SIZE;
@@ -194,8 +207,8 @@ public enum IntegerConstant implements StackManipulation {
     /**
      * A stack manipulation that loads a JVM-integer value from a constant pool value onto the operand stack.
      */
-    @EqualsAndHashCode
-    protected static class ConstantPool implements StackManipulation {
+    @HashCodeAndEqualsPlugin.Enhance
+    protected static class ConstantPool extends StackManipulation.AbstractBase {
 
         /**
          * The JVM-integer value to load onto the operand stack.
@@ -211,12 +224,9 @@ public enum IntegerConstant implements StackManipulation {
             this.value = value;
         }
 
-        @Override
-        public boolean isValid() {
-            return true;
-        }
-
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext) {
             methodVisitor.visitLdcInsn(value);
             return SIZE;

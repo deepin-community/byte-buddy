@@ -1,6 +1,21 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation.bind.annotation;
 
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.annotation.AnnotationDescription;
 import net.bytebuddy.description.enumeration.EnumerationDescription;
 import net.bytebuddy.description.method.MethodDescription;
@@ -156,7 +171,7 @@ public @interface Super {
          * Extracts method references to the annotation methods.
          */
         static {
-            MethodList<MethodDescription.InDefinedShape> annotationProperties = new TypeDescription.ForLoadedType(Super.class).getDeclaredMethods();
+            MethodList<MethodDescription.InDefinedShape> annotationProperties = TypeDescription.ForLoadedType.of(Super.class).getDeclaredMethods();
             IGNORE_FINALIZER = annotationProperties.filter(named("ignoreFinalizer")).getOnly();
             SERIALIZABLE_PROXY = annotationProperties.filter(named("serializableProxy")).getOnly();
             CONSTRUCTOR_PARAMETERS = annotationProperties.filter(named("constructorParameters")).getOnly();
@@ -204,17 +219,21 @@ public @interface Super {
          * Extracts method references of the super annotation.
          */
         static {
-            MethodList<MethodDescription.InDefinedShape> annotationProperties = new TypeDescription.ForLoadedType(Super.class).getDeclaredMethods();
+            MethodList<MethodDescription.InDefinedShape> annotationProperties = TypeDescription.ForLoadedType.of(Super.class).getDeclaredMethods();
             STRATEGY = annotationProperties.filter(named("strategy")).getOnly();
             PROXY_TYPE = annotationProperties.filter(named("proxyType")).getOnly();
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Class<Super> getHandledType() {
             return Super.class;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public MethodDelegationBinder.ParameterBinding<?> bind(AnnotationDescription.Loadable<Super> annotation,
                                                                MethodDescription source,
                                                                ParameterDescription target,
@@ -262,7 +281,9 @@ public @interface Super {
                  */
                 INSTANCE;
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public TypeDescription resolve(TypeDescription instrumentedType, TypeDescription.Generic parameterType) {
                     return instrumentedType;
                 }
@@ -278,7 +299,9 @@ public @interface Super {
                  */
                 INSTANCE;
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public TypeDescription resolve(TypeDescription instrumentedType, TypeDescription.Generic parameterType) {
                     TypeDescription erasure = parameterType.asErasure();
                     return erasure.equals(instrumentedType)
@@ -290,7 +313,7 @@ public @interface Super {
             /**
              * A type locator that returns a given type.
              */
-            @EqualsAndHashCode
+            @HashCodeAndEqualsPlugin.Enhance
             class ForType implements TypeLocator {
 
                 /**
@@ -325,7 +348,9 @@ public @interface Super {
                     }
                 }
 
-                @Override
+                /**
+                 * {@inheritDoc}
+                 */
                 public TypeDescription resolve(TypeDescription instrumentedType, TypeDescription.Generic parameterType) {
                     if (!typeDescription.isAssignableTo(parameterType.asErasure())) {
                         throw new IllegalStateException("Impossible to assign " + typeDescription + " to parameter of type " + parameterType);

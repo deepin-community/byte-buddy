@@ -8,13 +8,12 @@ import net.bytebuddy.description.method.MethodList;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.implementation.attribute.AnnotationValueFilter;
 import net.bytebuddy.implementation.attribute.FieldAttributeAppender;
-import net.bytebuddy.test.utility.MockitoRule;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 import org.objectweb.asm.AnnotationVisitor;
 import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.FieldVisitor;
@@ -32,7 +31,7 @@ public class TypeWriterFieldPoolRecordTest {
     private static final String FOO = "foo", BAR = "bar", QUX = "qux", BAZ = "baz";
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     @Mock
     private FieldAttributeAppender fieldAttributeAppender;
@@ -72,7 +71,7 @@ public class TypeWriterFieldPoolRecordTest {
         when(fieldDescription.getDescriptor()).thenReturn(BAR);
         when(fieldDescription.getGenericSignature()).thenReturn(QUX);
         when(fieldDescription.getDeclaredAnnotations()).thenReturn(new AnnotationList.Explicit(annotationDescription));
-        when(fieldDescription.getType()).thenReturn(TypeDescription.Generic.OBJECT);
+        when(fieldDescription.getType()).thenReturn(TypeDescription.Generic.OfNonGenericType.ForLoadedType.of(Object.class));
         when(classVisitor.visitField(MODIFIER, FOO, BAR, QUX, defaultValue)).thenReturn(fieldVisitor);
         when(classVisitor.visitField(MODIFIER, FOO, BAR, QUX, FieldDescription.NO_DEFAULT_VALUE)).thenReturn(fieldVisitor);
         when(annotationValueFilterFactory.on(fieldDescription)).thenReturn(valueFilter);
@@ -109,7 +108,7 @@ public class TypeWriterFieldPoolRecordTest {
         record.apply(fieldVisitor, annotationValueFilterFactory);
         verify(fieldAttributeAppender).apply(fieldVisitor, fieldDescription, valueFilter);
         verifyNoMoreInteractions(fieldAttributeAppender);
-        verifyZeroInteractions(fieldVisitor);
+        verifyNoMoreInteractions(fieldVisitor);
     }
 
     @Test
@@ -139,11 +138,5 @@ public class TypeWriterFieldPoolRecordTest {
     @Test(expected = IllegalStateException.class)
     public void testImplicitFieldEntryAppliedToField() throws Exception {
         new TypeWriter.FieldPool.Record.ForImplicitField(fieldDescription).apply(fieldVisitor, annotationValueFilterFactory);
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(TypeWriter.FieldPool.Record.ForImplicitField.class).apply();
-        ObjectPropertyAssertion.of(TypeWriter.FieldPool.Record.ForExplicitField.class).apply();
     }
 }

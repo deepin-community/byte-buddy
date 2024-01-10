@@ -1,53 +1,78 @@
-apply plugin: 'java'
-apply plugin: 'java-gradle-plugin'
+plugins {
+    id 'java'
+    id 'java-gradle-plugin'
+    id 'com.gradle.plugin-publish' version '1.0.0'
+}
 
-def pom = new XmlSlurper().parse(file('./pom.xml'))
-def outerPom = new XmlSlurper().parse(file('../pom.xml'))
+if (gradle.gradleVersion.startsWith("2.")) {
+    throw new GradleException("Use build.legacy.gradle for executing build with Gradle 2")
+}
 
-group = pom.parent.groupId.text().toString()
-version = pom.parent.version.text().toString()
-
-description = pom.description.text().toString()
-
-sourceCompatibility = JavaVersion.VERSION_1_6
-targetCompatibility = JavaVersion.VERSION_1_6
+apply from: 'bytebuddy.gradle'
+apply from: 'common.gradle'
 
 repositories {
-    mavenLocal()
     mavenCentral()
 }
 
-dependencies {
-    compile gradleApi()
-    // At this point, it is not given that any artifact from the Maven build can be found in a repository.
-    def location = new File(project.buildscript.sourceFile.getParentFile(), "../byte-buddy/target/byte-buddy-${version}.jar").canonicalFile
-    logger.info("Relying on ${location.absolutePath} as Byte Buddy dependency")
-    if (location.exists()) {
-        compile files(location.absolutePath)
-    } else {
-        logger.warn("${location.absolutePath} does not exist, can clean but not build project")
+configurations {
+    fatJar {
+        canBeConsumed(false)
+        canBeResolved(false)
     }
-    testCompile gradleTestKit()
-    testCompile group: 'junit', name: 'junit', version: outerPom.properties.'version.junit'
-    testCompile (group: 'org.mockito', name: 'mockito-core', version: outerPom.properties.'version.mockito') {
+    fatJarClasspath {
+        canBeConsumed(false)
+        canBeResolved(true)
+        setTransitive(false)
+        extendsFrom(fatJar)
+    }
+}
+
+dependencies {
+    implementation gradleApi()
+    if (findProject(':android-plugin') != null) {
+        fatJar project(':android-plugin')
+    }
+    compileOnly group: 'com.google.code.findbugs', name: 'findbugs-annotations', version: outerPom.properties.'version.utility.findbugs'
+    compileOnly group: 'com.google.code.findbugs', name: 'jsr305', version: outerPom.properties.'version.utility.jsr305'
+    testImplementation gradleTestKit()
+    testImplementation group: 'junit', name: 'junit', version: outerPom.properties.'version.junit'
+    testImplementation(group: 'org.mockito', name: 'mockito-core', version: outerPom.properties.'version.mockito') {
         exclude group: 'net.bytebuddy'
     }
-    compileOnly group: 'org.projectlombok', name: 'lombok', version: outerPom.properties.'version.utility.lombok'
+    testCompileOnly group: 'com.google.code.findbugs', name: 'findbugs-annotations', version: outerPom.properties.'version.utility.findbugs'
+    testCompileOnly group: 'com.google.code.findbugs', name: 'jsr305', version: outerPom.properties.'version.utility.jsr305'
 }
 
-// Without the extras property, creating a javadoc artifact is not necessary.
-if (Boolean.getBoolean('net.bytebuddy.misc.extras')) {
-    task javadocJar(type: Jar, dependsOn: javadoc) {
-        classifier = 'javadoc'
-        from javadoc.destinationDir
-    }
-} else {
-    task javadocJar {
-        logger.info('javadoc is only generated if net.bytebuddy.misc.extras is set to true')
+validatePlugins {
+    enabled = false
+}
+
+tasks.withType(AbstractArchiveTask).configureEach {
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+}
+
+tasks.named("jar") {
+    dependsOn configurations.fatJarClasspath
+    from {
+        configurations.fatJarClasspath.collect { zipTree(it) }
     }
 }
 
-test {
-    systemProperty('net.bytebuddy.test.version', version)
-    systemProperty('net.bytebuddy.test.integration', Boolean.getBoolean('net.bytebuddy.test.integration'))
+pluginBundle {
+    website = 'https://bytebuddy.net'
+    vcsUrl = 'https://github.com/raphw/byte-buddy'
+    tags = ['Byte Buddy', 'bytecode', 'enhancement']
+}
+
+gradlePlugin {
+    plugins {
+        byteBuddyPlugin {
+            id = 'net.bytebuddy.byte-buddy-gradle-plugin'
+            implementationClass = 'net.bytebuddy.build.gradle.ByteBuddyPlugin'
+            displayName = 'Byte Buddy Gradle plugin'
+            description = 'The Byte Buddy plugin allows for post processing Java classes with byte code transformation.'
+        }
+    }
 }

@@ -12,7 +12,7 @@ import org.mockito.Mock;
 import java.util.Arrays;
 
 import static org.hamcrest.CoreMatchers.is;
-import static org.junit.Assert.*;
+import static org.hamcrest.MatcherAssert.assertThat;
 import static org.mockito.Mockito.*;
 
 public class MethodOverrideMatcherTest extends AbstractElementMatcherTest<MethodOverrideMatcher<?>> {
@@ -111,6 +111,6 @@ public class MethodOverrideMatcherTest extends AbstractElementMatcherTest<Method
         when(superTypeMethod.asSignatureToken()).thenReturn(otherToken);
         when(interfaceTypeMethod.asSignatureToken()).thenReturn(otherToken);
         assertThat(new MethodOverrideMatcher<MethodDescription>(typeMatcher).matches(methodDescription), is(false));
-        verifyZeroInteractions(typeMatcher);
+        verifyNoMoreInteractions(typeMatcher);
     }
 }

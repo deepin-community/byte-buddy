@@ -6,14 +6,14 @@ import net.bytebuddy.dynamic.DynamicType;
 import net.bytebuddy.dynamic.loading.ClassInjector;
 import net.bytebuddy.implementation.LoadedTypeInitializer;
 import net.bytebuddy.implementation.auxiliary.AuxiliaryType;
-import net.bytebuddy.test.utility.MockitoRule;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 
 import java.lang.annotation.Annotation;
+import java.security.ProtectionDomain;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
@@ -27,7 +27,7 @@ public class AgentBuilderInitializationStrategyTest {
     private static final byte[] QUX = new byte[]{1, 2, 3}, BAZ = new byte[]{4, 5, 6};
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     @Mock
     private DynamicType.Builder<?> builder;
@@ -36,13 +36,13 @@ public class AgentBuilderInitializationStrategyTest {
     private DynamicType dynamicType;
 
     @Mock
-    private LoadedTypeInitializer loadedTypeInitializer;
-
-    @Mock
     private ClassLoader classLoader;
 
     @Mock
-    private AgentBuilder.InitializationStrategy.Dispatcher.InjectorFactory injectorFactory;
+    private ProtectionDomain protectionDomain;
+
+    @Mock
+    private AgentBuilder.InjectionStrategy injectionStrategy;
 
     @Test
     public void testNoOp() throws Exception {
@@ -57,10 +57,10 @@ public class AgentBuilderInitializationStrategyTest {
 
     @Test
     public void testNoOpRegistration() throws Exception {
-        AgentBuilder.Default.InitializationStrategy.NoOp.INSTANCE.register(dynamicType, classLoader, injectorFactory);
-        verifyZeroInteractions(dynamicType);
-        verifyZeroInteractions(classLoader);
-        verifyZeroInteractions(injectorFactory);
+        AgentBuilder.Default.InitializationStrategy.NoOp.INSTANCE.register(dynamicType, classLoader, protectionDomain, injectionStrategy);
+        verifyNoMoreInteractions(dynamicType);
+        verifyNoMoreInteractions(classLoader);
+        verifyNoMoreInteractions(injectionStrategy);
     }
 
     @Test
@@ -87,12 +87,12 @@ public class AgentBuilderInitializationStrategyTest {
         map.put(dependent, BAZ);
         when(dynamicType.getAuxiliaryTypes()).thenReturn(map);
         ClassInjector classInjector = mock(ClassInjector.class);
-        when(injectorFactory.resolve()).thenReturn(classInjector);
+        when(injectionStrategy.resolve(classLoader, protectionDomain)).thenReturn(classInjector);
         when(classInjector.inject(Collections.singletonMap(independent, QUX)))
                 .thenReturn(Collections.<TypeDescription, Class<?>>singletonMap(independent, Foo.class));
         LoadedTypeInitializer loadedTypeInitializer = mock(LoadedTypeInitializer.class);
         when(dynamicType.getLoadedTypeInitializers()).thenReturn(Collections.singletonMap(independent, loadedTypeInitializer));
-        AgentBuilder.InitializationStrategy.Minimal.INSTANCE.register(dynamicType, classLoader, injectorFactory);
+        AgentBuilder.InitializationStrategy.Minimal.INSTANCE.register(dynamicType, classLoader, protectionDomain, injectionStrategy);
         verify(classInjector).inject(Collections.singletonMap(independent, QUX));
         verifyNoMoreInteractions(classInjector);
         verify(loadedTypeInitializer).onLoad(Foo.class);
@@ -104,14 +104,8 @@ public class AgentBuilderInitializationStrategyTest {
         TypeDescription dependent = mock(TypeDescription.class);
         when(dependent.getDeclaredAnnotations()).thenReturn(new AnnotationList.Empty());
         when(dynamicType.getAuxiliaryTypes()).thenReturn(Collections.singletonMap(dependent, BAZ));
-        AgentBuilder.InitializationStrategy.Minimal.INSTANCE.register(dynamicType, classLoader, injectorFactory);
-        verifyZeroInteractions(injectorFactory);
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(AgentBuilder.InitializationStrategy.NoOp.class).apply();
-        ObjectPropertyAssertion.of(AgentBuilder.InitializationStrategy.Minimal.class).apply();
+        AgentBuilder.InitializationStrategy.Minimal.INSTANCE.register(dynamicType, classLoader, protectionDomain, injectionStrategy);
+        verifyNoMoreInteractions(injectionStrategy);
     }
 
     private static class Foo {

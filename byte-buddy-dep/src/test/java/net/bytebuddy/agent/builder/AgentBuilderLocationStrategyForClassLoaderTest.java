@@ -1,21 +1,20 @@
 package net.bytebuddy.agent.builder;
 
 import net.bytebuddy.dynamic.ClassFileLocator;
-import net.bytebuddy.test.utility.MockitoRule;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import net.bytebuddy.utility.JavaModule;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 
-import static org.hamcrest.CoreMatchers.is;
+import static net.bytebuddy.test.utility.FieldByFieldComparison.hasPrototype;
 import static org.hamcrest.MatcherAssert.assertThat;
 
 public class AgentBuilderLocationStrategyForClassLoaderTest {
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     @Mock
     private ClassLoader classLoader;
@@ -32,33 +31,28 @@ public class AgentBuilderLocationStrategyForClassLoaderTest {
     @Test
     public void testStrongLocationStrategy() throws Exception {
         assertThat(AgentBuilder.LocationStrategy.ForClassLoader.STRONG.classFileLocator(classLoader, module),
-                is(ClassFileLocator.ForClassLoader.of(classLoader)));
+                hasPrototype(ClassFileLocator.ForClassLoader.of(classLoader)));
     }
 
     @Test
     public void testWeakLocationStrategy() throws Exception {
         assertThat(AgentBuilder.LocationStrategy.ForClassLoader.WEAK.classFileLocator(classLoader, module),
-                is(ClassFileLocator.ForClassLoader.WeaklyReferenced.of(classLoader)));
+                hasPrototype(ClassFileLocator.ForClassLoader.WeaklyReferenced.of(classLoader)));
     }
 
     @Test
     public void testFallback() throws Exception {
         assertThat(AgentBuilder.LocationStrategy.ForClassLoader.STRONG.withFallbackTo(fallback),
-                is((AgentBuilder.LocationStrategy) new AgentBuilder.LocationStrategy.Compound(AgentBuilder.LocationStrategy.ForClassLoader.STRONG, fallback)));
+                hasPrototype((AgentBuilder.LocationStrategy) new AgentBuilder.LocationStrategy.Compound(AgentBuilder.LocationStrategy.ForClassLoader.STRONG, fallback)));
         assertThat(AgentBuilder.LocationStrategy.ForClassLoader.WEAK.withFallbackTo(fallback),
-                is((AgentBuilder.LocationStrategy) new AgentBuilder.LocationStrategy.Compound(AgentBuilder.LocationStrategy.ForClassLoader.WEAK, fallback)));
+                hasPrototype((AgentBuilder.LocationStrategy) new AgentBuilder.LocationStrategy.Compound(AgentBuilder.LocationStrategy.ForClassLoader.WEAK, fallback)));
     }
 
     @Test
     public void testFallbackLocator() throws Exception {
         assertThat(AgentBuilder.LocationStrategy.ForClassLoader.STRONG.withFallbackTo(classFileLocator),
-                is((AgentBuilder.LocationStrategy) new AgentBuilder.LocationStrategy.Compound(AgentBuilder.LocationStrategy.ForClassLoader.STRONG, new AgentBuilder.LocationStrategy.Simple(classFileLocator))));
+                hasPrototype((AgentBuilder.LocationStrategy) new AgentBuilder.LocationStrategy.Compound(AgentBuilder.LocationStrategy.ForClassLoader.STRONG, new AgentBuilder.LocationStrategy.Simple(classFileLocator))));
         assertThat(AgentBuilder.LocationStrategy.ForClassLoader.WEAK.withFallbackTo(classFileLocator),
-                is((AgentBuilder.LocationStrategy) new AgentBuilder.LocationStrategy.Compound(AgentBuilder.LocationStrategy.ForClassLoader.WEAK, new AgentBuilder.LocationStrategy.Simple(classFileLocator))));
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(AgentBuilder.LocationStrategy.ForClassLoader.class).apply();
+                hasPrototype((AgentBuilder.LocationStrategy) new AgentBuilder.LocationStrategy.Compound(AgentBuilder.LocationStrategy.ForClassLoader.WEAK, new AgentBuilder.LocationStrategy.Simple(classFileLocator))));
     }
 }

@@ -1,3 +1,18 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.implementation.bind.annotation;
 
 import net.bytebuddy.description.annotation.AnnotationDescription;
@@ -28,6 +43,13 @@ import static net.bytebuddy.matcher.ElementMatchers.named;
  * Setting {@link FieldValue#value()} is optional. If the value is not set, the field value attempts to bind a setter's
  * or getter's field if the intercepted method is an accessor method. Otherwise, the binding renders the target method
  * to be an illegal candidate for binding.
+ * </p>
+ * <p>
+ * <b>Important</b>: Don't confuse this annotation with {@link net.bytebuddy.asm.Advice.FieldValue} annotation. This annotation
+ * should be used only in combination with method delegation
+ * ({@link net.bytebuddy.implementation.MethodDelegation MethodDelegation.to(...)}).
+ * For {@link net.bytebuddy.asm.Advice} ASM visitor use alternative annotation from
+ * <code>net.bytebuddy.asm.Advice</code> package.
  * </p>
  *
  * @see net.bytebuddy.implementation.MethodDelegation
@@ -78,7 +100,7 @@ public @interface FieldValue {
          * Initializes the methods of the annotation that is read by this binder.
          */
         static {
-            MethodList<MethodDescription.InDefinedShape> methodList = new TypeDescription.ForLoadedType(FieldValue.class).getDeclaredMethods();
+            MethodList<MethodDescription.InDefinedShape> methodList = TypeDescription.ForLoadedType.of(FieldValue.class).getDeclaredMethods();
             DECLARING_TYPE = methodList.filter(named("declaringType")).getOnly();
             FIELD_NAME = methodList.filter(named("value")).getOnly();
         }
@@ -97,12 +119,16 @@ public @interface FieldValue {
             this.delegate = delegate;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Class<FieldValue> getHandledType() {
             return delegate.getHandledType();
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public MethodDelegationBinder.ParameterBinding<?> bind(AnnotationDescription.Loadable<FieldValue> annotation,
                                                                MethodDescription source,
                                                                ParameterDescription target,
@@ -117,9 +143,21 @@ public @interface FieldValue {
          */
         protected static class Delegate extends ForFieldBinding<FieldValue> {
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Class<FieldValue> getHandledType() {
                 return FieldValue.class;
+            }
+
+            @Override
+            protected String fieldName(AnnotationDescription.Loadable<FieldValue> annotation) {
+                return annotation.getValue(FIELD_NAME).resolve(String.class);
+            }
+
+            @Override
+            protected TypeDescription declaringType(AnnotationDescription.Loadable<FieldValue> annotation) {
+                return annotation.getValue(DECLARING_TYPE).resolve(TypeDescription.class);
             }
 
             @Override
@@ -139,16 +177,6 @@ public @interface FieldValue {
                 return stackManipulation.isValid()
                         ? new MethodDelegationBinder.ParameterBinding.Anonymous(stackManipulation)
                         : MethodDelegationBinder.ParameterBinding.Illegal.INSTANCE;
-            }
-
-            @Override
-            protected String fieldName(AnnotationDescription.Loadable<FieldValue> annotation) {
-                return annotation.getValue(FIELD_NAME).resolve(String.class);
-            }
-
-            @Override
-            protected TypeDescription declaringType(AnnotationDescription.Loadable<FieldValue> annotation) {
-                return annotation.getValue(DECLARING_TYPE).resolve(TypeDescription.class);
             }
         }
     }

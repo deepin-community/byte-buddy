@@ -1,6 +1,21 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.dynamic.scaffold;
 
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.implementation.Implementation;
@@ -55,7 +70,7 @@ public interface TypeInitializer extends ByteCodeAppender {
         /**
          * A default implementation of a type initializer drain that creates a initializer method.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class Default implements Drain {
 
             /**
@@ -88,7 +103,9 @@ public interface TypeInitializer extends ByteCodeAppender {
                 this.annotationValueFilterFactory = annotationValueFilterFactory;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public void apply(ClassVisitor classVisitor, TypeInitializer typeInitializer, Implementation.Context implementationContext) {
                 typeInitializer.wrap(methodPool.target(new MethodDescription.Latent.TypeInitializer(instrumentedType))).apply(classVisitor,
                         implementationContext,
@@ -107,31 +124,39 @@ public interface TypeInitializer extends ByteCodeAppender {
          */
         INSTANCE;
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public boolean isDefined() {
             return false;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public TypeInitializer expandWith(ByteCodeAppender byteCodeAppenderFactory) {
             return new TypeInitializer.Simple(byteCodeAppenderFactory);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public TypeWriter.MethodPool.Record wrap(TypeWriter.MethodPool.Record record) {
             return record;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext, MethodDescription instrumentedMethod) {
-            return new Size(0, 0);
+            return Size.ZERO;
         }
     }
 
     /**
      * A simple, defined type initializer that executes a given {@link ByteCodeAppender}.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class Simple implements TypeInitializer {
 
         /**
@@ -148,22 +173,30 @@ public interface TypeInitializer extends ByteCodeAppender {
             this.byteCodeAppender = byteCodeAppender;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public boolean isDefined() {
             return true;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public TypeInitializer expandWith(ByteCodeAppender byteCodeAppender) {
             return new TypeInitializer.Simple(new Compound(this.byteCodeAppender, byteCodeAppender));
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public TypeWriter.MethodPool.Record wrap(TypeWriter.MethodPool.Record record) {
             return record.prepend(byteCodeAppender);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Size apply(MethodVisitor methodVisitor, Implementation.Context implementationContext, MethodDescription instrumentedMethod) {
             return byteCodeAppender.apply(methodVisitor, implementationContext, instrumentedMethod);
         }

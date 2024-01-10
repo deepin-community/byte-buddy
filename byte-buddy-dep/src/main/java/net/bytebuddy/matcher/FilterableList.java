@@ -1,3 +1,18 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.matcher;
 
 import java.util.AbstractList;
@@ -30,7 +45,9 @@ public interface FilterableList<T, S extends FilterableList<T, S>> extends List<
      */
     T getOnly();
 
-    @Override
+    /**
+     * {@inheritDoc}
+     */
     S subList(int fromIndex, int toIndex);
 
     /**
@@ -41,28 +58,38 @@ public interface FilterableList<T, S extends FilterableList<T, S>> extends List<
      */
     class Empty<T, S extends FilterableList<T, S>> extends AbstractList<T> implements FilterableList<T, S> {
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public T get(int index) {
             throw new IndexOutOfBoundsException("index = " + index);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public int size() {
             return 0;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public T getOnly() {
             throw new IllegalStateException("size = 0");
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         @SuppressWarnings("unchecked")
         public S filter(ElementMatcher<? super T> elementMatcher) {
             return (S) this;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         @SuppressWarnings("unchecked")
         public S subList(int fromIndex, int toIndex) {
             if (fromIndex == toIndex && toIndex == 0) {
@@ -88,7 +115,9 @@ public interface FilterableList<T, S extends FilterableList<T, S>> extends List<
          */
         private static final int ONLY = 0;
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         @SuppressWarnings("unchecked")
         public S filter(ElementMatcher<? super T> elementMatcher) {
             List<T> filteredElements = new ArrayList<T>(size());
@@ -102,7 +131,9 @@ public interface FilterableList<T, S extends FilterableList<T, S>> extends List<
                     : wrap(filteredElements);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public T getOnly() {
             if (size() != 1) {
                 throw new IllegalStateException("size = " + size());
@@ -110,7 +141,9 @@ public interface FilterableList<T, S extends FilterableList<T, S>> extends List<
             return get(ONLY);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public S subList(int fromIndex, int toIndex) {
             return wrap(super.subList(fromIndex, toIndex));
         }

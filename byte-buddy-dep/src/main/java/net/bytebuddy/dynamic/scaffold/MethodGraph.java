@@ -1,7 +1,22 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.dynamic.scaffold;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import lombok.EqualsAndHashCode;
+import net.bytebuddy.build.HashCodeAndEqualsPlugin;
 import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.method.MethodList;
 import net.bytebuddy.description.modifier.Visibility;
@@ -9,6 +24,7 @@ import net.bytebuddy.description.type.TypeDefinition;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.matcher.ElementMatcher;
 import net.bytebuddy.matcher.FilterableList;
+import net.bytebuddy.utility.nullability.MaybeNull;
 import org.objectweb.asm.Opcodes;
 
 import java.util.*;
@@ -46,33 +62,61 @@ public interface MethodGraph {
          */
         INSTANCE;
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Node locate(MethodDescription.SignatureToken token) {
             return Node.Unresolved.INSTANCE;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public NodeList listNodes() {
             return new NodeList(Collections.<Node>emptyList());
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public MethodGraph getSuperClassGraph() {
             return this;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public MethodGraph getInterfaceGraph(TypeDescription typeDescription) {
             return this;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
+        public Linked compile(TypeDefinition typeDefinition) {
+            return this;
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        @Deprecated
         public Linked compile(TypeDescription typeDescription) {
             return this;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Linked compile(TypeDefinition typeDefinition, TypeDescription viewPoint) {
+            return this;
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        @Deprecated
+        public Linked compile(TypeDescription typeDefinition, TypeDescription viewPoint) {
             return this;
         }
     }
@@ -101,7 +145,7 @@ public interface MethodGraph {
         /**
          * A simple implementation of a linked method graph that exposes views by delegation to given method graphs.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class Delegation implements Linked {
 
             /**
@@ -132,12 +176,16 @@ public interface MethodGraph {
                 this.interfaceGraphs = interfaceGraphs;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public MethodGraph getSuperClassGraph() {
                 return superClassGraph;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public MethodGraph getInterfaceGraph(TypeDescription typeDescription) {
                 MethodGraph interfaceGraph = interfaceGraphs.get(typeDescription);
                 return interfaceGraph == null
@@ -145,12 +193,16 @@ public interface MethodGraph {
                         : interfaceGraph;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Node locate(MethodDescription.SignatureToken token) {
                 return methodGraph.locate(token);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public NodeList listNodes() {
                 return methodGraph.listNodes();
             }
@@ -282,22 +334,30 @@ public interface MethodGraph {
              */
             INSTANCE;
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Sort getSort() {
                 return Sort.UNRESOLVED;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public MethodDescription getRepresentative() {
                 throw new IllegalStateException("Cannot resolve the method of an illegal node");
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Set<MethodDescription.TypeToken> getMethodTypes() {
                 throw new IllegalStateException("Cannot resolve bridge method of an illegal node");
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Visibility getVisibility() {
                 throw new IllegalStateException("Cannot resolve visibility of an illegal node");
             }
@@ -306,7 +366,7 @@ public interface MethodGraph {
         /**
          * A simple implementation of a resolved node of a method without bridges.
          */
-        @EqualsAndHashCode
+        @HashCodeAndEqualsPlugin.Enhance
         class Simple implements Node {
 
             /**
@@ -323,22 +383,30 @@ public interface MethodGraph {
                 this.methodDescription = methodDescription;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Sort getSort() {
                 return Sort.RESOLVED;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public MethodDescription getRepresentative() {
                 return methodDescription;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Set<MethodDescription.TypeToken> getMethodTypes() {
                 return Collections.emptySet();
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public Visibility getVisibility() {
                 return methodDescription.getVisibility();
             }
@@ -348,7 +416,7 @@ public interface MethodGraph {
     /**
      * A compiler to produce a {@link MethodGraph} from a given type.
      */
-    @SuppressFBWarnings(value = "IC_SUPERCLASS_USES_SUBCLASS_DURING_INITIALIZATION", justification = "Safe initialization is implied")
+    @SuppressFBWarnings(value = "IC_SUPERCLASS_USES_SUBCLASS_DURING_INITIALIZATION", justification = "Safe initialization is implied.")
     interface Compiler {
 
         /**
@@ -359,9 +427,19 @@ public interface MethodGraph {
         /**
          * Compiles the given type into a method graph considering the type to be the viewpoint.
          *
-         * @param typeDescription The type to be compiled.
+         * @param typeDefinition The type to be compiled.
          * @return A linked method graph representing the given type.
          */
+        MethodGraph.Linked compile(TypeDefinition typeDefinition);
+
+        /**
+         * Compiles the given type into a method graph considering the type to be the viewpoint.
+         *
+         * @param typeDescription The type to be compiled.
+         * @return A linked method graph representing the given type.
+         * @deprecated Use {@link MethodGraph.Compiler#compile(TypeDefinition)}.
+         */
+        @Deprecated
         MethodGraph.Linked compile(TypeDescription typeDescription);
 
         /**
@@ -374,6 +452,17 @@ public interface MethodGraph {
         MethodGraph.Linked compile(TypeDefinition typeDefinition, TypeDescription viewPoint);
 
         /**
+         * Compiles the given type into a method graph.
+         *
+         * @param typeDefinition The type to be compiled.
+         * @param viewPoint      The view point that determines the method's visibility.
+         * @return A linked method graph representing the given type.
+         * @deprecated Use {@link MethodGraph.Compiler#compile(TypeDefinition, TypeDescription)}.
+         */
+        @Deprecated
+        MethodGraph.Linked compile(TypeDescription typeDefinition, TypeDescription viewPoint);
+
+        /**
          * A flat compiler that simply returns the methods that are declared by the instrumented type.
          */
         enum ForDeclaredMethods implements Compiler {
@@ -383,18 +472,38 @@ public interface MethodGraph {
              */
             INSTANCE;
 
-            @Override
-            public Linked compile(TypeDescription typeDescription) {
-                return compile(typeDescription, typeDescription);
+            /**
+             * {@inheritDoc}
+             */
+            public Linked compile(TypeDefinition typeDefinition) {
+                return compile(typeDefinition, typeDefinition.asErasure());
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
+            @Deprecated
+            public Linked compile(TypeDescription typeDescription) {
+                return compile((TypeDefinition) typeDescription, typeDescription);
+            }
+
+            /**
+             * {@inheritDoc}
+             */
             public Linked compile(TypeDefinition typeDefinition, TypeDescription viewPoint) {
                 LinkedHashMap<MethodDescription.SignatureToken, Node> nodes = new LinkedHashMap<MethodDescription.SignatureToken, Node>();
                 for (MethodDescription methodDescription : typeDefinition.getDeclaredMethods().filter(isVirtual().and(not(isBridge())).and(isVisibleTo(viewPoint)))) {
                     nodes.put(methodDescription.asSignatureToken(), new Node.Simple(methodDescription));
                 }
                 return new Linked.Delegation(new MethodGraph.Simple(nodes), Empty.INSTANCE, Collections.<TypeDescription, MethodGraph>emptyMap());
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            @Deprecated
+            public Linked compile(TypeDescription typeDefinition, TypeDescription viewPoint) {
+                return compile((TypeDefinition) typeDefinition, viewPoint);
             }
         }
 
@@ -403,9 +512,27 @@ public interface MethodGraph {
          */
         abstract class AbstractBase implements Compiler {
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
+            public Linked compile(TypeDefinition typeDefinition) {
+                return compile(typeDefinition, typeDefinition.asErasure());
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            @Deprecated
             public Linked compile(TypeDescription typeDescription) {
-                return compile(typeDescription, typeDescription);
+                return compile((TypeDefinition) typeDescription, typeDescription);
+            }
+
+            /**
+             * {@inheritDoc}
+             */
+            @Deprecated
+            public Linked compile(TypeDescription typeDefinition, TypeDescription viewPoint) {
+                return compile((TypeDefinition) typeDefinition, viewPoint);
             }
         }
 
@@ -414,7 +541,7 @@ public interface MethodGraph {
          *
          * @param <T> The type of the harmonizer token to be used for linking methods of different types.
          */
-        @EqualsAndHashCode(callSuper = false)
+        @HashCodeAndEqualsPlugin.Enhance
         class Default<T> extends AbstractBase {
 
             /**
@@ -502,7 +629,9 @@ public interface MethodGraph {
                 return of(Harmonizer.ForJVMMethod.INSTANCE, Merger.Directional.LEFT);
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public MethodGraph.Linked compile(TypeDefinition typeDefinition, TypeDescription viewPoint) {
                 Map<TypeDefinition, Key.Store<T>> snapshots = new HashMap<TypeDefinition, Key.Store<T>>();
                 Key.Store<?> rootStore = doAnalyze(typeDefinition, snapshots, isVirtual().and(isVisibleTo(viewPoint)));
@@ -510,12 +639,25 @@ public interface MethodGraph {
                 List<TypeDescription.Generic> interfaceTypes = typeDefinition.getInterfaces();
                 Map<TypeDescription, MethodGraph> interfaceGraphs = new HashMap<TypeDescription, MethodGraph>();
                 for (TypeDescription.Generic interfaceType : interfaceTypes) {
-                    interfaceGraphs.put(interfaceType.asErasure(), snapshots.get(interfaceType).asGraph(merger));
+                    Key.Store<T> store = snapshots.get(interfaceType);
+                    if (store == null) {
+                        throw new IllegalStateException("Failed to resolve interface type " + interfaceType + " from " + snapshots.keySet());
+                    }
+                    interfaceGraphs.put(interfaceType.asErasure(), store.asGraph(merger));
+                }
+                Key.Store<T> store;
+                if (superClass == null) {
+                    store = null;
+                } else {
+                    store = snapshots.get(superClass);
+                    if (store == null) {
+                        throw new IllegalStateException("Failed to resolve super class " + superClass + " from " + snapshots.keySet());
+                    }
                 }
                 return new Linked.Delegation(rootStore.asGraph(merger),
-                        superClass == null
+                        store == null
                                 ? Empty.INSTANCE
-                                : snapshots.get(superClass).asGraph(merger),
+                                : store.asGraph(merger),
                         interfaceGraphs);
             }
 
@@ -548,7 +690,7 @@ public interface MethodGraph {
              * @param relevanceMatcher A matcher for filtering methods that should be included in the graph.
              * @return A key store describing the provided type.
              */
-            protected Key.Store<T> analyzeNullable(TypeDescription.Generic typeDescription,
+            protected Key.Store<T> analyzeNullable(@MaybeNull TypeDescription.Generic typeDescription,
                                                    Map<TypeDefinition, Key.Store<T>> snapshots,
                                                    ElementMatcher<? super MethodDescription> relevanceMatcher) {
                 return typeDescription == null
@@ -572,11 +714,7 @@ public interface MethodGraph {
                 for (TypeDescription.Generic interfaceType : typeDefinition.getInterfaces()) {
                     interfaceStore = interfaceStore.combineWith(analyze(interfaceType.accept(visitor), interfaceType, snapshots, relevanceMatcher));
                 }
-                store = store.inject(interfaceStore);
-                for (MethodDescription methodDescription : typeDefinition.getDeclaredMethods().filter(relevanceMatcher)) {
-                    store = store.registerTopLevel(methodDescription, harmonizer);
-                }
-                return store;
+                return store.inject(interfaceStore).registerTopLevel(typeDefinition.getDeclaredMethods().filter(relevanceMatcher), harmonizer);
             }
 
             /**
@@ -605,7 +743,9 @@ public interface MethodGraph {
                      */
                     INSTANCE;
 
-                    @Override
+                    /**
+                     * {@inheritDoc}
+                     */
                     public Token harmonize(MethodDescription.TypeToken typeToken) {
                         return new Token(typeToken);
                     }
@@ -621,22 +761,28 @@ public interface MethodGraph {
                         private final MethodDescription.TypeToken typeToken;
 
                         /**
+                         * The hash code of this token which is precomputed for to improve performance.
+                         */
+                        private final int hashCode;
+
+                        /**
                          * Creates a new type token for a Java method.
                          *
                          * @param typeToken The represented type token.
                          */
                         protected Token(MethodDescription.TypeToken typeToken) {
                             this.typeToken = typeToken;
-                        }
-
-                        @Override
-                        public boolean equals(Object other) {
-                            return this == other || (other instanceof Token && typeToken.getParameterTypes().equals(((Token) other).typeToken.getParameterTypes()));
+                            hashCode = typeToken.getParameterTypes().hashCode();
                         }
 
                         @Override
                         public int hashCode() {
-                            return typeToken.getParameterTypes().hashCode();
+                            return hashCode;
+                        }
+
+                        @Override
+                        public boolean equals(@MaybeNull Object other) {
+                            return this == other || other instanceof Token && typeToken.getParameterTypes().equals(((Token) other).typeToken.getParameterTypes());
                         }
 
                         @Override
@@ -656,7 +802,9 @@ public interface MethodGraph {
                      */
                     INSTANCE;
 
-                    @Override
+                    /**
+                     * {@inheritDoc}
+                     */
                     public Token harmonize(MethodDescription.TypeToken typeToken) {
                         return new Token(typeToken);
                     }
@@ -672,24 +820,35 @@ public interface MethodGraph {
                         private final MethodDescription.TypeToken typeToken;
 
                         /**
+                         * The hash code of this token which is precomputed for to improve performance.
+                         */
+                        private final int hashCode;
+
+                        /**
                          * Creates a new type token for a JVM method.
                          *
                          * @param typeToken The represented type token.
                          */
                         public Token(MethodDescription.TypeToken typeToken) {
                             this.typeToken = typeToken;
-                        }
-
-                        @Override
-                        public boolean equals(Object other) {
-                            return this == other || other instanceof Token
-                                    && typeToken.getReturnType().equals(((Token) other).typeToken.getReturnType())
-                                    && typeToken.getParameterTypes().equals(((Token) other).typeToken.getParameterTypes());
+                            hashCode = typeToken.getReturnType().hashCode() + 31 * typeToken.getParameterTypes().hashCode();
                         }
 
                         @Override
                         public int hashCode() {
-                            return typeToken.getReturnType().hashCode() + 31 * typeToken.getParameterTypes().hashCode();
+                            return hashCode;
+                        }
+
+                        @Override
+                        public boolean equals(@MaybeNull Object other) {
+                            if (this == other) {
+                                return true;
+                            } else if (!(other instanceof Token)) {
+                                return false;
+                            }
+                            Token token = (Token) other;
+                            return typeToken.getReturnType().equals(token.typeToken.getReturnType())
+                                    && typeToken.getParameterTypes().equals(token.typeToken.getParameterTypes());
                         }
 
                         @Override
@@ -744,7 +903,9 @@ public interface MethodGraph {
                         this.left = left;
                     }
 
-                    @Override
+                    /**
+                     * {@inheritDoc}
+                     */
                     public MethodDescription merge(MethodDescription left, MethodDescription right) {
                         return this.left
                                 ? left
@@ -767,12 +928,19 @@ public interface MethodGraph {
                 protected final String internalName;
 
                 /**
+                 * The number of method parameters of the method this key identifies.
+                 */
+                protected final int parameterCount;
+
+                /**
                  * Creates a new key.
                  *
-                 * @param internalName The internal name of the method this key identifies.
+                 * @param internalName   The internal name of the method this key identifies.
+                 * @param parameterCount The number of method parameters of the method this key identifies.
                  */
-                protected Key(String internalName) {
+                protected Key(String internalName, int parameterCount) {
                     this.internalName = internalName;
+                    this.parameterCount = parameterCount;
                 }
 
                 /**
@@ -783,15 +951,21 @@ public interface MethodGraph {
                 protected abstract Set<S> getIdentifiers();
 
                 @Override
-                public boolean equals(Object other) {
-                    return other == this || (other instanceof Key
-                            && internalName.equals(((Key) other).internalName)
-                            && !Collections.disjoint(getIdentifiers(), ((Key) other).getIdentifiers()));
+                public int hashCode() {
+                    return internalName.hashCode() + 31 * parameterCount;
                 }
 
                 @Override
-                public int hashCode() {
-                    return internalName.hashCode();
+                public boolean equals(@MaybeNull Object other) {
+                    if (this == other) {
+                        return true;
+                    } else if (!(other instanceof Key)) {
+                        return false;
+                    }
+                    Key<?> key = (Key<?>) other;
+                    return internalName.equals(key.internalName)
+                            && parameterCount == key.parameterCount
+                            && !Collections.disjoint(getIdentifiers(), key.getIdentifiers());
                 }
 
                 /**
@@ -810,11 +984,12 @@ public interface MethodGraph {
                     /**
                      * Creates a new harmonized key.
                      *
-                     * @param internalName The internal name of the method this key identifies.
-                     * @param identifiers  A mapping of identifiers to the type tokens they represent.
+                     * @param internalName   The internal name of the method this key identifies.
+                     * @param parameterCount The number of method parameters of the method this key identifies.
+                     * @param identifiers    A mapping of identifiers to the type tokens they represent.
                      */
-                    protected Harmonized(String internalName, Map<V, Set<MethodDescription.TypeToken>> identifiers) {
-                        super(internalName);
+                    protected Harmonized(String internalName, int parameterCount, Map<V, Set<MethodDescription.TypeToken>> identifiers) {
+                        super(internalName, parameterCount);
                         this.identifiers = identifiers;
                     }
 
@@ -829,6 +1004,7 @@ public interface MethodGraph {
                     protected static <Q> Harmonized<Q> of(MethodDescription methodDescription, Harmonizer<Q> harmonizer) {
                         MethodDescription.TypeToken typeToken = methodDescription.asTypeToken();
                         return new Harmonized<Q>(methodDescription.getInternalName(),
+                                methodDescription.getParameters().size(),
                                 Collections.singletonMap(harmonizer.harmonize(typeToken), Collections.<MethodDescription.TypeToken>emptySet()));
                     }
 
@@ -844,7 +1020,7 @@ public interface MethodGraph {
                             identifiers.addAll(typeTokens);
                         }
                         identifiers.add(typeToken);
-                        return new Detached(internalName, identifiers);
+                        return new Detached(internalName, parameterCount, identifiers);
                     }
 
                     /**
@@ -865,7 +1041,7 @@ public interface MethodGraph {
                                 identifiers.put(entry.getKey(), typeTokens);
                             }
                         }
-                        return new Harmonized<V>(internalName, identifiers);
+                        return new Harmonized<V>(internalName, parameterCount, identifiers);
                     }
 
                     /**
@@ -887,7 +1063,7 @@ public interface MethodGraph {
                             typeTokens.add(typeToken);
                             identifiers.put(identifier, typeTokens);
                         }
-                        return new Harmonized<V>(internalName, identifiers);
+                        return new Harmonized<V>(internalName, parameterCount, identifiers);
                     }
 
                     @Override
@@ -909,11 +1085,12 @@ public interface MethodGraph {
                     /**
                      * Creates a new detached key.
                      *
-                     * @param internalName The internal name of the method this key identifies.
-                     * @param identifiers  The type tokens represented by this key.
+                     * @param internalName   The internal name of the method this key identifies.
+                     * @param parameterCount The number of method parameters of the method this key identifies.
+                     * @param identifiers    The type tokens represented by this key.
                      */
-                    protected Detached(String internalName, Set<MethodDescription.TypeToken> identifiers) {
-                        super(internalName);
+                    protected Detached(String internalName, int parameterCount, Set<MethodDescription.TypeToken> identifiers) {
+                        super(internalName, parameterCount);
                         this.identifiers = identifiers;
                     }
 
@@ -924,7 +1101,7 @@ public interface MethodGraph {
                      * @return A detached key representing the given method token..
                      */
                     protected static Detached of(MethodDescription.SignatureToken token) {
-                        return new Detached(token.getName(), Collections.singleton(token.asTypeToken()));
+                        return new Detached(token.getName(), token.getParameterTypes().size(), Collections.singleton(token.asTypeToken()));
                     }
 
                     @Override
@@ -938,7 +1115,7 @@ public interface MethodGraph {
                  *
                  * @param <V> The type of the token used for deciding on method equality.
                  */
-                @EqualsAndHashCode
+                @HashCodeAndEqualsPlugin.Enhance
                 protected static class Store<V> {
 
                     /**
@@ -972,7 +1149,7 @@ public interface MethodGraph {
                      */
                     private static <W> Entry<W> combine(Entry<W> left, Entry<W> right) {
                         Set<MethodDescription> leftMethods = left.getCandidates(), rightMethods = right.getCandidates();
-                        LinkedHashSet<MethodDescription> combined = new LinkedHashSet<MethodDescription>(leftMethods.size() + rightMethods.size());
+                        LinkedHashSet<MethodDescription> combined = new LinkedHashSet<MethodDescription>();
                         combined.addAll(leftMethods);
                         combined.addAll(rightMethods);
                         for (MethodDescription leftMethod : leftMethods) {
@@ -1000,18 +1177,22 @@ public interface MethodGraph {
                     /**
                      * Registers a new top level method within this store.
                      *
-                     * @param methodDescription The method to register.
-                     * @param harmonizer        The harmonizer to use for determining method equality.
+                     * @param methodDescriptions The methods to register.
+                     * @param harmonizer         The harmonizer to use for determining method equality.
                      * @return A store with the given method registered as a top-level method.
                      */
-                    protected Store<V> registerTopLevel(MethodDescription methodDescription, Harmonizer<V> harmonizer) {
-                        Harmonized<V> key = Harmonized.of(methodDescription, harmonizer);
+                    protected Store<V> registerTopLevel(List<? extends MethodDescription> methodDescriptions, Harmonizer<V> harmonizer) {
+                        if (methodDescriptions.isEmpty()) {
+                            return this;
+                        }
                         LinkedHashMap<Harmonized<V>, Entry<V>> entries = new LinkedHashMap<Harmonized<V>, Entry<V>>(this.entries);
-                        Entry<V> currentEntry = entries.remove(key);
-                        Entry<V> extendedEntry = (currentEntry == null
-                                ? new Entry.Initial<V>(key)
-                                : currentEntry).extendBy(methodDescription, harmonizer);
-                        entries.put(extendedEntry.getKey(), extendedEntry);
+                        for (MethodDescription methodDescription : methodDescriptions) {
+                            Harmonized<V> key = Harmonized.of(methodDescription, harmonizer);
+                            Entry<V> currentEntry = entries.remove(key), extendedEntry = (currentEntry == null
+                                    ? new Entry.Initial<V>(key)
+                                    : currentEntry).extendBy(methodDescription, harmonizer);
+                            entries.put(extendedEntry.getKey(), extendedEntry);
+                        }
                         return new Store<V>(entries);
                     }
 
@@ -1022,26 +1203,18 @@ public interface MethodGraph {
                      * @return A store representing a combination of this store and the given store.
                      */
                     protected Store<V> combineWith(Store<V> store) {
-                        Store<V> combinedStore = this;
-                        for (Entry<V> entry : store.entries.values()) {
-                            combinedStore = combinedStore.combineWith(entry);
+                        if (entries.isEmpty()) {
+                            return store;
+                        } else if (store.entries.isEmpty()) {
+                            return this;
                         }
-                        return combinedStore;
-                    }
-
-                    /**
-                     * Combines this store with the given entry.
-                     *
-                     * @param entry The entry to combine with this store.
-                     * @return A store representing a combination of this store and the given entry.
-                     */
-                    protected Store<V> combineWith(Entry<V> entry) {
                         LinkedHashMap<Harmonized<V>, Entry<V>> entries = new LinkedHashMap<Harmonized<V>, Entry<V>>(this.entries);
-                        Entry<V> previousEntry = entries.remove(entry.getKey());
-                        Entry<V> injectedEntry = previousEntry == null
-                                ? entry
-                                : combine(previousEntry, entry);
-                        entries.put(injectedEntry.getKey(), injectedEntry);
+                        for (Entry<V> entry : store.entries.values()) {
+                            Entry<V> previousEntry = entries.remove(entry.getKey()), injectedEntry = previousEntry == null
+                                    ? entry
+                                    : combine(previousEntry, entry);
+                            entries.put(injectedEntry.getKey(), injectedEntry);
+                        }
                         return new Store<V>(entries);
                     }
 
@@ -1052,26 +1225,18 @@ public interface MethodGraph {
                      * @return A store that represents this store with the given store injected.
                      */
                     protected Store<V> inject(Store<V> store) {
-                        Store<V> injectedStore = this;
-                        for (Entry<V> entry : store.entries.values()) {
-                            injectedStore = injectedStore.inject(entry);
+                        if (entries.isEmpty()) {
+                            return store;
+                        } else if (store.entries.isEmpty()) {
+                            return this;
                         }
-                        return injectedStore;
-                    }
-
-                    /**
-                     * Injects the given entry into this store.
-                     *
-                     * @param entry The entry to be injected into this store.
-                     * @return A store that represents this store with the given entry injected.
-                     */
-                    protected Store<V> inject(Entry<V> entry) {
                         LinkedHashMap<Harmonized<V>, Entry<V>> entries = new LinkedHashMap<Harmonized<V>, Entry<V>>(this.entries);
-                        Entry<V> dominantEntry = entries.remove(entry.getKey());
-                        Entry<V> injectedEntry = dominantEntry == null
-                                ? entry
-                                : dominantEntry.inject(entry.getKey(), entry.getVisibility());
-                        entries.put(injectedEntry.getKey(), injectedEntry);
+                        for (Entry<V> entry : store.entries.values()) {
+                            Entry<V> previous = entries.remove(entry.getKey()), injectedEntry = previous == null
+                                    ? entry
+                                    : previous.inject(entry);
+                            entries.put(injectedEntry.getKey(), injectedEntry);
+                        }
                         return new Store<V>(entries);
                     }
 
@@ -1130,11 +1295,10 @@ public interface MethodGraph {
                         /**
                          * Injects the given key into this entry.
                          *
-                         * @param key        The key to inject into this entry.
-                         * @param visibility The entry's minimal visibility.
+                         * @param entry The entry to be combined.
                          * @return This entry extended with the given key.
                          */
-                        Entry<W> inject(Harmonized<W> key, Visibility visibility);
+                        Entry<W> inject(Entry<W> entry);
 
                         /**
                          * Transforms this entry into a node.
@@ -1165,22 +1329,30 @@ public interface MethodGraph {
                                 this.key = key;
                             }
 
-                            @Override
+                            /**
+                             * {@inheritDoc}
+                             */
                             public Harmonized<U> getKey() {
                                 throw new IllegalStateException("Cannot extract key from initial entry:" + this);
                             }
 
-                            @Override
+                            /**
+                             * {@inheritDoc}
+                             */
                             public Set<MethodDescription> getCandidates() {
                                 throw new IllegalStateException("Cannot extract method from initial entry:" + this);
                             }
 
-                            @Override
+                            /**
+                             * {@inheritDoc}
+                             */
                             public Visibility getVisibility() {
                                 throw new IllegalStateException("Cannot extract visibility from initial entry:" + this);
                             }
 
-                            @Override
+                            /**
+                             * {@inheritDoc}
+                             */
                             public Entry<U> extendBy(MethodDescription methodDescription, Harmonizer<U> harmonizer) {
                                 return new Resolved<U>(key.extend(methodDescription.asDefined(), harmonizer),
                                         methodDescription,
@@ -1188,25 +1360,34 @@ public interface MethodGraph {
                                         Resolved.NOT_MADE_VISIBLE);
                             }
 
-                            @Override
-                            public Entry<U> inject(Harmonized<U> key, Visibility visibility) {
+                            /**
+                             * {@inheritDoc}
+                             */
+                            public Entry<U> inject(Entry<U> entry) {
                                 throw new IllegalStateException("Cannot inject into initial entry without a registered method: " + this);
                             }
 
-                            @Override
+                            /**
+                             * {@inheritDoc}
+                             */
                             public Node asNode(Merger merger) {
                                 throw new IllegalStateException("Cannot transform initial entry without a registered method: " + this);
                             }
 
                             @Override
-                            public boolean equals(Object other) {
-                                return this == other || !(other == null || getClass() != other.getClass())
-                                        && key.equals(((Initial<?>) other).key);
+                            public int hashCode() {
+                                return key.hashCode();
                             }
 
                             @Override
-                            public int hashCode() {
-                                return key.hashCode();
+                            public boolean equals(@MaybeNull Object other) {
+                                if (this == other) {
+                                    return true;
+                                } else if (other == null || getClass() != other.getClass()) {
+                                    return false;
+                                }
+                                Initial<?> initial = (Initial<?>) other;
+                                return key.equals(initial.key);
                             }
                         }
 
@@ -1215,7 +1396,7 @@ public interface MethodGraph {
                          *
                          * @param <U> The type of the harmonized key to determine method equality.
                          */
-                        @EqualsAndHashCode
+                        @HashCodeAndEqualsPlugin.Enhance
                         class Resolved<U> implements Entry<U> {
 
                             /**
@@ -1250,6 +1431,17 @@ public interface MethodGraph {
                             private final boolean madeVisible;
 
                             /**
+                             * Creates a new resolved entry that is not made visible.
+                             *
+                             * @param key               The harmonized key this entry represents.
+                             * @param methodDescription The non-ambiguous, representative method of this entry.
+                             * @param visibility        The minimal required visibility for this method.
+                             */
+                            protected Resolved(Harmonized<U> key, MethodDescription methodDescription, Visibility visibility) {
+                                this(key, methodDescription, visibility, NOT_MADE_VISIBLE);
+                            }
+
+                            /**
                              * Creates a new resolved entry.
                              *
                              * @param key               The harmonized key this entry represents.
@@ -1281,22 +1473,30 @@ public interface MethodGraph {
                                         : new Resolved<V>(key, override, visibility, NOT_MADE_VISIBLE);
                             }
 
-                            @Override
+                            /**
+                             * {@inheritDoc}
+                             */
                             public Harmonized<U> getKey() {
                                 return key;
                             }
 
-                            @Override
+                            /**
+                             * {@inheritDoc}
+                             */
                             public Set<MethodDescription> getCandidates() {
                                 return Collections.singleton(methodDescription);
                             }
 
-                            @Override
+                            /**
+                             * {@inheritDoc}
+                             */
                             public Visibility getVisibility() {
                                 return visibility;
                             }
 
-                            @Override
+                            /**
+                             * {@inheritDoc}
+                             */
                             public Entry<U> extendBy(MethodDescription methodDescription, Harmonizer<U> harmonizer) {
                                 Harmonized<U> key = this.key.extend(methodDescription.asDefined(), harmonizer);
                                 Visibility visibility = this.visibility.expandTo(methodDescription.getVisibility());
@@ -1305,12 +1505,33 @@ public interface MethodGraph {
                                         : Resolved.of(key, methodDescription, this.methodDescription, visibility);
                             }
 
-                            @Override
-                            public Entry<U> inject(Harmonized<U> key, Visibility visibility) {
-                                return new Resolved<U>(this.key.combineWith(key), methodDescription, this.visibility.expandTo(visibility), madeVisible);
+                            /**
+                             * {@inheritDoc}
+                             */
+                            public Entry<U> inject(Entry<U> entry) {
+                                if (methodDescription.getDeclaringType().isInterface()) {
+                                    LinkedHashSet<MethodDescription> candidates = new LinkedHashSet<MethodDescription>();
+                                    candidates.add(methodDescription);
+                                    TypeDescription target = methodDescription.getDeclaringType().asErasure();
+                                    for (MethodDescription methodDescription : entry.getCandidates()) {
+                                        if (methodDescription.getDeclaringType().asErasure().isAssignableTo(target)) {
+                                            candidates.remove(this.methodDescription);
+                                            candidates.add(methodDescription);
+                                        } else if (!methodDescription.getDeclaringType().asErasure().isAssignableFrom(target)) {
+                                            candidates.add(methodDescription);
+                                        }
+                                    }
+                                    return candidates.size() == 1
+                                            ? new Resolved<U>(key.combineWith(entry.getKey()), candidates.iterator().next(), visibility.expandTo(entry.getVisibility()), madeVisible)
+                                            : new Ambiguous<U>(key.combineWith(entry.getKey()), candidates, visibility.expandTo(entry.getVisibility()));
+                                } else {
+                                    return new Resolved<U>(key.combineWith(entry.getKey()), methodDescription, visibility.expandTo(entry.getVisibility()), madeVisible);
+                                }
                             }
 
-                            @Override
+                            /**
+                             * {@inheritDoc}
+                             */
                             public MethodGraph.Node asNode(Merger merger) {
                                 return new Node(key.detach(methodDescription.asTypeToken()), methodDescription, visibility, madeVisible);
                             }
@@ -1318,7 +1539,7 @@ public interface MethodGraph {
                             /**
                              * A node implementation representing a non-ambiguous method.
                              */
-                            @EqualsAndHashCode
+                            @HashCodeAndEqualsPlugin.Enhance
                             protected static class Node implements MethodGraph.Node {
 
                                 /**
@@ -1356,24 +1577,32 @@ public interface MethodGraph {
                                     this.visible = visible;
                                 }
 
-                                @Override
+                                /**
+                                 * {@inheritDoc}
+                                 */
                                 public Sort getSort() {
                                     return visible
                                             ? Sort.VISIBLE
                                             : Sort.RESOLVED;
                                 }
 
-                                @Override
+                                /**
+                                 * {@inheritDoc}
+                                 */
                                 public MethodDescription getRepresentative() {
                                     return methodDescription;
                                 }
 
-                                @Override
+                                /**
+                                 * {@inheritDoc}
+                                 */
                                 public Set<MethodDescription.TypeToken> getMethodTypes() {
                                     return key.getIdentifiers();
                                 }
 
-                                @Override
+                                /**
+                                 * {@inheritDoc}
+                                 */
                                 public Visibility getVisibility() {
                                     return visibility;
                                 }
@@ -1385,7 +1614,7 @@ public interface MethodGraph {
                          *
                          * @param <U> The type of the harmonized key to determine method equality.
                          */
-                        @EqualsAndHashCode
+                        @HashCodeAndEqualsPlugin.Enhance
                         class Ambiguous<U> implements Entry<U> {
 
                             /**
@@ -1433,25 +1662,33 @@ public interface MethodGraph {
                                         : new Ambiguous<Q>(key, new LinkedHashSet<MethodDescription>(Arrays.asList(left, right)), visibility);
                             }
 
-                            @Override
+                            /**
+                             * {@inheritDoc}
+                             */
                             public Harmonized<U> getKey() {
                                 return key;
                             }
 
-                            @Override
+                            /**
+                             * {@inheritDoc}
+                             */
                             public Set<MethodDescription> getCandidates() {
                                 return methodDescriptions;
                             }
 
-                            @Override
+                            /**
+                             * {@inheritDoc}
+                             */
                             public Visibility getVisibility() {
                                 return visibility;
                             }
 
-                            @Override
+                            /**
+                             * {@inheritDoc}
+                             */
                             public Entry<U> extendBy(MethodDescription methodDescription, Harmonizer<U> harmonizer) {
                                 Harmonized<U> key = this.key.extend(methodDescription.asDefined(), harmonizer);
-                                LinkedHashSet<MethodDescription> methodDescriptions = new LinkedHashSet<MethodDescription>(this.methodDescriptions.size() + 1);
+                                LinkedHashSet<MethodDescription> methodDescriptions = new LinkedHashSet<MethodDescription>();
                                 TypeDescription declaringType = methodDescription.getDeclaringType().asErasure();
                                 boolean bridge = methodDescription.isBridge();
                                 Visibility visibility = this.visibility;
@@ -1475,12 +1712,40 @@ public interface MethodGraph {
                                 }
                             }
 
-                            @Override
-                            public Entry<U> inject(Harmonized<U> key, Visibility visibility) {
-                                return new Ambiguous<U>(this.key.combineWith(key), methodDescriptions, this.visibility.expandTo(visibility));
+                            /**
+                             * {@inheritDoc}
+                             */
+                            public Entry<U> inject(Entry<U> entry) {
+                                LinkedHashSet<MethodDescription> methodDescriptions = new LinkedHashSet<MethodDescription>();
+                                outer:
+                                for (MethodDescription methodDescription : this.methodDescriptions) {
+                                    TypeDescription target = methodDescription.getDeclaringType().asErasure();
+                                    for (MethodDescription candidate : entry.getCandidates()) {
+                                        TypeDescription typeDescription = candidate.getDeclaringType().asErasure();
+                                        if (!typeDescription.equals(target) && typeDescription.isAssignableTo(target)) {
+                                            continue outer;
+                                        }
+                                    }
+                                    methodDescriptions.add(methodDescription);
+                                }
+                                outer:
+                                for (MethodDescription candidate : entry.getCandidates()) {
+                                    TypeDescription target = candidate.getDeclaringType().asErasure();
+                                    for (MethodDescription methodDescription : this.methodDescriptions) {
+                                        if (methodDescription.getDeclaringType().asErasure().isAssignableTo(target)) {
+                                            continue outer;
+                                        }
+                                    }
+                                    methodDescriptions.add(candidate);
+                                }
+                                return methodDescriptions.size() == 1
+                                        ? new Resolved<U>(key.combineWith(entry.getKey()), methodDescriptions.iterator().next(), visibility.expandTo(entry.getVisibility()))
+                                        : new Ambiguous<U>(key.combineWith(entry.getKey()), methodDescriptions, visibility.expandTo(entry.getVisibility()));
                             }
 
-                            @Override
+                            /**
+                             * {@inheritDoc}
+                             */
                             public MethodGraph.Node asNode(Merger merger) {
                                 Iterator<MethodDescription> iterator = methodDescriptions.iterator();
                                 MethodDescription methodDescription = iterator.next();
@@ -1493,7 +1758,7 @@ public interface MethodGraph {
                             /**
                              * A node implementation representing an ambiguous method resolution.
                              */
-                            @EqualsAndHashCode
+                            @HashCodeAndEqualsPlugin.Enhance
                             protected static class Node implements MethodGraph.Node {
 
                                 /**
@@ -1522,22 +1787,30 @@ public interface MethodGraph {
                                     this.visibility = visibility;
                                 }
 
-                                @Override
+                                /**
+                                 * {@inheritDoc}
+                                 */
                                 public Sort getSort() {
                                     return Sort.AMBIGUOUS;
                                 }
 
-                                @Override
+                                /**
+                                 * {@inheritDoc}
+                                 */
                                 public MethodDescription getRepresentative() {
                                     return methodDescription;
                                 }
 
-                                @Override
+                                /**
+                                 * {@inheritDoc}
+                                 */
                                 public Set<MethodDescription.TypeToken> getMethodTypes() {
                                     return key.getIdentifiers();
                                 }
 
-                                @Override
+                                /**
+                                 * {@inheritDoc}
+                                 */
                                 public Visibility getVisibility() {
                                     return visibility;
                                 }
@@ -1548,7 +1821,7 @@ public interface MethodGraph {
                     /**
                      * A graph implementation based on a key store.
                      */
-                    @EqualsAndHashCode
+                    @HashCodeAndEqualsPlugin.Enhance
                     protected static class Graph implements MethodGraph {
 
                         /**
@@ -1565,7 +1838,9 @@ public interface MethodGraph {
                             this.entries = entries;
                         }
 
-                        @Override
+                        /**
+                         * {@inheritDoc}
+                         */
                         public Node locate(MethodDescription.SignatureToken token) {
                             Node node = entries.get(Detached.of(token));
                             return node == null
@@ -1573,7 +1848,9 @@ public interface MethodGraph {
                                     : node;
                         }
 
-                        @Override
+                        /**
+                         * {@inheritDoc}
+                         */
                         public NodeList listNodes() {
                             return new NodeList(new ArrayList<Node>(entries.values()));
                         }
@@ -1602,12 +1879,16 @@ public interface MethodGraph {
             this.nodes = nodes;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Node get(int index) {
             return nodes.get(index);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public int size() {
             return nodes.size();
         }
@@ -1634,7 +1915,7 @@ public interface MethodGraph {
     /**
      * A simple implementation of a method graph.
      */
-    @EqualsAndHashCode
+    @HashCodeAndEqualsPlugin.Enhance
     class Simple implements MethodGraph {
 
         /**
@@ -1665,7 +1946,9 @@ public interface MethodGraph {
             return new Simple(nodes);
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public Node locate(MethodDescription.SignatureToken token) {
             Node node = nodes.get(token);
             return node == null
@@ -1673,7 +1956,9 @@ public interface MethodGraph {
                     : node;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public NodeList listNodes() {
             return new NodeList(new ArrayList<Node>(nodes.values()));
         }

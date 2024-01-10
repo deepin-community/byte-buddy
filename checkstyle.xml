@@ -19,7 +19,11 @@
         <property name="message" value="Line has trailing spaces."/>
     </module>
 
+    <module name="SuppressWarningsFilter"/>
+
     <module name="TreeWalker">
+
+        <module name="SuppressWarningsHolder"/>
 
         <module name="JavadocMethod"/>
         <module name="JavadocType"/>
@@ -63,7 +67,6 @@
         <module name="RightCurly"/>
 
         <module name="EmptyStatement"/>
-        <module name="EqualsHashCode"/>
         <module name="IllegalInstantiation"/>
         <module name="SimplifyBooleanExpression"/>
         <module name="SimplifyBooleanReturn"/>

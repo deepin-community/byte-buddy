@@ -2,28 +2,24 @@ package net.bytebuddy.android;
 
 import com.android.dx.dex.DexOptions;
 import com.android.dx.dex.cf.CfOptions;
-import com.android.dx.dex.file.DexFile;
 import net.bytebuddy.ByteBuddy;
 import net.bytebuddy.ClassFileVersion;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.dynamic.DynamicType;
 import net.bytebuddy.dynamic.loading.ClassLoadingStrategy;
 import net.bytebuddy.implementation.FixedValue;
-import net.bytebuddy.test.utility.MockitoRule;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.hamcrest.CoreMatchers;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
 
 import java.io.File;
 import java.io.IOException;
 import java.io.OutputStream;
-import java.net.URL;
-import java.net.URLClassLoader;
 import java.util.*;
 
 import static net.bytebuddy.matcher.ElementMatchers.named;
@@ -38,7 +34,7 @@ public class AndroidClassLoadingStrategyTest {
     private static final byte[] QUX = new byte[]{1, 2, 3}, BAZ = new byte[]{4, 5, 6};
 
     @Rule
-    public TestRule dexCompilerRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     private File folder;
 
@@ -112,24 +108,12 @@ public class AndroidClassLoadingStrategyTest {
         assertThat(map.size(), is(1));
     }
 
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(AndroidClassLoadingStrategy.DexProcessor.ForSdkCompiler.class).apply();
-        ObjectPropertyAssertion.of(AndroidClassLoadingStrategy.DexProcessor.ForSdkCompiler.Conversion.class).create(new ObjectPropertyAssertion.Creator<DexFile>() {
-            @Override
-            public DexFile create() {
-                return new DexFile(new DexOptions());
-            }
-        }).apply();
-    }
-
     private static class StubbedClassLoadingStrategy extends AndroidClassLoadingStrategy {
 
         public StubbedClassLoadingStrategy(File privateDirectory, DexProcessor dexProcessor) {
             super(privateDirectory, dexProcessor);
         }
 
-        @Override
         protected Map<TypeDescription, Class<?>> doLoad(ClassLoader classLoader, Set<TypeDescription> typeDescriptions, File jar) throws IOException {
             throw new AssertionError();
         }
@@ -137,7 +121,6 @@ public class AndroidClassLoadingStrategyTest {
 
     private static class StubbedClassLoaderDexCompilation implements AndroidClassLoadingStrategy.DexProcessor {
 
-        @Override
         public Conversion create() {
             return new AndroidClassLoadingStrategy.DexProcessor.ForSdkCompiler(new DexOptions(), new CfOptions()).create();
         }

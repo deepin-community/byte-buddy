@@ -7,14 +7,13 @@ import net.bytebuddy.description.method.MethodList;
 import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.implementation.Implementation;
 import net.bytebuddy.pool.TypePool;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Test;
 import org.objectweb.asm.ClassVisitor;
 
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verifyZeroInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 public class AsmVisitorWrapperNoOpTest {
 
@@ -31,7 +30,7 @@ public class AsmVisitorWrapperNoOpTest {
                 new MethodList.Empty<MethodDescription>(),
                 IGNORED,
                 IGNORED), is(classVisitor));
-        verifyZeroInteractions(classVisitor);
+        verifyNoMoreInteractions(classVisitor);
     }
 
     @Test
@@ -42,10 +41,5 @@ public class AsmVisitorWrapperNoOpTest {
     @Test
     public void testWriterFlags() throws Exception {
         assertThat(AsmVisitorWrapper.NoOp.INSTANCE.mergeWriter(FOO), is(FOO));
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(AsmVisitorWrapper.NoOp.class).apply();
     }
 }

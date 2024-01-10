@@ -8,7 +8,6 @@ import net.bytebuddy.implementation.bind.MethodDelegationBinder;
 import net.bytebuddy.implementation.bytecode.StackManipulation;
 import net.bytebuddy.implementation.bytecode.StackSize;
 import net.bytebuddy.implementation.bytecode.assign.Assigner;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.Mock;
@@ -36,8 +35,8 @@ public class AllArgumentsBinderTest extends AbstractAnnotationBinderTest<AllArgu
         super(AllArguments.class);
     }
 
-    @Override
     @Before
+    @Override
     @SuppressWarnings("unchecked")
     public void setUp() throws Exception {
         super.setUp();
@@ -52,7 +51,6 @@ public class AllArgumentsBinderTest extends AbstractAnnotationBinderTest<AllArgu
         when(secondSourceType.accept(any(TypeDescription.Generic.Visitor.class))).thenReturn(secondSourceType);
     }
 
-    @Override
     protected TargetMethodAnnotationDrivenBinder.ParameterBinder<AllArguments> getSimpleBinder() {
         return AllArguments.Binder.INSTANCE;
     }
@@ -139,7 +137,7 @@ public class AllArgumentsBinderTest extends AbstractAnnotationBinderTest<AllArgu
         verify(methodVisitor).visitInsn(Opcodes.ICONST_0);
         verify(methodVisitor).visitTypeInsn(Opcodes.ANEWARRAY, FOO);
         verifyNoMoreInteractions(methodVisitor);
-        verifyZeroInteractions(implementationContext);
+        verifyNoMoreInteractions(implementationContext);
         assertThat(parameterBinding.isValid(), is(true));
         verify(source, atLeast(1)).getParameters();
         verify(source, atLeast(1)).isStatic();
@@ -159,11 +157,5 @@ public class AllArgumentsBinderTest extends AbstractAnnotationBinderTest<AllArgu
         when(targetType.isArray()).thenReturn(false);
         when(target.getType()).thenReturn(targetType);
         AllArguments.Binder.INSTANCE.bind(annotationDescription, source, target, implementationTarget, assigner, Assigner.Typing.STATIC);
-    }
-
-    @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(AllArguments.Assignment.class).apply();
-        ObjectPropertyAssertion.of(AllArguments.Binder.class).apply();
     }
 }

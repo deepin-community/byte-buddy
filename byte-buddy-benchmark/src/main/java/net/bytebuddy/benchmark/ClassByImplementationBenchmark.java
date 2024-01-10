@@ -1,3 +1,18 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.benchmark;
 
 import javassist.util.proxy.MethodFilter;
@@ -10,6 +25,8 @@ import net.bytebuddy.dynamic.loading.ClassLoadingStrategy;
 import net.bytebuddy.dynamic.scaffold.TypeValidation;
 import net.bytebuddy.implementation.StubMethod;
 import net.bytebuddy.pool.TypePool;
+import net.bytebuddy.utility.nullability.AlwaysNull;
+import net.bytebuddy.utility.nullability.MaybeNull;
 import net.sf.cglib.proxy.CallbackHelper;
 import net.sf.cglib.proxy.Enhancer;
 import net.sf.cglib.proxy.FixedValue;
@@ -51,6 +68,7 @@ public class ClassByImplementationBenchmark {
      * The default reference value. By defining the default reference value as a string type instead of as an object
      * type, the field is inlined by the compiler, similar to the primitive values.
      */
+    @AlwaysNull
     public static final String DEFAULT_REFERENCE_VALUE = null;
 
     /**
@@ -163,6 +181,7 @@ public class ClassByImplementationBenchmark {
     /**
      * A description of {@link ClassByExtensionBenchmark#baseClass}.
      */
+    @MaybeNull
     private TypeDescription baseClassDescription;
 
     /**
@@ -170,7 +189,7 @@ public class ClassByImplementationBenchmark {
      */
     @Setup
     public void setup() {
-        baseClassDescription = TypePool.Default.ofClassPath().describe(baseClass.getName()).resolve();
+        baseClassDescription = TypePool.Default.ofSystemLoader().describe(baseClass.getName()).resolve();
     }
 
     /**
@@ -181,92 +200,138 @@ public class ClassByImplementationBenchmark {
     @Benchmark
     public ExampleInterface baseline() {
         return new ExampleInterface() {
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public boolean method(boolean arg) {
                 return false;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public byte method(byte arg) {
                 return 0;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public short method(short arg) {
                 return 0;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public int method(int arg) {
                 return 0;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public char method(char arg) {
                 return 0;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public long method(long arg) {
                 return 0;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public float method(float arg) {
                 return 0;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
             public double method(double arg) {
                 return 0;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
+            @AlwaysNull
             public Object method(Object arg) {
                 return null;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
+            @AlwaysNull
             public boolean[] method(boolean arg1, boolean arg2, boolean arg3) {
                 return null;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
+            @AlwaysNull
             public byte[] method(byte arg1, byte arg2, byte arg3) {
                 return null;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
+            @AlwaysNull
             public short[] method(short arg1, short arg2, short arg3) {
                 return null;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
+            @AlwaysNull
             public int[] method(int arg1, int arg2, int arg3) {
                 return null;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
+            @AlwaysNull
             public char[] method(char arg1, char arg2, char arg3) {
                 return null;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
+            @AlwaysNull
             public long[] method(long arg1, long arg2, long arg3) {
                 return null;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
+            @AlwaysNull
             public float[] method(float arg1, float arg2, float arg3) {
                 return null;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
+            @AlwaysNull
             public double[] method(double arg1, double arg2, double arg3) {
                 return null;
             }
 
-            @Override
+            /**
+             * {@inheritDoc}
+             */
+            @AlwaysNull
             public Object[] method(Object arg1, Object arg2, Object arg3) {
                 return null;
             }
@@ -325,13 +390,11 @@ public class ClassByImplementationBenchmark {
         enhancer.setUseCache(false);
         enhancer.setClassLoader(newClassLoader());
         enhancer.setSuperclass(baseClass);
-        CallbackHelper callbackHelper = new CallbackHelper(Object.class, new Class[]{baseClass}) {
-            @Override
+        CallbackHelper callbackHelper = new CallbackHelper(Object.class, new Class<?>[]{baseClass}) {
             protected Object getCallback(Method method) {
                 if (method.getDeclaringClass() == baseClass) {
                     return new FixedValue() {
-                        @Override
-                        public Object loadObject() throws Exception {
+                        public Object loadObject() {
                             return null;
                         }
                     };
@@ -353,14 +416,13 @@ public class ClassByImplementationBenchmark {
      */
     @Benchmark
     public ExampleInterface benchmarkJavassist() throws Exception {
-        ProxyFactory proxyFactory = new ProxyFactory();
-        proxyFactory.setUseCache(false);
-        ProxyFactory.classLoaderProvider = new ProxyFactory.ClassLoaderProvider() {
-            @Override
-            public ClassLoader get(ProxyFactory proxyFactory) {
+        ProxyFactory proxyFactory = new ProxyFactory() {
+            protected ClassLoader getClassLoader() {
                 return newClassLoader();
             }
         };
+        proxyFactory.setUseCache(false);
+        proxyFactory.setUseWriteReplace(false);
         proxyFactory.setSuperclass(Object.class);
         proxyFactory.setInterfaces(new Class<?>[]{baseClass});
         proxyFactory.setFilter(new MethodFilter() {
@@ -413,8 +475,8 @@ public class ClassByImplementationBenchmark {
         return (ExampleInterface) Proxy.newProxyInstance(newClassLoader(),
                 new Class<?>[]{baseClass},
                 new InvocationHandler() {
-                    @Override
-                    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+                    @MaybeNull
+                    public Object invoke(Object proxy, Method method, @MaybeNull Object[] argument) {
                         Class<?> returnType = method.getReturnType();
                         if (returnType.isPrimitive()) {
                             if (returnType == boolean.class) {

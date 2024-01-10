@@ -1,7 +1,24 @@
+/*
+ * Copyright 2014 - Present Rafael Winterhalter
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package net.bytebuddy.description.enumeration;
 
+import net.bytebuddy.build.CachedReturnPlugin;
 import net.bytebuddy.description.NamedElement;
 import net.bytebuddy.description.type.TypeDescription;
+import net.bytebuddy.utility.nullability.MaybeNull;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -40,21 +57,28 @@ public interface EnumerationDescription extends NamedElement {
      */
     abstract class AbstractBase implements EnumerationDescription {
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public String getActualName() {
             return getValue();
         }
 
         @Override
-        public boolean equals(Object other) {
-            return other == this || other instanceof EnumerationDescription
-                    && (((EnumerationDescription) other)).getEnumerationType().equals(getEnumerationType())
-                    && (((EnumerationDescription) other)).getValue().equals(getValue());
+        @CachedReturnPlugin.Enhance("hashCode")
+        public int hashCode() {
+            return getValue().hashCode() + 31 * getEnumerationType().hashCode();
         }
 
         @Override
-        public int hashCode() {
-            return getValue().hashCode() + 31 * getEnumerationType().hashCode();
+        public boolean equals(@MaybeNull Object other) {
+            if (this == other) {
+                return true;
+            } else if (!(other instanceof EnumerationDescription)) {
+                return false;
+            }
+            EnumerationDescription enumerationDescription = (EnumerationDescription) other;
+            return getEnumerationType().equals(enumerationDescription.getEnumerationType()) && getValue().equals(enumerationDescription.getValue());
         }
 
         @Override
@@ -96,17 +120,23 @@ public interface EnumerationDescription extends NamedElement {
             return result;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public String getValue() {
             return value.name();
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public TypeDescription getEnumerationType() {
-            return new TypeDescription.ForLoadedType(value.getDeclaringClass());
+            return TypeDescription.ForLoadedType.of(value.getDeclaringClass());
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         @SuppressWarnings("unchecked")
         public <T extends Enum<T>> T load(Class<T> type) {
             return value.getDeclaringClass() == type
@@ -141,17 +171,23 @@ public interface EnumerationDescription extends NamedElement {
             this.value = value;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public String getValue() {
             return value;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public TypeDescription getEnumerationType() {
             return enumerationType;
         }
 
-        @Override
+        /**
+         * {@inheritDoc}
+         */
         public <T extends Enum<T>> T load(Class<T> type) {
             if (!enumerationType.represents(type)) {
                 throw new IllegalArgumentException(type + " does not represent " + enumerationType);

@@ -4,20 +4,15 @@ import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.method.ParameterDescription;
 import net.bytebuddy.description.method.ParameterList;
 import net.bytebuddy.description.type.TypeDescription;
-import net.bytebuddy.description.type.TypeList;
-import net.bytebuddy.implementation.Implementation;
-import net.bytebuddy.implementation.bytecode.StackManipulation;
 import net.bytebuddy.implementation.bytecode.StackSize;
-import net.bytebuddy.test.utility.MockitoRule;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
+import org.junit.rules.MethodRule;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 import org.mockito.Mock;
-import org.objectweb.asm.MethodVisitor;
+import org.mockito.junit.MockitoJUnit;
 import org.objectweb.asm.Opcodes;
 
 import java.util.Arrays;
@@ -25,7 +20,8 @@ import java.util.Collection;
 
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.when;
 
 @RunWith(Parameterized.class)
 public class MethodRebaseResolverResolutionForRebasedMethodTest {
@@ -34,7 +30,7 @@ public class MethodRebaseResolverResolutionForRebasedMethodTest {
 
     @Parameterized.Parameters
     public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][] {
+        return Arrays.asList(new Object[][]{
                 {false, Opcodes.ACC_SYNTHETIC | Opcodes.ACC_PRIVATE},
                 {true, Opcodes.ACC_SYNTHETIC | Opcodes.ACC_PUBLIC}
         });
@@ -50,7 +46,7 @@ public class MethodRebaseResolverResolutionForRebasedMethodTest {
     }
 
     @Rule
-    public TestRule mockitoRule = new MockitoRule(this);
+    public MethodRule mockitoRule = MockitoJUnit.rule().silent();
 
     @Mock
     private MethodDescription.InDefinedShape methodDescription;
@@ -63,12 +59,6 @@ public class MethodRebaseResolverResolutionForRebasedMethodTest {
 
     @Mock
     private TypeDescription.Generic genericReturnType, genericParameterType;
-
-    @Mock
-    private MethodVisitor methodVisitor;
-
-    @Mock
-    private Implementation.Context implementationContext;
 
     @Before
     @SuppressWarnings("unchecked")
@@ -106,32 +96,6 @@ public class MethodRebaseResolverResolutionForRebasedMethodTest {
         assertThat(resolution.getResolvedMethod().getReturnType(), is(genericReturnType));
         assertThat(resolution.getResolvedMethod().getParameters(), is((ParameterList<ParameterDescription.InDefinedShape>) new ParameterList.Explicit
                 .ForTypes(resolution.getResolvedMethod(), parameterType)));
-        StackManipulation.Size size = resolution.getAdditionalArguments().apply(methodVisitor, implementationContext);
-        assertThat(size.getSizeImpact(), is(0));
-        assertThat(size.getMaximalSize(), is(0));
-        verifyZeroInteractions(methodVisitor);
-        verifyZeroInteractions(implementationContext);
-    }
-
-    @Test
-    @SuppressWarnings("unchecked")
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(MethodRebaseResolver.Resolution.ForRebasedMethod.class).refine(new ObjectPropertyAssertion.Refinement<MethodDescription>() {
-            @Override
-            public void apply(MethodDescription mock) {
-                when(mock.getParameters()).thenReturn((ParameterList) new ParameterList.Empty<ParameterDescription>());
-                when(mock.getExceptionTypes()).thenReturn(new TypeList.Generic.Empty());
-                when(mock.getDeclaringType()).thenReturn(mock(TypeDescription.class));
-                TypeDescription.Generic returnType = mock(TypeDescription.Generic.class);
-                TypeDescription rawReturnType = mock(TypeDescription.class);
-                when(returnType.asErasure()).thenReturn(rawReturnType);
-                when(mock.getReturnType()).thenReturn(returnType);
-            }
-        }).refine(new ObjectPropertyAssertion.Refinement<MethodNameTransformer>() {
-            @Override
-            public void apply(MethodNameTransformer mock) {
-                when(mock.transform(any(MethodDescription.class))).thenReturn(FOO + System.identityHashCode(mock));
-            }
-        }).apply();
+        assertThat(resolution.getAppendedParameters().isEmpty(), is(true));
     }
 }

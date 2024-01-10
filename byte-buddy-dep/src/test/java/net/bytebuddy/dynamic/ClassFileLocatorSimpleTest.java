@@ -1,7 +1,6 @@
 package net.bytebuddy.dynamic;
 
 import net.bytebuddy.description.type.TypeDescription;
-import net.bytebuddy.test.utility.ObjectPropertyAssertion;
 import org.junit.Test;
 
 import java.util.Collections;
@@ -48,7 +47,19 @@ public class ClassFileLocatorSimpleTest {
     }
 
     @Test
-    public void testObjectProperties() throws Exception {
-        ObjectPropertyAssertion.of(ClassFileLocator.Simple.class).apply();
+    public void testOfResources() throws Exception {
+        ClassFileLocator.Resolution resolution = ClassFileLocator.Simple
+                .ofResources(Collections.singletonMap(FOO + "/" + BAR + ".class", QUX))
+                .locate(FOO + "." + BAR);
+        assertThat(resolution.isResolved(), is(true));
+        assertThat(resolution.resolve(), is(QUX));
+    }
+
+    @Test
+    public void testOfResourcesNoClassFile() throws Exception {
+        ClassFileLocator.Resolution resolution = ClassFileLocator.Simple
+                .ofResources(Collections.singletonMap(FOO + "/" + BAR, QUX))
+                .locate(FOO + "." + BAR);
+        assertThat(resolution.isResolved(), is(false));
     }
 }
